@@ -1,0 +1,2 @@
+# 픽스처는 바이트 그대로 둔다(CRLF·BOM 회귀 시험용). core.autocrlf=input에서도 줄바꿈을 바꾸지 않는다
+* -text
