@@ -76,6 +76,38 @@ describe("checkFixture", () => {
     expect(checkFixture("mac-csv.csv", text)).toHaveLength(2);
   });
 
+  describe("U+202F·U+00A0 공백은 파서처럼 정규화한 뒤 형식을 감지한다", () => {
+    const iosTime = (sender: string, dateLines: number) =>
+      [
+        "# ASSUMED: zeikar/kakaotalk-viewer",
+        "테스트방 님과 카카오톡 대화",
+        "저장한 날짜 : 2021. 12. 31. 오후 2:46",
+        "",
+        "2021년 12월 29일 수요일",
+        `오후 8:36, ${sender} : 안녕`,
+        ...(dateLines > 1 ? ["2021년 12월 30일 목요일"] : []),
+        `오후 8:37, ${sender} : 응`,
+      ].join("\n");
+
+    it("허용 이름만 쓴 ios-ko-time 픽스처는 통과한다", () => {
+      expect(checkFixture("ios-ko-time.txt", iosTime("민지", 1))).toEqual([]);
+    });
+
+    it("같은 입력의 발신자가 ALLOWED_NAMES 밖이면 줄마다 이름 오류", () => {
+      expect(checkFixture("ios-ko-time.txt", iosTime("홍길동", 1))).toEqual([
+        "6행: ALLOWED_NAMES 밖의 이름",
+        "7행: ALLOWED_NAMES 밖의 이름",
+      ]);
+    });
+
+    it("원본 줄로는 ios-ko-dot과 동점이 되는 입력도 이름 검사를 건너뛰지 않는다", () => {
+      expect(checkFixture("ios-ko-time.txt", iosTime("홍길동", 2))).toEqual([
+        "6행: ALLOWED_NAMES 밖의 이름",
+        "8행: ALLOWED_NAMES 밖의 이름",
+      ]);
+    });
+  });
+
   it("형식을 알아볼 수 없으면 이름을 검사하지 못했다는 오류", () => {
     expect(checkFixture("a.txt", "그냥 아무 글\n또 아무 글")).toHaveLength(1);
   });

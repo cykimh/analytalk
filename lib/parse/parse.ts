@@ -1,6 +1,6 @@
 // 카카오톡 내보내기 파서. DOM 없이 브라우저(Web Worker)·node에서 함께 쓴다.
 // 줄 판정 순서: 메시지 → 날짜 구분선 → 시스템(사전 일치) → 이어짐
-import { DETECT_SAMPLE_LINES, detectFormat } from "./detect";
+import { detectFormat, detectionSample } from "./detect";
 import {
   csvStamp,
   type Day,
@@ -97,18 +97,6 @@ export function parseExport(files: { name: string; text: string }[]): ParseResul
   if (formatId === "mac-csv") parseCsv(parts, acc);
   else parseText(TEXT_FORMATS[formatId], parts, acc);
   return acc.result();
-}
-
-/** 감지용: 헤더를 뺀 본문에서 비어 있지 않은 처음 300줄(파일을 넘어 이어서 센다) */
-function detectionSample(parts: FilePart[]): string[] {
-  const sample: string[] = [];
-  for (const { lines, header } of parts) {
-    for (let i = header; i < lines.length && sample.length < DETECT_SAMPLE_LINES; i++) {
-      const line = normalizeLine(lines[i]);
-      if (line.trim() !== "") sample.push(line);
-    }
-  }
-  return sample;
 }
 
 class Accumulator {

@@ -10,7 +10,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { decodeBytes } from "../lib/parse/decode";
-import { detectFormat } from "../lib/parse/detect";
+import { detectFormat, detectionSample } from "../lib/parse/detect";
 import { headerLength, normalizeLine, parseNotice, readCsvRecords, splitLines, TEXT_FORMATS } from "../lib/parse/formats";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -60,12 +60,15 @@ export function checkFixture(fileName: string, text: string): string[] {
   return errors;
 }
 
-/** 발신자·시스템 줄의 이름이 허용 목록 밖인 줄 번호들. 형식을 알 수 없으면 [null] */
+/**
+ * 발신자·시스템 줄의 이름이 허용 목록 밖인 줄 번호들. 형식을 알 수 없으면 [null].
+ * 형식 감지는 파서와 같은 표본 함수(공백 정규화 포함)로 한다. 판단이 갈리면 이름 검사를 통째로 건너뛸 수 있다
+ */
 function badNameLines(lines: string[], bodyStart: number): (number | null)[] {
-  const body = lines.slice(bodyStart);
-  const { formatId } = detectFormat(body);
+  const { formatId } = detectFormat(detectionSample([{ lines, header: bodyStart }]));
   if (formatId === null) return [null];
 
+  const body = lines.slice(bodyStart);
   const bad: number[] = [];
   const check = (names: string[], lineNo: number) => {
     for (const name of names) if (!isAllowedName(name)) bad.push(lineNo);
