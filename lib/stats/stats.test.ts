@@ -115,6 +115,14 @@ describe("computeStats", () => {
     expect(s.addressTerms.철수?.형 ?? 0).toBe(0);
   });
 
+  it("호칭은 구간당 한 번만 센다 (자기야가 자기로 중복되지 않음)", () => {
+    const s = computeStats([
+      msg("민지", T0 + HOUR, "자기야 뭐해 자기 ㅋ"),
+      msg("민지", T0 + HOUR + MIN, "형님 오빠가 형이랑"),
+    ]);
+    expect(s.addressTerms.민지).toEqual({ 자기야: 1, 자기: 1, 형님: 1, 오빠: 1, 형: 1 });
+  });
+
   it("월별 통계 키는 YYYY-MM", () => {
     const s = computeStats([
       msg("철수", T0 + 10 * HOUR, "abc"),

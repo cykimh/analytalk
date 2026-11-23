@@ -67,8 +67,11 @@ const QUESTION_RE = /[?？]/;
 // 호칭 사전. 앞뒤가 한글이면 다른 단어의 일부라서 세지 않는다(조사는 허용).
 const ADDRESS_TERMS = ["자기야", "자기", "여보", "오빠", "언니", "형", "누나", "애기", "아가", "형님", "오라버니"];
 const PARTICLES = "이랑|한테|에게|이|은|는|가|도|을|를|아|야|랑|의|께|들|만|보다|처럼";
-const ADDRESS_RES = ADDRESS_TERMS.map(
-  (term) => [term, new RegExp(`(?<![가-힣])${term}(?![가-힣])|(?<![가-힣])${term}(?=(?:${PARTICLES})(?![가-힣]))`, "g")] as const,
+// 한 구간은 한 번만 센다: 긴 호칭을 앞에 둔 단일 alternation (자기야가 자기로 또 잡히지 않게)
+const ADDRESS_ALT = [...ADDRESS_TERMS].sort((x, y) => y.length - x.length).join("|");
+const ADDRESS_RE = new RegExp(
+  `(?<![가-힣])(${ADDRESS_ALT})(?:(?![가-힣])|(?=(?:${PARTICLES})(?![가-힣])))`,
+  "g",
 );
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -176,10 +179,7 @@ export function computeStats(messages: ChatMessage[]): ChatStats {
       const hist = (laughLength[who] ??= new Array<number>(LAUGH_MAX + 1).fill(0));
       for (const run of m.text.match(LAUGH_RE) ?? []) hist[Math.min(run.length, LAUGH_MAX)]++;
       const body = m.text.replace(URL_RE, " ");
-      for (const [term, re] of ADDRESS_RES) {
-        const n = body.match(re)?.length ?? 0;
-        if (n > 0) bump((addressTerms[who] ??= {}), term, n);
-      }
+      for (const hit of body.matchAll(ADDRESS_RE)) bump((addressTerms[who] ??= {}), hit[1], 1);
     }
   }
 
