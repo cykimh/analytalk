@@ -21,6 +21,8 @@ const BARE_TLD = "com|net|org|app|link|page|kr|io|co|ly|gl|tv|gg|jp|cn|tw|hk|uk|
 const WORD_TLD = "so|to|be|me|do|at|la";
 /** 링크의 호스트: min개 이상의 이름 + 끝(뒤에 글자·숫자·@·-가 이어지면 아니다) */
 const host = (tld: string, min: number) => String.raw`(?:[a-z0-9-]+\.){${min},}(?:${tld})(?![a-z0-9@-])`;
+/** BARE_TLD 뒤에 붙는 2글자 나라 끝(abc.co.nz, abc.com.au, abc.co.in). 목록에 없는 끝이라도 링크에 넣는다 */
+const CC_SUFFIX = String.raw`(?:\.[a-z]{2}(?![a-z0-9@-]))?`;
 const URL_PATH = String.raw`\/[^\s<>"'＜＞]*`;
 /**
  * 빈칸·하이픈으로 나눈 날짜·시각: 4자리 연도 + 월(1~12) [+ 일(1~31) [+ 시(0~23) [+ 분(0~59) [+ 초(0~59)]]]]
@@ -34,15 +36,34 @@ const DATE_TIME = new RegExp(
   String.raw`^(?:19|20)\d{2}[- ]${MONTH}(?:[- ]${DAY}(?:[- ]${HOUR}(?:[- ]${MINUTE}(?:[- ]${MINUTE})?)?)?)?$`,
 );
 
-/** 앞의 규칙이 먼저 가린다: 링크 속 이메일·숫자, 주민번호 속 전화번호 모양을 먼저 처리하려는 순서다 */
-const RULES: { kind: MaskKind; re: RegExp; mark: string; accept?: (hit: string) => boolean }[] = [
+/** 숫자가 10~16자리이고, 빈칸으로 나뉘었으면 세 자리 이상인 묶음이 있고, 날짜·시각이 아니면 계좌로 본다 */
+const isAccount = (s: string) =>
+  digitCount(s) >= 10 && digitCount(s) <= 16 && (!s.includes(" ") || longestGroup(s) >= 3) && !DATE_TIME.test(s);
+
+/**
+ * 계좌로 가릴 앞부분의 길이(없으면 0). 통째로 계좌가 아니면 뒤 묶음을 하나씩 떼어 본다:
+ * "1234 5678 9012 3456 3개월"은 뒤의 "3"까지 17자리라 계좌가 아니지만 앞의 카드 번호는 계좌다.
+ * 숫자가 모자라거나 두 자리 묶음뿐이거나 날짜·시각인 것은 앞부분도 마찬가지라 그대로 둔다
+ */
+const accountHead = (hit: string) => {
+  for (let end = hit.length; end > 0; end = hit.slice(0, end).search(/[- ]\d+$/)) {
+    if (isAccount(hit.slice(0, end))) return end;
+  }
+  return 0;
+};
+
+/**
+ * 앞의 규칙이 먼저 가린다: 링크 속 이메일·숫자, 주민번호 속 전화번호 모양을 먼저 처리하려는 순서다.
+ * head가 있으면 찾은 것의 앞 head(hit)글자만 가리고(0이면 그대로 둔다), 남은 뒷부분부터 다시 찾는다
+ */
+const RULES: { kind: MaskKind; re: RegExp; mark: string; head?: (hit: string) => number }[] = [
   { kind: "url", re: /https?:\/\/[^\s<>"'＜＞]+|www\.[^\s<>"'＜＞]+/gi, mark: "[가림:링크]" },
   { kind: "email", re: /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, mark: "[가림:이메일]" },
   // 머리 없는 링크. 이메일은 바로 앞 규칙이 먼저 가린다
   {
     kind: "url",
     re: new RegExp(
-      String.raw`(?<![\w@.\/-])(?:${host(BARE_TLD, 1)}(?:${URL_PATH})?|${host(WORD_TLD, 2)}(?:${URL_PATH})?|${host(WORD_TLD, 1)}${URL_PATH})`,
+      String.raw`(?<![\w@.\/-])(?:${host(BARE_TLD, 1)}${CC_SUFFIX}(?:${URL_PATH})?|${host(WORD_TLD, 2)}(?:${URL_PATH})?|${host(WORD_TLD, 1)}${URL_PATH})`,
       "gi",
     ),
     mark: "[가림:링크]",
@@ -61,16 +82,13 @@ const RULES: { kind: MaskKind; re: RegExp; mark: string; accept?: (hit: string) 
   },
   // 하이픈·빈칸으로 나뉜 숫자 묶음이나 이어진 숫자 중 숫자가 10~16자리인 것(정산 메시지의 "110 123 456789", 카드 번호).
   // 마지막 묶음은 한 자리여도 된다(새마을금고 "9002-1234-5678-9", 3-4-4-2-1). 전화번호는 앞 규칙이 먼저 가린다.
-  // 빈칸으로 나뉜 것은 세 자리 이상인 묶음이 하나는 있어야 한다. 연도로 시작하는 날짜·시각(DATE_TIME)은 둔다
+  // 빈칸으로 나뉜 것은 세 자리 이상인 묶음이 하나는 있어야 한다. 연도로 시작하는 날짜·시각(DATE_TIME)은 둔다.
+  // 뒤에 숫자가 더 붙어 16자리를 넘으면 계좌인 앞부분만 가린다(accountHead)
   {
     kind: "account",
     re: /(?<![\d-])\d{2,6}(?:-\d{2,8}){0,3}-\d{1,8}(?![\d-])|(?<![\d-])\d{2,6}(?: \d{2,8}){0,3} \d{1,8}(?![\d-])|(?<!\d)\d{10,16}(?!\d)/g,
     mark: "[가림:계좌]",
-    accept: (hit) =>
-      digitCount(hit) >= 10 &&
-      digitCount(hit) <= 16 &&
-      (!hit.includes(" ") || longestGroup(hit) >= 3) &&
-      !DATE_TIME.test(hit),
+    head: accountHead,
   },
 ];
 
@@ -84,13 +102,19 @@ export function maskPII(text: string): { text: string; counts: MaskCounts } {
   // 가릴 때마다 숫자·@·링크 머리가 줄어들어 반드시 끝난다
   for (let changed = true; changed; ) {
     changed = false;
-    for (const { kind, re, mark, accept } of RULES) {
-      out = out.replace(re, (hit) => {
-        if (accept && !accept(hit)) return hit;
+    for (const { kind, re, mark, head } of RULES) {
+      let next = "";
+      let last = 0;
+      re.lastIndex = 0;
+      for (let m = re.exec(out); m; m = re.exec(out)) {
+        const len = head ? head(m[0]) : m[0].length;
+        if (len === 0) continue;
+        next += out.slice(last, m.index) + mark;
+        last = re.lastIndex = m.index + len;
         counts[kind]++;
         changed = true;
-        return mark;
-      });
+      }
+      out = next + out.slice(last);
     }
   }
   return { text: out, counts };

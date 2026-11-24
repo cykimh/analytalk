@@ -58,6 +58,23 @@ describe("maskPII", () => {
     ["신협 132-1234-5678-12-3", "신협 [가림:계좌]", "account"],
     // 뒤에 한 자리 숫자가 붙어도 전화번호는 전화번호다 (M3)
     ["010 1234 5678 9시에 전화해", "[가림:전화] 9시에 전화해", "phone"],
+    // 카드 번호 뒤에 빈칸 두고 숫자가 붙어 16자리를 넘으면 뒤 묶음을 떼고 카드 번호만 가린다 (N1)
+    ["카드 1234 5678 9012 3456 3개월 할부", "카드 [가림:계좌] 3개월 할부", "account"],
+    ["1234 5678 9012 3456 5만원 결제했어", "[가림:계좌] 5만원 결제했어", "account"],
+    ["카드 1234 5678 9012 3456 1장", "카드 [가림:계좌] 1장", "account"],
+    ["카드 1234 5678 9012 3456 12개월 할부", "카드 [가림:계좌] 12개월 할부", "account"],
+    ["카드 1234 5678 9012 3456 123", "카드 [가림:계좌] 123", "account"],
+    ["카드 1234-5678-9012-3456-7", "카드 [가림:계좌]-7", "account"],
+    // 날짜·시각 뒤의 계좌는 계좌만 가린다 (M2)
+    ["2026 10 01 12 30 110 123 456789", "2026 10 01 12 30 [가림:계좌]", "account"],
+    // 등록되지 않은 끝(nz·in·au …)이 co·com 뒤에 붙은 링크도 경로까지 통째로 가린다 (N2)
+    ["abc.co.nz/minji", "[가림:링크]", "url"],
+    ["abc.co.in/minji", "[가림:링크]", "url"],
+    ["abc.com.au/minji", "[가림:링크]", "url"],
+    ["abc.com.br/minji 들어와", "[가림:링크] 들어와", "url"],
+    ["가게 abc.com.sg 봐", "가게 [가림:링크] 봐", "url"],
+    // 끝 뒤에 붙은 것이 2글자 이름이 아니면 링크에 넣지 않는다 (N2)
+    ["naver.com.html 열어", "[가림:링크].html 열어", "url"],
   ])("%s → %s", (input, expected, kind) => {
     const r = maskPII(input);
     expect(r.text).toBe(expected);
@@ -97,6 +114,10 @@ describe("maskPII", () => {
     "12-34-5 순서",
     "2026-10-01-12-5",
     "10 20 30 40 5 순서로",
+    // 16자리를 넘는 숫자 줄이라도 계좌로 볼 앞부분이 없으면 그대로: 날짜·시각 두 개, 두 자리 묶음 (N1)
+    "2026 10 01 12 30 2026 10 02 12 30",
+    "10 20 30 40 50 60 70 순서로",
+    "1999-12-31-23-59-30 기록",
   ])("개인정보가 아니면 그대로: %s", (s) => {
     expect(maskPII(s)).toEqual({ text: s, counts: ZERO });
   });
@@ -119,6 +140,20 @@ describe("maskPII", () => {
   it("새로 가리는 모양(2글자 끝 링크·범위 밖 날짜 모양·한 자리 끝 계좌)도 다시 가려도 바뀌지 않는다", () => {
     const once = maskPII("minji.kr amazon.co.jp/x me2.do/abc 2012-34-56-78-90 2024 12 34 56 78 90 9002-1234-5678-9 9002 1234 5678 9");
     expect(once.text).not.toMatch(/\d{3}|\.(?:kr|jp|do)/);
+    expect(maskPII(once.text)).toEqual({ text: once.text, counts: ZERO });
+  });
+
+  it("카드 번호 두 개를 빈칸으로 이어 써도 둘 다 가린다 (N1)", () => {
+    const r = maskPII("1234 5678 9012 3456 1111 2222 3333 4444");
+    expect(r.text).toBe("[가림:계좌] [가림:계좌]");
+    expect(r.counts).toEqual({ ...ZERO, account: 2 });
+  });
+
+  it("앞부분만 가린 계좌와 3단계 링크도 다시 가려도 바뀌지 않는다 (N1·N2)", () => {
+    const once = maskPII(
+      "카드 1234 5678 9012 3456 3개월 1234 5678 9012 3456 12개월 abc.co.nz/minji abc.com.au/minji",
+    );
+    expect(once.text).not.toMatch(/\d{3}|\.(?:nz|au)|minji/);
     expect(maskPII(once.text)).toEqual({ text: once.text, counts: ZERO });
   });
 });
