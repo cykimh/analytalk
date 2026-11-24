@@ -10,3 +10,8 @@ next-env.d.ts
 .env.production.local
 test-results/
 playwright-report/
+coverage/
+*.log
+supabase/.temp/
+.superpowers/
+.claude/settings.local.json
