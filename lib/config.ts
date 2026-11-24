@@ -39,6 +39,8 @@ export const POLL_MS = 3000;
 export const NOTES_FLUSH_MS = 5000;
 export const SESSION_COOKIE = "analytalk_session";
 export const SESSION_TTL_DAYS = 30;
+/** 초대 코드 화면의 Turnstile 위젯 action. 서버는 siteverify 응답의 action이 이것과 같아야 통과시킨다 */
+export const TURNSTILE_INVITE_ACTION = "invite";
 
 // 모델·테스트
 export const DEFAULT_MODEL = "claude-opus-5-5";
