@@ -55,6 +55,23 @@ const STOP_PIECES = new Set([
   // 관계 말 앞의 꾸밈말("작은이모"의 작은)과 안드로이드의 내 이름 "회원님"의 회원
   ...["작은", "큰", "막내", "첫째", "둘째", "셋째", "회원"],
 ]);
+// 연락처 이름에 메모로 흔히 붙는 말(모임·학교·운동·직함·관계). 여러 조각 이름에서 이 말은 이름 조각으로 고르지 않고,
+// 별명 꼬리를 뗀 말(원장님의 원장·어머님의 어머)이 되어도 자동으로 바꾸지 않는다. 전체 이름이면 그래도 바꾼다.
+// STOP_PIECES와 달리 확인 화면에는 보여 준다. 실제 이름으로 흔한 말(수영·은혜·하늘 등)은 넣지 않는다
+const MEMO_PIECES = new Set([
+  // 모임·학교·직장
+  ...["교회", "성당", "대학", "학교", "학원", "직장", "동기", "동창", "동네", "이웃", "모임", "고객", "거래처", "업체", "본사", "지점"],
+  ...["초딩", "중딩", "고딩", "대딩", "초등", "중등", "고등", "중학", "고교", "유치원", "어린이집"],
+  // 운동·취미
+  ...["헬스", "요가", "필라", "필테", "골프", "축구", "농구", "야구", "등산", "볼링", "테니스", "스터디", "독서", "과외", "알바"],
+  // STOP_PIECES 밖의 직함
+  ...["대표", "원장", "이사", "상무", "전무", "회장", "감독", "코치", "주임", "반장", "총무", "기사", "작가", "강사"],
+  ...["목사", "집사", "권사", "장로", "전도사"],
+  // STOP_PIECES 밖의 관계 말과 어머님·아버님에서 님을 뗀 말
+  ...["남친", "여친", "썸남", "썸녀", "베프", "절친", "짝꿍", "룸메", "사수", "팀원", "직원", "인턴", "신입"],
+  ...["처제", "처형", "형수", "매형", "매제", "시누", "올케", "사위", "장모", "장인", "손녀", "손자", "아들", "동서", "숙모"],
+  ...["어머", "아버"],
+]);
 /** 이름처럼 부르는 자리: 사랑아·사랑이·사랑한테. STOP_PIECES와 같은 짧은 이름(김사랑의 사랑)은 이 자리에서만 찾는다 */
 const CALLED_PARTICLES = ["아", "야", "이", "가", "한테", "랑", "님", "씨"];
 /** 부르는 말(사랑아·민지야). 이렇게 쓰인 적이 있으면 이름일 가능성이 커서 확인 화면에서 바꾸기를 미리 고른다 */
@@ -119,14 +136,46 @@ function nickBases(piece: string): string[] {
 // 이름 모양을 볼 때 쓰는 성: 흔한 성에 그다음으로 많은 성을 더한다(변민수·진서연·민하은도 성 + 2글자다).
 // 어·아·할·큰·작·외·회처럼 관계 말·흔한 말을 시작하는 글자는 넣지 않는다(어머니·아버지·할머니·회원님)
 const SHAPE_SURNAMES = new Set([...COMMON_SURNAMES, ..."민진지엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육인맹제모탁국은편용"]);
-/** 성 + 2글자(김민지·변민수) 또는 2글자 성 + 2글자(남궁민수). 이런 모양일 때만 짧은 이름(성을 뺀 2글자)을 자동으로 바꾼다 */
+/**
+ * 성 + 2글자(김민지·변민수) 또는 2글자 성 + 2글자(남궁민수). 이런 모양일 때만 짧은 이름(성을 뺀 2글자)을 자동으로 바꾼다.
+ * 메모 말(유치원·전도사)과 님·씨로 끝나는 직함·호칭(이사님·원장님·차장님)은 성으로 시작해도 이름 모양이 아니다
+ */
 const surnameShaped = (w: string) =>
-  (w.length === 3 && SHAPE_SURNAMES.has(w[0])) || (w.length === 4 && TWO_CHAR_SURNAMES.has(w.slice(0, 2)));
+  !MEMO_PIECES.has(w) &&
+  !/[님씨]$/.test(w) &&
+  ((w.length === 3 && SHAPE_SURNAMES.has(w[0])) || (w.length === 4 && TWO_CHAR_SURNAMES.has(w.slice(0, 2))));
 /** 성 + 2글자 모양에서 성을 뺀 이름 */
 const givenName = (w: string) => (w.length === 4 ? w.slice(2) : w.slice(1));
 
 // 괄호로 묶은 말. 연락처 이름의 괄호 속 말("지훈(대학)"의 대학)은 메모로 본다
 const BRACKETED = /[([{<（［【〔＜][^)\]}>）］】〕＞]*[)\]}>）］】〕＞]/g;
+
+/** 이름 모양의 말: 호칭·관계·메모 말이 아닌 2글자이거나 성 + 2글자 */
+const nameShaped = (w: string) => !STOP_PIECES.has(w) && !MEMO_PIECES.has(w) && (w.length === 2 || surnameShaped(w));
+/** 높임 꼬리(님·씨)로 끝나는 말. 뗀 뒤 2글자 이상 남을 때만 */
+const honorific = (w: string) => /^[가-힣]{2,}[님씨]$/.test(w);
+
+/**
+ * 여러 조각 이름에서 한글 조각 하나를 이름 조각으로 고를 만한 정도.
+ * - 2: 2글자 이름(민수)이나, 별명 꼬리·머리말을 떼면 이름 모양이 남는 별명(민지공주·우리민지)
+ * - 1: 높임 꼬리(님·씨)를 떼야 이름 모양이 남는 말(민지님). 직함·호칭(대리님·어머님)일 수 있어 2보다 뒤로 고른다
+ * - 0: 그 밖. 1글자(형·군·김), 메모 말(교회·대학), 이름 모양이 남지 않는 3글자 이상 말(동아리·대학동기·대리님·봉사랑)
+ */
+function nameRank(piece: string): 0 | 1 | 2 {
+  if (STOP_PIECES.has(piece) || MEMO_PIECES.has(piece) || piece.length < 2) return 0;
+  if (piece.length === 2) return 2;
+  if (!nickBases(piece).slice(1).some(nameShaped)) return 0;
+  return honorific(piece) ? 1 : 2;
+}
+
+/** 조각들 중 이름 조각으로 고를 것: 정도가 높은 것, 같으면 맨 끝 것. 고를 만한 조각이 없으면 undefined */
+function pickNamePiece(list: string[]): string | undefined {
+  for (const rank of [2, 1]) {
+    const hit = list.filter((p) => nameRank(p) === rank).at(-1);
+    if (hit !== undefined) return hit;
+  }
+  return undefined;
+}
 
 /**
  * 원래 이름 하나에서 나온 말을 세 갈래로 나눈다(같은 말이 여러 갈래면 auto > called > review).
@@ -134,38 +183,48 @@ const BRACKETED = /[([{<（［【〔＜][^)\]}>）］】〕＞]*[)\]}>）］】�
  * - called: 이름의 짧은 이름이 흔한 말(STOP_PIECES)과 같은 것. 성 + 2글자에서 자른 것(김사랑의 사랑, 남궁우리의 우리)과
  *   성 목록과 상관없이 3글자 말의 끝 2글자(봉사랑의 사랑, 예우리의 우리).
  *   바꾸지 않고, 부르는 자리(CALLED_PARTICLES 앞)에 남았으면 확인 화면에 보여 준다
- * - review: 이름 모양이 아닌 데서 나온 말. 성 + 2글자가 아닌 말에서 자른 짧은 이름(어머니의 어머, 민지쓰의 민지)과
- *   여러 조각 이름의 메모 조각. 바꾸지 않고 확인 화면에 보여 준다. 메모 조각은
- *   성 + 2글자 조각이 있으면 그 밖의 조각(교회 박지훈의 교회), 없으면 이름으로 본 조각 하나 밖의 조각(교회 민수의 교회)
- * - 성 + 2글자 조각이 없는 여러 조각 이름은 괄호 밖의 맨 끝 한글 조각 하나만 이름으로 본다
- *   (교회 민수·대학 지훈·지훈(대학)·교회 민지공주의 민수·지훈·민지공주). 그 조각이 2글자도 별명형도 아닌
- *   3글자 이상 말이면(민수 동아리·교회 봉사랑) 모두 메모다. 호칭·관계 말(STOP_PIECES)인 조각은 이름 조각으로 세지 않는다(민지 엄마)
+ * - review: 이름 모양이 아닌 데서 나온 말. 성 + 2글자가 아닌 말에서 자른 짧은 이름(어머니의 어머, 민지쓰의 민지),
+ *   별명 꼬리를 뗀 메모 말(원장님의 원장)과 여러 조각 이름의 메모 조각. 바꾸지 않고 확인 화면에 보여 준다. 메모 조각은
+ *   성 + 2글자 조각이 있으면 그 밖의 조각(교회 박지훈의 교회), 없으면 이름으로 고른 조각 하나 밖의 조각(교회 민수의 교회)
+ *   - likely: review 중 이름으로 고를 만했던(nameRank > 0) 메모 조각과 그 꼬리를 뗀 말(민지 수아의 민지, 박지훈 민수의 민수,
+ *     민지님 수아의 민지님·민지). 이름일 수 있어 확인 화면에서 바꾸기를 미리 고른다
+ * - 성 + 2글자 조각이 없는 여러 조각 이름은 한글 조각 하나만 이름으로 고른다(pickNamePiece: 2글자 이름·별명형을 먼저,
+ *   님으로 끝나는 말은 그다음, 같은 정도면 맨 끝 것, 괄호 밖을 먼저). 예: 교회 민수·민수 교회·민수 형·민수 동아리의 민수,
+ *   지훈 대리님의 지훈, 교회 민지공주의 민지공주, 교회 민지님의 민지님.
+ *   고를 조각이 없으면(교회 봉사랑) 모두 메모다. 호칭·관계 말(STOP_PIECES)인 조각은 이름 조각으로 세지 않는다(민지 엄마)
+ * - 메모 말(MEMO_PIECES) 조각은 다른 조각이 있으면 언제나 메모 조각이다(Minji 교회의 교회)
  * - 한글이 아닌 덩어리("Minji Kim"의 Minji·Kim)는 2글자 이상이고 글자가 들어 있으면 auto
  * - 그 밖에 STOP_PIECES인 조각·짧은 이름은 뺀다. 글자·숫자가 하나도 없는 이름(".")은 본문에서 찾지 않는다
  */
-function nameTiers(name: string): { auto: string[]; called: string[]; review: string[] } {
+function nameTiers(name: string): { auto: string[]; called: string[]; review: string[]; likely: string[] } {
   const auto = new Set<string>();
   const called = new Set<string>();
   const review = new Set<string>();
+  const likely = new Set<string>();
   const pieces = name.match(PIECE) ?? [];
   // 이름 조각 후보: 호칭·관계 말이 아닌 한글 조각
   const named = pieces.filter((p) => HANGUL_RUN.test(p) && !STOP_PIECES.has(p));
   const shaped = named.some(surnameShaped);
-  // 성 + 2글자 조각이 없을 때 이름으로 보는 조각 하나: 괄호 밖의 맨 끝 조각(모두 괄호 속이면 맨 끝 조각).
-  // 그 조각이 이름 같지 않으면(2글자도 별명형도 아닌 3글자 이상 말: 동아리·봉사랑) 이름 조각이 없다
+  // 성 + 2글자 조각이 없을 때 이름으로 고르는 조각 하나. 괄호 밖에서 먼저 고르고, 없으면 괄호 속에서 고른다
   const outside = (name.replace(BRACKETED, " ").match(PIECE) ?? []).filter((p) => named.includes(p));
-  const last = outside.at(-1) ?? named.at(-1);
-  const namePiece = last !== undefined && (last.length === 2 || nickBases(last).length > 1) ? last : undefined;
+  const namePiece = shaped ? undefined : (pickNamePiece(outside) ?? pickNamePiece(named));
   for (const piece of pieces) {
     if (!HANGUL_RUN.test(piece)) {
       if ([...piece].length >= 2 && /\p{L}/u.test(piece)) auto.add(piece);
       continue;
     }
-    // 여러 조각 이름의 메모 조각: 성 + 2글자 조각이 있으면 그 밖의 조각, 없으면 이름으로 본 조각 밖의 조각
-    const label = named.length >= 2 && !surnameShaped(piece) && (shaped || piece !== namePiece);
+    // 여러 조각 이름의 메모 조각: 성 + 2글자 조각이 있으면 그 밖의 조각, 없으면 이름으로 고른 조각 밖의 조각.
+    // 메모 말 조각은 다른 조각이 있으면 언제나 메모다
+    const label =
+      !surnameShaped(piece) &&
+      ((named.length >= 2 && (shaped || piece !== namePiece)) || (MEMO_PIECES.has(piece) && pieces.length >= 2));
+    // 이름으로 고를 만했던 메모 조각은 이름일 수 있다(민지 수아의 민지, 민지님 수아의 민지님)
+    const maybeName = label && nameRank(piece) > 0;
     for (const base of nickBases(piece)) {
       if (STOP_PIECES.has(base) || base.length < 2) continue;
-      (label ? review : auto).add(base);
+      // 별명 꼬리를 뗀 메모 말(원장님의 원장·어머님의 어머)은 자동으로 바꾸지 않는다
+      (label || (base !== piece && MEMO_PIECES.has(base)) ? review : auto).add(base);
+      if (maybeName) likely.add(base);
       // 3글자 말의 끝 2글자가 흔한 말이면(봉사랑·예우리) 성 목록에 없는 성이어도 부르는 자리를 확인 화면에 보여 준다
       if (base.length === 3 && STOP_PIECES.has(base.slice(1))) called.add(base.slice(1));
       // 메모 조각에서는 짧은 이름을 자르지 않는다("동아리"의 아리)
@@ -189,6 +248,7 @@ function nameTiers(name: string): { auto: string[]; called: string[]; review: st
     auto: /[\p{L}\p{N}]/u.test(name) ? [name, ...auto] : [],
     called: [...called],
     review: [...review],
+    likely: [...likely].filter((k) => review.has(k)),
   };
 }
 
@@ -306,7 +366,8 @@ export function applyDisplayNames(
 
 /**
  * 바꾼 뒤에도 본문에 남은 원래 이름 조각 하나. ids는 그 조각이 든 메시지 id(처음 나온 순서).
- * suggest: 확인 화면에서 바꾸기를 미리 고를 만한가. 이름 모양이 아닌 데서 나온 말(어머·교회)은 부르는 말("~야")로 쓰인 적이 있을 때만
+ * suggest: 확인 화면에서 바꾸기를 미리 고를 만한가. 이름 모양이 아닌 데서 나온 말(어머·교회)은 부르는 말("~야")로 쓰인 적이 있을 때만.
+ * 여러 조각 이름에서 이름으로 고르지 않았지만 이름 모양인 조각(민지 수아의 민지)은 늘 권한다
  */
 export interface NameLeftover {
   piece: string;
@@ -315,12 +376,16 @@ export interface NameLeftover {
   suggest: boolean;
 }
 
-/** map 전체의 called·review 말(소문자 → 원래 말). auto 말과 표시 이름 속 말은 뺀다 */
-function softKeys(map: NameMap): { called: Map<string, string>; review: Map<string, string> } {
+/**
+ * map 전체의 called·review 말(소문자 → 원래 말). auto 말과 표시 이름 속 말은 뺀다.
+ * likely: review 중 어느 이름에서든 이름일 수 있는 메모 조각(nameTiers의 likely)으로 나온 말(소문자)
+ */
+function softKeys(map: NameMap): { called: Map<string, string>; review: Map<string, string>; likely: Set<string> } {
   const shown = Object.values(map).map((v) => fold(v.trim()));
   const autoKeys = new Set(Object.keys(map).flatMap((n) => nameKeys(n).map(fold)));
   const called = new Map<string, string>();
   const review = new Map<string, string>();
+  const likely = new Set<string>();
   for (const name of Object.keys(map)) {
     const tiers = nameTiers(name);
     for (const [list, into] of [
@@ -333,8 +398,9 @@ function softKeys(map: NameMap): { called: Map<string, string>; review: Map<stri
         into.set(f, k);
       }
     }
+    for (const k of tiers.likely) likely.add(fold(k));
   }
-  return { called, review };
+  return { called, review, likely };
 }
 
 /**
@@ -356,7 +422,7 @@ export function findNameLeftovers(msgs: ChatMessage[], map: NameMap): NameLeftov
       pieces.set(f, k);
     }
   }
-  const { called, review } = softKeys(map);
+  const { called, review, likely } = softKeys(map);
   // auto 말은 경계 없이(자동 바꾸기가 놓친 "민지수"의 민지), called는 부르는 자리만, review는 자동 바꾸기와 같은 경계로 찾는다
   const searches: { re: RegExp; table: Map<string, string>; always: boolean }[] = [];
   if (pieces.size > 0) {
@@ -376,7 +442,11 @@ export function findNameLeftovers(msgs: ChatMessage[], map: NameMap): NameLeftov
         const hit = match[0];
         const piece = lookup(table, hit) ?? hit;
         let f = found.get(piece);
-        if (!f) found.set(piece, (f = { piece, count: 0, ids: [], suggest: always }));
+        if (!f) {
+          // 이름일 수 있는 메모 조각(민지 수아의 민지)은 처음부터 바꾸기를 권한다
+          const suggest = always || (table === review && likely.has(fold(piece)));
+          found.set(piece, (f = { piece, count: 0, ids: [], suggest }));
+        }
         f.count++;
         if (f.ids.at(-1) !== m.id) f.ids.push(m.id);
         if (!f.suggest && VOCATIVE_AFTER.test(m.text.slice(match.index + hit.length))) f.suggest = true;
