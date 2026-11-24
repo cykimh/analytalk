@@ -125,13 +125,21 @@ const surnameShaped = (w: string) =>
 /** 성 + 2글자 모양에서 성을 뺀 이름 */
 const givenName = (w: string) => (w.length === 4 ? w.slice(2) : w.slice(1));
 
+// 괄호로 묶은 말. 연락처 이름의 괄호 속 말("지훈(대학)"의 대학)은 메모로 본다
+const BRACKETED = /[([{<（［【〔＜][^)\]}>）］】〕＞]*[)\]}>）］】〕＞]/g;
+
 /**
  * 원래 이름 하나에서 나온 말을 세 갈래로 나눈다(같은 말이 여러 갈래면 auto > called > review).
  * - auto: 본문에서 자동으로 바꾼다. 전체 이름, 이름 조각, 별명 꼬리·머리말을 뗀 말, 성 + 2글자 모양에서 자른 짧은 이름
- * - called: 성 + 2글자에서 자른 짧은 이름이 흔한 말(STOP_PIECES)과 같은 것(김사랑의 사랑, 이우리의 우리).
+ * - called: 이름의 짧은 이름이 흔한 말(STOP_PIECES)과 같은 것. 성 + 2글자에서 자른 것(김사랑의 사랑, 남궁우리의 우리)과
+ *   성 목록과 상관없이 3글자 말의 끝 2글자(봉사랑의 사랑, 예우리의 우리).
  *   바꾸지 않고, 부르는 자리(CALLED_PARTICLES 앞)에 남았으면 확인 화면에 보여 준다
  * - review: 이름 모양이 아닌 데서 나온 말. 성 + 2글자가 아닌 말에서 자른 짧은 이름(어머니의 어머, 민지쓰의 민지)과
- *   여러 조각 이름에서 이름 모양이 아닌 조각(동아리 민수의 동아리, 교회 박지훈의 교회). 바꾸지 않고 확인 화면에 보여 준다
+ *   여러 조각 이름의 메모 조각. 바꾸지 않고 확인 화면에 보여 준다. 메모 조각은
+ *   성 + 2글자 조각이 있으면 그 밖의 조각(교회 박지훈의 교회), 없으면 이름으로 본 조각 하나 밖의 조각(교회 민수의 교회)
+ * - 성 + 2글자 조각이 없는 여러 조각 이름은 괄호 밖의 맨 끝 한글 조각 하나만 이름으로 본다
+ *   (교회 민수·대학 지훈·지훈(대학)·교회 민지공주의 민수·지훈·민지공주). 그 조각이 2글자도 별명형도 아닌
+ *   3글자 이상 말이면(민수 동아리·교회 봉사랑) 모두 메모다. 호칭·관계 말(STOP_PIECES)인 조각은 이름 조각으로 세지 않는다(민지 엄마)
  * - 한글이 아닌 덩어리("Minji Kim"의 Minji·Kim)는 2글자 이상이고 글자가 들어 있으면 auto
  * - 그 밖에 STOP_PIECES인 조각·짧은 이름은 뺀다. 글자·숫자가 하나도 없는 이름(".")은 본문에서 찾지 않는다
  */
@@ -140,20 +148,26 @@ function nameTiers(name: string): { auto: string[]; called: string[]; review: st
   const called = new Set<string>();
   const review = new Set<string>();
   const pieces = name.match(PIECE) ?? [];
-  const hangul = pieces.filter((p) => HANGUL_RUN.test(p));
+  // 이름 조각 후보: 호칭·관계 말이 아닌 한글 조각
+  const named = pieces.filter((p) => HANGUL_RUN.test(p) && !STOP_PIECES.has(p));
+  const shaped = named.some(surnameShaped);
+  // 성 + 2글자 조각이 없을 때 이름으로 보는 조각 하나: 괄호 밖의 맨 끝 조각(모두 괄호 속이면 맨 끝 조각).
+  // 그 조각이 이름 같지 않으면(2글자도 별명형도 아닌 3글자 이상 말: 동아리·봉사랑) 이름 조각이 없다
+  const outside = (name.replace(BRACKETED, " ").match(PIECE) ?? []).filter((p) => named.includes(p));
+  const last = outside.at(-1) ?? named.at(-1);
+  const namePiece = last !== undefined && (last.length === 2 || nickBases(last).length > 1) ? last : undefined;
   for (const piece of pieces) {
     if (!HANGUL_RUN.test(piece)) {
       if ([...piece].length >= 2 && /\p{L}/u.test(piece)) auto.add(piece);
       continue;
     }
-    // 여러 조각 이름에서 이름 모양이 아닌 조각: 3글자 이상이거나, 다른 조각이 성 + 2글자 이름인 2글자 조각
-    const label =
-      hangul.length >= 2 &&
-      !surnameShaped(piece) &&
-      (piece.length >= 3 || hangul.some((other) => other !== piece && surnameShaped(other)));
+    // 여러 조각 이름의 메모 조각: 성 + 2글자 조각이 있으면 그 밖의 조각, 없으면 이름으로 본 조각 밖의 조각
+    const label = named.length >= 2 && !surnameShaped(piece) && (shaped || piece !== namePiece);
     for (const base of nickBases(piece)) {
       if (STOP_PIECES.has(base) || base.length < 2) continue;
       (label ? review : auto).add(base);
+      // 3글자 말의 끝 2글자가 흔한 말이면(봉사랑·예우리) 성 목록에 없는 성이어도 부르는 자리를 확인 화면에 보여 준다
+      if (base.length === 3 && STOP_PIECES.has(base.slice(1))) called.add(base.slice(1));
       // 메모 조각에서는 짧은 이름을 자르지 않는다("동아리"의 아리)
       if (label) continue;
       // 성 + 2글자 모양의 성을 뺀 이름만 auto(called). 나머지 자른 말(앞 2글자·끝 2글자)은 review

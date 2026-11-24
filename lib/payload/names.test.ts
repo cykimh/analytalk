@@ -263,6 +263,20 @@ describe("findNameLeftovers", () => {
     expect(msgs[0].text).toBe("우리야 밥먹자");
     expect(findNameLeftovers(msgs, map)).toEqual([{ piece: "우리", count: 1, ids: [msgs[0].id], suggest: true }]);
   });
+
+  // 성 모양 목록(SHAPE_SURNAMES) 밖의 성(봉·예)이어도, 3글자 이름의 끝 2글자가 흔한 말이면 부르는 자리를 확인 화면에 보여 준다 (N2)
+  it.each([
+    ["봉사랑", "사랑아 뭐해", "사랑"],
+    ["예우리", "우리야 밥", "우리"],
+    ["동아리 봉사랑", "사랑아 뭐해", "사랑"],
+  ])("성 목록 밖의 '%s': '%s'는 바꾸지 않고 확인 화면에 바꾸기를 권한다", (name, text, piece) => {
+    const map = { [name]: "P1" };
+    const msgs = renamed([text, "사랑해 우리 집"], map);
+    expect(msgs.map((m) => m.text)).toEqual([text, "사랑해 우리 집"]);
+    expect(findNameLeftovers(msgs, map)).toContainEqual({ piece, count: 1, ids: [msgs[0].id], suggest: true });
+    const fixed = applyNameFixes(msgs, { [piece]: "P1" }, map).map((m) => m.text);
+    expect(fixed).toEqual([text.replace(piece, "P1"), "사랑해 우리 집"]);
+  });
 });
 
 // 연락처 메모·관계 말·안드로이드 '회원님'처럼 사람 이름 모양이 아닌 이름에서 조각을 잘라 본문의 흔한 말을 바꾸지 않는다 (D4).
@@ -287,6 +301,36 @@ describe("이름 모양이 아닌 이름의 조각", () => {
       { piece: "교회", count: 1, ids: [r.messages[1].id], suggest: false },
       { piece: "동아리", count: 1, ids: [r.messages[0].id], suggest: false },
     ]);
+  });
+
+  // 이름 모양(성 + 2글자) 조각이 없는 여러 조각 이름: 맨 끝 한글 조각만 이름으로 바꾸고, 나머지 조각은 확인 화면에만 (D4)
+  it.each([
+    ["교회 민수", "교회 갔다 왔어", "민수야 밥", "P1야 밥", "교회"],
+    ["대학 지훈", "대학 가자", "지훈아 어디", "P1아 어디", "대학"],
+    ["헬스 민수", "헬스 가자", "민수랑 갔어", "P1랑 갔어", "헬스"],
+  ])("'%s': '%s'는 그대로 두고 확인 화면에 권하지 않는 항목으로, 이름 조각은 바꾼다", (name, common, called, renamedText, label) => {
+    const map = { [name]: "P1" };
+    const r = run([common, called, `${name} 왔다`], map);
+    expect(r.texts).toEqual([common, renamedText, "P1 왔다"]);
+    expect(r.left).toEqual([{ piece: label, count: 1, ids: [r.messages[0].id], suggest: false }]);
+  });
+
+  it("괄호 속 메모('지훈(대학)'·'(교회) 민수')는 메모로 보고, 괄호 밖 조각을 이름으로 바꾼다", () => {
+    expect(run(["대학 가자", "지훈아 어디"], { "지훈(대학)": "P1" }).texts).toEqual(["대학 가자", "P1아 어디"]);
+    expect(run(["교회 갔다 왔어", "민수야 밥"], { "(교회) 민수": "P1" }).texts).toEqual(["교회 갔다 왔어", "P1야 밥"]);
+  });
+
+  it("맨 끝 조각이 별명형이면 이름으로 본다('교회 민지공주')", () => {
+    expect(run(["교회 가자", "민지야 밥"], { "교회 민지공주": "P1" }).texts).toEqual(["교회 가자", "P1야 밥"]);
+  });
+
+  it.each([
+    ["민수 동아리", "동아리 가자", "민수야 밥", "민수"],
+    ["교회 봉사랑", "교회 가자", "봉사랑 왔다", "봉사랑"],
+  ])("맨 끝 조각이 3글자 이상 말이면 '%s'의 어느 조각도 자동으로 바꾸지 않고 모두 확인 화면에 보여 준다", (name, common, named, piece) => {
+    const r = run([common, named], { [name]: "P1" });
+    expect(r.texts).toEqual([common, named]);
+    expect(r.left.map((l) => l.piece)).toEqual(expect.arrayContaining([common.split(" ")[0], piece]));
   });
 
   it("'어머니'·'작은이모'·'회원님': 앞뒤를 자른 말(어머·작은·회원)로 본문을 바꾸지 않는다", () => {
