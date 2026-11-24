@@ -7,9 +7,10 @@ vi.mock("idb-keyval", () => ({
   get: async (key: string) => store.get(key),
   set: async (key: string, value: unknown) => void store.set(key, value),
   del: async (key: string) => void store.delete(key),
+  entries: async () => [...store.entries()],
 }));
 
-const { deletePayload, loadPayload, savePayload } = await import("./idb");
+const { deletePayload, loadPayload, savePayload, sweepPayloads } = await import("./idb");
 
 const payload = { v: 1, me: "멤버1", transcript: "# 2024-03-14\nm0|03-14 00:05|멤버1|안녕" } as unknown as Payload;
 const HOUR = 3_600_000;
@@ -52,5 +53,16 @@ describe("idb payload", () => {
     await savePayload("c2", payload);
     await deletePayload("c1");
     expect([...store.keys()]).toEqual(["payload:c2"]);
+  });
+
+  it("sweepPayloads는 24시간이 지났거나 형식이 다른 payload:* 만 지운다(다시 찾아오지 않은 대화의 것까지)", async () => {
+    await savePayload("old", payload);
+    vi.setSystemTime(Date.UTC(2026, 10, 24, 0, 0) + 12 * HOUR);
+    await savePayload("fresh", payload);
+    store.set("payload:broken", { payload });
+    store.set("other", "그대로");
+    vi.setSystemTime(Date.UTC(2026, 10, 24, 0, 0) + 24 * HOUR + 1);
+    await sweepPayloads();
+    expect([...store.keys()].sort()).toEqual(["other", "payload:fresh"]);
   });
 });

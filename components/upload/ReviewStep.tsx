@@ -1,7 +1,7 @@
 "use client";
 
 // 보낼 내용 확인: 고지(PRD 4장) → 보낼 범위 → 가린 항목 → 미리보기 20줄 → 단톡방 동의 → [AI 연재 만들기].
-// 안전 신호가 있으면 버튼 대신 도움 안내를 띄운다. [AI 연재 만들기]는 Task 13에서 연결한다(그 전까지 비활성).
+// 안전 신호가 있으면 버튼 대신 도움 안내를 띄운다. [AI 연재 만들기]는 단톡방이면 동의 체크 뒤에, 직장·팀이면 열지 않는다(M3).
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { formatCount } from "@/components/stats/format";
@@ -37,13 +37,17 @@ export function ReviewStep({
   payload,
   messages,
   safety,
+  busy,
   onBack,
+  onCreate,
 }: {
   payload: Payload;
   /** 페이로드를 만든 메시지(이름 정리 뒤) */
   messages: ChatMessage[];
   safety: "self_harm" | "violence" | null;
+  busy: boolean;
   onBack: () => void;
+  onCreate: () => void;
 }) {
   const [told, setTold] = useState(false);
   const s = sendSummary(payload, messages);
@@ -53,12 +57,12 @@ export function ReviewStep({
     .map((t) => ` + ${t}`)
     .join("");
   const group = payload.kind === "group";
-  const note =
-    payload.kind === "work"
-      ? "직장·팀 리포트는 M3에서 열려요. 지금은 통계만 볼 수 있어요."
-      : group && !told
-        ? "방 사람들에게 말한 뒤에 만들 수 있어요."
-        : "AI 연재는 곧 열려요.";
+  const work = payload.kind === "work";
+  const note = work
+    ? "직장·팀 리포트는 M3에서 열려요. 지금은 통계만 볼 수 있어요."
+    : group && !told
+      ? "방 사람들에게 말한 뒤에 만들 수 있어요."
+      : "1편은 몇 분 걸려요. 창을 닫아도 서버에서 계속 써요.";
 
   return (
     <StepFrame title="보낼 내용 확인" onBack={onBack}>
@@ -107,9 +111,8 @@ export function ReviewStep({
               방 사람들에게 말했어요
             </label>
           )}
-          {/* Task 13 전까지 비활성 */}
-          <Button size="lg" disabled>
-            AI 연재 만들기
+          <Button size="lg" disabled={busy || work || (group && !told)} onClick={onCreate}>
+            {busy ? "보내는 중…" : "AI 연재 만들기"}
           </Button>
           <p className="text-xs text-muted-foreground">{note}</p>
         </div>

@@ -1,11 +1,22 @@
 "use client";
 
-// /new 흐름: 파일 → (Worker) 파싱 → 확인·방 종류 → 나는 누구? → 이름 정리 → 남은 이름 → (Worker) 페이로드 → 통계 → 보낼 내용 확인.
+// /new 흐름: 파일 → (Worker) 파싱 → 확인·방 종류 → 나는 누구? → 이름 정리 → 남은 이름 → (Worker) 페이로드 → 통계 → 보낼 내용 확인
+// → [AI 연재 만들기](페이로드만 보낸다) → /c/[id]/steps.
 // 원본 파일·파싱 결과·실제 이름은 이 컴포넌트와 Worker(브라우저 메모리)에만 있다.
+import { useRouter } from "next/navigation";
 import { type ReactNode, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { StatsDashboard } from "@/components/stats/StatsDashboard";
-import { buildInWorker, type BuildRequest, parseInWorker, type RenameResult, renameInWorker } from "@/lib/client/worker";
+import { savePayload } from "@/lib/client/idb";
+import { createSeries, postJson } from "@/lib/client/submit";
+import {
+  buildInWorker,
+  type BuildRequest,
+  parseInWorker,
+  type RenameResult,
+  renameInWorker,
+  retryBuildInput,
+} from "@/lib/client/worker";
 import { INPUT_TOKEN_BUDGET, TOKENS_PER_CHAR } from "@/lib/config";
 import type { Payload } from "@/lib/payload/build";
 import type { ParseResult } from "@/lib/parse/parse";
@@ -31,7 +42,7 @@ import { UploadStep } from "./UploadStep";
 
 type Step = "upload" | "confirm" | "me" | "names" | "leftovers" | "stats" | "review";
 type Renamed = Extract<RenameResult, { ok: true }>;
-/** 첫 페이로드를 만든 입력. 413이면 Task 13이 retryBuildInput(input, maxTokens)로 한 번 다시 만든다 */
+/** 첫 페이로드를 만든 입력. 413이면 retryBuildInput(input, maxTokens)로 한 번 다시 만든다 */
 type Built = { payload: Payload; input: Extract<BuildRequest, { inputBudget: number }> };
 
 const NOT_KAKAO = "카카오톡 대화 내보내기 파일이 아닌 것 같아요. 내보낸 .txt·.csv·.zip 파일을 그대로 올려 주세요.";
@@ -39,6 +50,7 @@ const NO_MESSAGES = "읽을 메시지가 없어요. 대화 내용이 든 파일�
 const errorText = (error: unknown) => (error instanceof Error && error.message ? error.message : "브라우저에서 대화를 읽지 못했어요");
 
 export function UploadFlow({ inApp }: { inApp: boolean }) {
+  const router = useRouter();
   const [step, setStep] = useState<Step>("upload");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -126,6 +138,31 @@ export function UploadFlow({ inApp }: { inApp: boolean }) {
       setStep("stats");
     });
 
+  /**
+   * [AI 연재 만들기]: 202·200이면 받아 준 페이로드를 이 브라우저에 두고 진행 화면으로 간다.
+   * 413이면 한 번만 줄여 다시 보낸다. 성공하면 화면이 바뀔 때까지 버튼을 막아 둔다
+   */
+  async function create() {
+    if (!built) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await createSeries(built.payload, {
+        post: postJson("/api/conversations"),
+        rebuild: (maxTokens) => buildInWorker(retryBuildInput(built.input, maxTokens)),
+        save: savePayload,
+      });
+      if (r.ok) {
+        router.push(`/c/${r.id}/steps`);
+        return;
+      }
+      setError(r.message);
+    } catch (e) {
+      setError(errorText(e));
+    }
+    setBusy(false);
+  }
+
   const back = (to: Step) => () => {
     setError(null);
     setStep(to);
@@ -189,7 +226,16 @@ export function UploadFlow({ inApp }: { inApp: boolean }) {
       </StepFrame>
     );
   } else if (step === "review" && built && renamed) {
-    body = <ReviewStep payload={built.payload} messages={built.input.messages} safety={renamed.safety} onBack={back("stats")} />;
+    body = (
+      <ReviewStep
+        payload={built.payload}
+        messages={built.input.messages}
+        safety={renamed.safety}
+        busy={busy}
+        onBack={back("stats")}
+        onCreate={create}
+      />
+    );
   }
 
   return (
