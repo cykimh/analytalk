@@ -14,6 +14,11 @@ export interface ConversationView {
   msgSent: number;
   /** 자동 삭제 시각(ISO) */
   expiresAt: string;
+  /** 공유 링크가 살아 있다(토큰 해시는 오지 않는다) */
+  shared: boolean;
+  /** 공유 범위·숨긴 편. 공유한 적이 없으면 null·[]이고, 폐기해도 남는다 */
+  shareScope: "first" | "all" | null;
+  shareHidden: number[];
   episodes: { n: number; status: string; content: StoredEpisode | null; errorCode: string | null }[];
 }
 

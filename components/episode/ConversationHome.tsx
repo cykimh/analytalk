@@ -1,6 +1,6 @@
 "use client";
 
-// /c/[id] 대화 홈: 읽은 범위·삭제 예정일 → 4편 카드([읽기]·[다시 쓰기]) → 통계 → [지금 삭제].
+// /c/[id] 대화 홈: 읽은 범위·삭제 예정일 → 4편 카드([읽기]·[다시 쓰기]) → [공유] → 통계 → [지금 삭제].
 // 탭을 다시 열어도 API에서 상태를 불러오고, 쓰는 편이 있으면 폴링해 끝난 편부터 연다.
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -14,6 +14,7 @@ import type { StoredEpisode } from "@/lib/llm/schema";
 import type { ChatStats } from "@/lib/stats/compute";
 import { AI_NOTICE, episodeAction, kstDay, PAUSED_TEXT, readRange, SAFETY_HELP, STATUS_TEXT } from "./model";
 import { blocking, PageFrame, PageState } from "./PageState";
+import { SharePanel } from "./SharePanel";
 import { StatText } from "./StatText";
 import { useConversation } from "./useConversation";
 
@@ -174,6 +175,8 @@ export function ConversationHome({ id }: { id: string }) {
           ))}
         </div>
       </section>
+
+      <SharePanel id={id} conversation={c} onChanged={reload} />
 
       <section aria-labelledby="stats-title" className="grid gap-3">
         <h2 id="stats-title" className="text-sm font-semibold">

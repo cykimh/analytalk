@@ -28,6 +28,8 @@ export async function handleGetConversation(req: Request, deps: HandlerDeps, id:
       cutoffAt: row.cutoffAt,
       msgSent: row.msgSent,
       expiresAt: row.expiresAt,
+      // 링크가 살아 있는지만 알린다. 토큰 해시는 내보내지 않는다
+      shared: row.shareTokenHash !== null,
       shareScope: row.shareScope,
       shareHidden: row.shareHidden,
       episodes: row.episodes.map(({ n, status, content, errorCode }) => ({ n, status, content, errorCode })),

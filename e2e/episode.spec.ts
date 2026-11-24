@@ -44,13 +44,27 @@ function content(n: number, quote: string, statText = false) {
   };
 }
 
-/** 편 상태(statuses)를 바꿔 가며 대화·상태 API를 흉내 낸다. 다시 쓰기·피드백 요청 본문을 모은다 */
+/** 공유 API가 처음 만들 때 돌려주는 링크 */
+const SHARE_URL = "http://localhost:3100/s/AAAAAAAAAAAAAAAAAAAAAA";
+
+/** 편 상태(statuses)를 바꿔 가며 대화·상태·공유 API를 흉내 낸다. 다시 쓰기·피드백·공유 요청 본문을 모은다 */
 async function fakeApi(
   context: BrowserContext,
   statuses: string[],
-  o: { paused?: boolean; quote?: string; statText?: boolean } = {},
+  o: { paused?: boolean; quote?: string; statText?: boolean; shared?: boolean } = {},
 ) {
-  const api = { statuses: [...statuses], paused: o.paused ?? false, retries: [] as unknown[], feedback: [] as unknown[], deleted: 0 };
+  const api = {
+    statuses: [...statuses],
+    paused: o.paused ?? false,
+    retries: [] as unknown[],
+    feedback: [] as unknown[],
+    deleted: 0,
+    share: { shared: o.shared ?? false, scope: (o.shared ? "all" : null) as string | null, hidden: [] as number[] },
+    sharePosts: [] as unknown[],
+    shareDeletes: [] as unknown[],
+    /** 다음 POST /api/shares 하나를 이 상태로 돌려준다(동시 변경 409 등) */
+    shareReply: null as number | null,
+  };
   const hasContent = (s: string) => s === "done" || s === "partial";
   const note = o.statText ? "{{stat:total}}개를 {{stat:nope}}읽었다" : "저녁마다 이야기했다";
   await context.route(`**/api/conversations/${ID}`, (route) => {
@@ -67,8 +81,9 @@ async function fakeApi(
         cutoffAt: "2026-09-30T15:00:00.000Z",
         msgSent: messages.length,
         expiresAt: "2026-12-24T03:00:00.000Z",
-        shareScope: null,
-        shareHidden: [],
+        shared: api.share.shared,
+        shareScope: api.share.scope,
+        shareHidden: api.share.hidden,
         episodes: api.statuses.map((status, i) => ({
           n: i + 1,
           status,
@@ -106,6 +121,22 @@ async function fakeApi(
   await context.route("**/api/feedback", (route) => {
     api.feedback.push(route.request().postDataJSON());
     return route.fulfill({ status: 204 });
+  });
+  // shares.ts와 같다: 처음 만들면 {url}, 이미 공유 중이면 {url: null}, DELETE는 204(범위·숨김은 남긴다)
+  await context.route("**/api/shares", (route) => {
+    const body = route.request().postDataJSON() as { scope: string; hidden: number[] };
+    if (route.request().method() === "DELETE") {
+      api.shareDeletes.push(body);
+      api.share.shared = false;
+      return route.fulfill({ status: 204 });
+    }
+    api.sharePosts.push(body);
+    const reply = api.shareReply;
+    api.shareReply = null;
+    if (reply !== null) return route.fulfill({ status: reply, json: { error: "conflict" } });
+    const issued = !api.share.shared;
+    api.share = { shared: true, scope: body.scope, hidden: body.hidden };
+    return route.fulfill({ json: { url: issued ? SHARE_URL : null, shared: true } });
   });
   return api;
 }
@@ -226,7 +257,7 @@ test.describe("AI 연재", () => {
     await expect(card(again, 2)).toContainText("쓰는 중");
     await expect(card(again, 3)).toContainText("기다리는 중");
     await expect(again.getByText("2026-10-01 이후 6개")).toBeVisible();
-    await expect(again.getByText(/2026-12-24/)).toBeVisible();
+    await expect(again.getByText("2026-12-24 (30일 보관)")).toBeVisible();
     await expect(again.getByText("AI 생성, 재미·참고용")).toBeVisible();
 
     api.statuses = ["done", "done", "running", "running"];
@@ -343,6 +374,145 @@ test.describe("AI 연재", () => {
     expect(await bodyText()).not.toMatch(/\{\{|stat:/);
   });
 
+  test.describe("공유", () => {
+    const panel = (page: Page) => page.getByRole("region", { name: "공유", exact: true });
+    const NOTICE =
+      "링크를 받은 사람은 초대 코드 없이 읽을 수 있어요. 인용된 대화 원문이 함께 보여요. 대화와 함께 2026-12-24에 사라져요";
+
+    /** navigator.share가 없는 브라우저(링크 복사로 간다) */
+    const withoutNativeShare = (page: Page) =>
+      page.addInitScript(() => {
+        delete (Navigator.prototype as { share?: unknown }).share;
+      });
+
+    /** navigator.share가 있는 브라우저. 받은 {title, url}을 window.__shared에 남긴다 */
+    const withNativeShare = (page: Page) =>
+      page.addInitScript(() => {
+        Object.defineProperty(Navigator.prototype, "share", {
+          configurable: true,
+          value: async (data: ShareData) => {
+            (window as unknown as { __shared: ShareData[] }).__shared = [
+              ...((window as unknown as { __shared?: ShareData[] }).__shared ?? []),
+              data,
+            ];
+          },
+        });
+      });
+
+    test("1편이 끝나야 보이고, [링크 만들기]는 링크를 복사하며, 새로 열어도 이 기기의 링크가 남고, [링크 폐기]는 한 번 더 묻고 DELETE를 보낸다", async ({
+      page,
+      context,
+      browserName,
+    }) => {
+      await withoutNativeShare(page);
+      // Chromium은 진짜 클립보드를 읽는다. WebKit은 권한을 줄 수 없어 writeText를 기록하는 것으로 바꾼다
+      if (browserName === "chromium") {
+        await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      } else {
+        await page.addInitScript(() => {
+          Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: { writeText: async (text: string) => void ((window as unknown as { __copied: string }).__copied = text) },
+          });
+        });
+      }
+      const copied = () =>
+        browserName === "chromium"
+          ? page.evaluate(() => navigator.clipboard.readText())
+          : page.evaluate(() => (window as unknown as { __copied?: string }).__copied ?? "");
+
+      const api = await fakeApi(context, ["running", "queued", "queued", "queued"]);
+      await page.goto(`/c/${ID}`);
+      await expect(card(page, 1)).toContainText("쓰는 중");
+      await expect(panel(page)).toHaveCount(0);
+
+      api.statuses = ["done", "running", "queued", "queued"];
+      await page.reload();
+      await expect(panel(page)).toContainText(NOTICE);
+      await expect(panel(page).getByRole("radio", { name: "1편만" })).toBeChecked();
+      // 숨김은 내용이 있는 편만 고를 수 있다
+      await expect(panel(page).getByRole("checkbox", { name: "1편 숨기기" })).not.toBeChecked();
+      await expect(panel(page).getByRole("checkbox", { name: "2편 숨기기" })).toHaveCount(0);
+
+      await panel(page).getByRole("radio", { name: "4편 전체" }).check();
+      await panel(page).getByRole("button", { name: "링크 만들기" }).click();
+      await expect(panel(page).getByText("링크를 복사했어요")).toBeVisible();
+      expect(api.sharePosts).toEqual([{ id: ID, scope: "all", hidden: [] }]);
+      expect(await copied()).toBe(SHARE_URL);
+
+      // 다시 열어도 이 브라우저가 기억한 링크로 [링크 복사]를 쓸 수 있다
+      await page.reload();
+      await expect(panel(page)).toContainText(SHARE_URL);
+      await expect(panel(page).getByRole("radio", { name: "4편 전체" })).toBeChecked();
+      await expect(panel(page).getByRole("button", { name: "카톡으로 보내기" })).toHaveCount(0);
+      await expect(panel(page).getByRole("button", { name: "링크 만들기" })).toHaveCount(0);
+      await panel(page).getByRole("button", { name: "링크 복사" }).click();
+      await expect(panel(page).getByText("링크를 복사했어요")).toBeVisible();
+      expect(api.sharePosts).toHaveLength(1);
+
+      await panel(page).getByRole("button", { name: "링크 폐기" }).click();
+      await expect(panel(page)).toContainText("이전 링크는 바로 열리지 않아요");
+      expect(api.shareDeletes).toEqual([]);
+      await panel(page).getByRole("button", { name: "정말 폐기" }).click();
+      await expect.poll(() => api.shareDeletes).toEqual([{ id: ID }]);
+      await expect(panel(page).getByRole("button", { name: "링크 만들기" })).toBeVisible();
+      await expect(panel(page)).not.toContainText(SHARE_URL);
+      // 폐기한 링크는 이 브라우저에서도 잊는다
+      expect(await page.evaluate((id) => localStorage.getItem(`analytalk:share:${id}`), ID)).toBeNull();
+    });
+
+    test("navigator.share가 있으면 [링크 만들기]가 컨셉 제목(이름 없음)으로 공유하고, 범위·숨김을 바꾸면 [저장]은 링크를 그대로 둔다", async ({
+      page,
+      context,
+    }) => {
+      await withNativeShare(page);
+      const api = await fakeApi(context, ["done", "partial", "failed", "done"]);
+      await page.goto(`/c/${ID}`);
+      await expect(panel(page).getByRole("checkbox", { name: "2편 숨기기" })).toBeVisible();
+      await expect(panel(page).getByRole("checkbox", { name: "3편 숨기기" })).toHaveCount(0);
+
+      await panel(page).getByRole("button", { name: "링크 만들기" }).click();
+      await expect(panel(page).getByText("공유했어요")).toBeVisible();
+      const shared = await page.evaluate(() => (window as unknown as { __shared?: ShareData[] }).__shared);
+      expect(shared).toEqual([{ title: "연애·썸", url: SHARE_URL }]);
+      expect(api.sharePosts).toEqual([{ id: ID, scope: "first", hidden: [] }]);
+
+      await expect(panel(page).getByRole("button", { name: "카톡으로 보내기" })).toBeVisible();
+      await expect(panel(page).getByRole("button", { name: "저장" })).toHaveCount(0);
+      await panel(page).getByRole("checkbox", { name: "2편 숨기기" }).check();
+      await panel(page).getByRole("radio", { name: "4편 전체" }).check();
+      await panel(page).getByRole("button", { name: "저장" }).click();
+      await expect(panel(page).getByText("저장했어요")).toBeVisible();
+      expect(api.sharePosts.at(-1)).toEqual({ id: ID, scope: "all", hidden: [2] });
+      // 응답 url이 null이어도 기억해 둔 링크를 그대로 보여 준다
+      await expect(panel(page)).toContainText(SHARE_URL);
+      await expect(panel(page).getByRole("button", { name: "저장" })).toHaveCount(0);
+
+      await panel(page).getByRole("button", { name: "카톡으로 보내기" }).click();
+      await expect
+        .poll(() => page.evaluate(() => (window as unknown as { __shared?: ShareData[] }).__shared?.length))
+        .toBe(2);
+    });
+
+    test("다른 기기에서 만든 링크면 안내만 하고, 저장이 409면 대화를 다시 읽고 다시 시도하라고 한다", async ({ page, context }) => {
+      await withoutNativeShare(page);
+      const api = await fakeApi(context, ["done", "done", "done", "done"], { shared: true });
+      await page.goto(`/c/${ID}`);
+      await expect(panel(page)).toContainText("이 기기에서 만든 링크가 아니에요. 새 링크가 필요하면 폐기 후 다시 만드세요");
+      await expect(panel(page).getByRole("button", { name: "링크 복사" })).toHaveCount(0);
+      await expect(panel(page).getByRole("radio", { name: "4편 전체" })).toBeChecked();
+
+      await panel(page).getByRole("radio", { name: "1편만" }).check();
+      api.shareReply = 409;
+      // 다른 곳에서 폐기됐다
+      api.share.shared = false;
+      await panel(page).getByRole("button", { name: "저장" }).click();
+      await expect(panel(page).getByText("다른 곳에서 바뀌었어요. 다시 시도해 주세요")).toBeVisible();
+      await expect(panel(page).getByRole("button", { name: "링크 만들기" })).toBeVisible();
+      expect(api.sharePosts).toEqual([{ id: ID, scope: "first", hidden: [] }]);
+    });
+  });
+
   test.describe("375px", () => {
     test.use({ viewport: { width: 375, height: 812 } });
 
@@ -356,6 +526,15 @@ test.describe("AI 연재", () => {
       await expectNoHorizontalScroll(page);
       await page.goto(`/c/${ID}/e/1`);
       await expect(page.getByRole("heading", { name: "1편 헤드라인" })).toBeVisible();
+      await expectNoHorizontalScroll(page);
+    });
+
+    test("공유 중이라 긴 링크가 보여도 대화 홈에 가로 스크롤이 없다", async ({ page, context }) => {
+      const long = `https://${"long-subdomain-".repeat(4)}analytalk.example.com/s/AAAAAAAAAAAAAAAAAAAAAA`;
+      await page.addInitScript(([id, url]) => localStorage.setItem(`analytalk:share:${id}`, url), [ID, long]);
+      await fakeApi(context, ["done", "done", "done", "done"], { shared: true });
+      await page.goto(`/c/${ID}`);
+      await expect(page.getByRole("region", { name: "공유", exact: true })).toContainText(long);
       await expectNoHorizontalScroll(page);
     });
   });
