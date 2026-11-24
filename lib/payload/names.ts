@@ -52,7 +52,13 @@ const STOP_PIECES = new Set([
   ...["남편", "아내", "와이프", "회사", "팀장", "과장", "대리", "부장", "사장", "실장", "차장", "선생", "선생님", "교수", "교수님"],
   // "회사동료"처럼 4글자 덩어리의 끝 2글자가 되는 관계 말. 실제 이름일 수 있는 말(동기 등)은 넣지 않는다
   ...["후배", "동료", "상사", "고모", "사촌", "조카"],
+  // 관계 말 앞의 꾸밈말("작은이모"의 작은)과 안드로이드의 내 이름 "회원님"의 회원
+  ...["작은", "큰", "막내", "첫째", "둘째", "셋째", "회원"],
 ]);
+/** 이름처럼 부르는 자리: 사랑아·사랑이·사랑한테. STOP_PIECES와 같은 짧은 이름(김사랑의 사랑)은 이 자리에서만 찾는다 */
+const CALLED_PARTICLES = ["아", "야", "이", "가", "한테", "랑", "님", "씨"];
+/** 부르는 말(사랑아·민지야). 이렇게 쓰인 적이 있으면 이름일 가능성이 커서 확인 화면에서 바꾸기를 미리 고른다 */
+const VOCATIVE_AFTER = /^[아야](?![가-힣])/;
 
 const HANGUL_RUN = /^[가-힣]+$/;
 // 이름을 조각으로 나눈다: 한글 음절 덩어리, 또는 한글이 아닌 글자·숫자 덩어리(ㅋ 같은 낱자는 버린다)
@@ -110,29 +116,70 @@ function nickBases(piece: string): string[] {
   return out;
 }
 
+// 이름 모양을 볼 때 쓰는 성: 흔한 성에 그다음으로 많은 성을 더한다(변민수·진서연·민하은도 성 + 2글자다).
+// 어·아·할·큰·작·외·회처럼 관계 말·흔한 말을 시작하는 글자는 넣지 않는다(어머니·아버지·할머니·회원님)
+const SHAPE_SURNAMES = new Set([...COMMON_SURNAMES, ..."민진지엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육인맹제모탁국은편용"]);
+/** 성 + 2글자(김민지·변민수) 또는 2글자 성 + 2글자(남궁민수). 이런 모양일 때만 짧은 이름(성을 뺀 2글자)을 자동으로 바꾼다 */
+const surnameShaped = (w: string) =>
+  (w.length === 3 && SHAPE_SURNAMES.has(w[0])) || (w.length === 4 && TWO_CHAR_SURNAMES.has(w.slice(0, 2)));
+/** 성 + 2글자 모양에서 성을 뺀 이름 */
+const givenName = (w: string) => (w.length === 4 ? w.slice(2) : w.slice(1));
+
 /**
- * 원래 이름 하나에서 본문에서 찾을 말들. 전체 이름이 맨 앞이다.
- * - 한글 덩어리: 덩어리 자체, 별명 꼬리·머리말을 뗀 말, 그 말들의 짧은 이름(shortForms)
- * - 한글이 아닌 덩어리("Minji Kim"의 Minji·Kim): 2글자 이상이고 글자가 들어 있으면
- * - 조각·짧은 이름이 STOP_PIECES이면 뺀다
+ * 원래 이름 하나에서 나온 말을 세 갈래로 나눈다(같은 말이 여러 갈래면 auto > called > review).
+ * - auto: 본문에서 자동으로 바꾼다. 전체 이름, 이름 조각, 별명 꼬리·머리말을 뗀 말, 성 + 2글자 모양에서 자른 짧은 이름
+ * - called: 성 + 2글자에서 자른 짧은 이름이 흔한 말(STOP_PIECES)과 같은 것(김사랑의 사랑, 이우리의 우리).
+ *   바꾸지 않고, 부르는 자리(CALLED_PARTICLES 앞)에 남았으면 확인 화면에 보여 준다
+ * - review: 이름 모양이 아닌 데서 나온 말. 성 + 2글자가 아닌 말에서 자른 짧은 이름(어머니의 어머, 민지쓰의 민지)과
+ *   여러 조각 이름에서 이름 모양이 아닌 조각(동아리 민수의 동아리, 교회 박지훈의 교회). 바꾸지 않고 확인 화면에 보여 준다
+ * - 한글이 아닌 덩어리("Minji Kim"의 Minji·Kim)는 2글자 이상이고 글자가 들어 있으면 auto
+ * - 그 밖에 STOP_PIECES인 조각·짧은 이름은 뺀다. 글자·숫자가 하나도 없는 이름(".")은 본문에서 찾지 않는다
  */
-function nameKeys(name: string): string[] {
-  const keys = new Set<string>();
-  const add = (k: string) => {
-    if (k.length >= 2 && !STOP_PIECES.has(k)) keys.add(k);
-  };
-  for (const piece of name.match(PIECE) ?? []) {
-    if (HANGUL_RUN.test(piece)) {
-      for (const base of nickBases(piece)) {
-        if (STOP_PIECES.has(base)) continue;
-        add(base);
-        shortForms(base).forEach(add);
+function nameTiers(name: string): { auto: string[]; called: string[]; review: string[] } {
+  const auto = new Set<string>();
+  const called = new Set<string>();
+  const review = new Set<string>();
+  const pieces = name.match(PIECE) ?? [];
+  const hangul = pieces.filter((p) => HANGUL_RUN.test(p));
+  for (const piece of pieces) {
+    if (!HANGUL_RUN.test(piece)) {
+      if ([...piece].length >= 2 && /\p{L}/u.test(piece)) auto.add(piece);
+      continue;
+    }
+    // 여러 조각 이름에서 이름 모양이 아닌 조각: 3글자 이상이거나, 다른 조각이 성 + 2글자 이름인 2글자 조각
+    const label =
+      hangul.length >= 2 &&
+      !surnameShaped(piece) &&
+      (piece.length >= 3 || hangul.some((other) => other !== piece && surnameShaped(other)));
+    for (const base of nickBases(piece)) {
+      if (STOP_PIECES.has(base) || base.length < 2) continue;
+      (label ? review : auto).add(base);
+      // 메모 조각에서는 짧은 이름을 자르지 않는다("동아리"의 아리)
+      if (label) continue;
+      // 성 + 2글자 모양의 성을 뺀 이름만 auto(called). 나머지 자른 말(앞 2글자·끝 2글자)은 review
+      const given = surnameShaped(base) ? givenName(base) : null;
+      for (const short of shortForms(base)) {
+        if (STOP_PIECES.has(short)) {
+          if (short === given) called.add(short);
+        } else (short === given ? auto : review).add(short);
       }
-    } else if ([...piece].length >= 2 && /\p{L}/u.test(piece)) add(piece);
+    }
   }
-  keys.delete(name);
-  return [name, ...keys];
+  auto.delete(name);
+  for (const k of auto) {
+    called.delete(k);
+    review.delete(k);
+  }
+  for (const k of called) review.delete(k);
+  return {
+    auto: /[\p{L}\p{N}]/u.test(name) ? [name, ...auto] : [],
+    called: [...called],
+    review: [...review],
+  };
 }
+
+/** 본문에서 자동으로 바꿀 말(nameTiers의 auto). 전체 이름이 맨 앞이다(글자·숫자가 없는 이름은 빈 배열) */
+const nameKeys = (name: string) => nameTiers(name).auto;
 
 // 찾은 말의 앞뒤 경계. 말의 첫·끝 글자 종류에 따라 다르다
 type Edge = "syllable" | "jamo" | "word" | "other";
@@ -173,6 +220,12 @@ function namePattern(keys: string[]): RegExp | null {
     else chunks.push({ before, after, keys: [k] });
   }
   return new RegExp(chunks.map((c) => `${c.before}(?:${c.keys.map(escapeRe).join("|")})${c.after}`).join("|"), "giu");
+}
+
+/** 부르는 자리(사랑아·사랑이·사랑한테)의 말만 찾는 정규식 */
+function calledPattern(keys: string[]): RegExp | null {
+  if (keys.length === 0) return null;
+  return new RegExp(`(?<![가-힣])(?:${[...keys].sort(byLengthDesc).map(escapeRe).join("|")})(?=${CALLED_PARTICLES.join("|")})`, "gu");
 }
 
 /** 대소문자를 무시하고 찾은 말의 원래 키. 보통은 소문자로 바로 찾고, 특수한 대소문자 접기만 하나씩 비교한다 */
@@ -225,7 +278,7 @@ export function applyDisplayNames(
   const keysOf = new Map(targets.map((t) => [t, nameKeys(t)]));
   for (const t of targets) if (!replace.has(fold(t))) replace.set(fold(t), display.get(t)!);
   for (const t of targets) {
-    for (const k of keysOf.get(t)!.slice(1)) if (!replace.has(fold(k))) replace.set(fold(k), display.get(t)!);
+    for (const k of keysOf.get(t)!) if (!replace.has(fold(k))) replace.set(fold(k), display.get(t)!);
   }
 
   const re = namePattern([...new Set([...keysOf.values()].flat())]);
@@ -237,11 +290,37 @@ export function applyDisplayNames(
   };
 }
 
-/** 바꾼 뒤에도 본문에 남은 원래 이름 조각 하나. ids는 그 조각이 든 메시지 id(처음 나온 순서) */
+/**
+ * 바꾼 뒤에도 본문에 남은 원래 이름 조각 하나. ids는 그 조각이 든 메시지 id(처음 나온 순서).
+ * suggest: 확인 화면에서 바꾸기를 미리 고를 만한가. 이름 모양이 아닌 데서 나온 말(어머·교회)은 부르는 말("~야")로 쓰인 적이 있을 때만
+ */
 export interface NameLeftover {
   piece: string;
   count: number;
   ids: number[];
+  suggest: boolean;
+}
+
+/** map 전체의 called·review 말(소문자 → 원래 말). auto 말과 표시 이름 속 말은 뺀다 */
+function softKeys(map: NameMap): { called: Map<string, string>; review: Map<string, string> } {
+  const shown = Object.values(map).map((v) => fold(v.trim()));
+  const autoKeys = new Set(Object.keys(map).flatMap((n) => nameKeys(n).map(fold)));
+  const called = new Map<string, string>();
+  const review = new Map<string, string>();
+  for (const name of Object.keys(map)) {
+    const tiers = nameTiers(name);
+    for (const [list, into] of [
+      [tiers.called, called],
+      [tiers.review, review],
+    ] as const) {
+      for (const k of list) {
+        const f = fold(k);
+        if (autoKeys.has(f) || shown.some((s) => s.includes(f)) || called.has(f) || into.has(f)) continue;
+        into.set(f, k);
+      }
+    }
+  }
+  return { called, review };
 }
 
 /**
@@ -263,19 +342,54 @@ export function findNameLeftovers(msgs: ChatMessage[], map: NameMap): NameLeftov
       pieces.set(f, k);
     }
   }
-  if (pieces.size === 0) return [];
+  const { called, review } = softKeys(map);
+  // auto 말은 경계 없이(자동 바꾸기가 놓친 "민지수"의 민지), called는 부르는 자리만, review는 자동 바꾸기와 같은 경계로 찾는다
+  const searches: { re: RegExp; table: Map<string, string>; always: boolean }[] = [];
+  if (pieces.size > 0) {
+    searches.push({ re: new RegExp([...pieces.keys()].sort(byLengthDesc).map(escapeRe).join("|"), "giu"), table: pieces, always: true });
+  }
+  const calledRe = calledPattern([...called.values()]);
+  if (calledRe) searches.push({ re: calledRe, table: called, always: false });
+  const reviewRe = namePattern([...review.values()]);
+  if (reviewRe) searches.push({ re: reviewRe, table: review, always: false });
+  if (searches.length === 0) return [];
 
-  const re = new RegExp([...pieces.keys()].sort(byLengthDesc).map(escapeRe).join("|"), "giu");
   const found = new Map<string, NameLeftover>();
   for (const m of msgs) {
     if (m.sender === null || m.kind !== "text") continue;
-    for (const [hit] of m.text.matchAll(re)) {
-      const piece = lookup(pieces, hit) ?? hit;
-      let f = found.get(piece);
-      if (!f) found.set(piece, (f = { piece, count: 0, ids: [] }));
-      f.count++;
-      if (f.ids.at(-1) !== m.id) f.ids.push(m.id);
+    for (const { re, table, always } of searches) {
+      for (const match of m.text.matchAll(re)) {
+        const hit = match[0];
+        const piece = lookup(table, hit) ?? hit;
+        let f = found.get(piece);
+        if (!f) found.set(piece, (f = { piece, count: 0, ids: [], suggest: always }));
+        f.count++;
+        if (f.ids.at(-1) !== m.id) f.ids.push(m.id);
+        if (!f.suggest && VOCATIVE_AFTER.test(m.text.slice(match.index + hit.length))) f.suggest = true;
+      }
     }
   }
   return [...found.values()].sort((a, b) => b.count - a.count || (a.piece < b.piece ? -1 : 1));
+}
+
+/**
+ * 확인 화면에서 고른 바꾸기(fixes: 남은 조각 → 표시 이름)를 사람이 보낸 text 메시지 본문에 적용한다.
+ * 찾는 방식은 findNameLeftovers와 같다: auto 말(경계 규칙이 놓친 것)은 글자 그대로(대소문자 무시, 긴 조각부터),
+ * called 말은 부르는 자리만, review 말은 자동 바꾸기와 같은 경계로 바꾼다(사랑해·동아리방은 그대로 둔다)
+ */
+export function applyNameFixes(msgs: ChatMessage[], fixes: Record<string, string>, map: NameMap): ChatMessage[] {
+  const pieces = Object.keys(fixes).filter((p) => p !== "");
+  if (pieces.length === 0) return msgs;
+  const { called, review } = softKeys(map);
+  const table = new Map(pieces.map((p) => [fold(p), fixes[p]]));
+  const calledPieces = pieces.filter((p) => called.has(fold(p)));
+  const reviewPieces = pieces.filter((p) => review.has(fold(p)) && !called.has(fold(p)));
+  const loose = pieces.filter((p) => !called.has(fold(p)) && !review.has(fold(p)));
+  const patterns = [
+    loose.length > 0 ? new RegExp([...loose].sort(byLengthDesc).map(escapeRe).join("|"), "giu") : null,
+    calledPattern(calledPieces),
+    namePattern(reviewPieces),
+  ].filter((re): re is RegExp => re !== null);
+  const fix = (text: string) => patterns.reduce((t, re) => t.replace(re, (hit) => lookup(table, hit) ?? hit), text);
+  return msgs.map((m) => (m.sender !== null && m.kind === "text" ? { ...m, text: fix(m.text) } : m));
 }

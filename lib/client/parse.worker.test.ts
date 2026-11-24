@@ -43,9 +43,10 @@ describe("runOp parse", () => {
 });
 
 describe("runOp rename", () => {
-  it("이름을 바꾸고 남은 조각·안전 신호를 함께 돌려준다", async () => {
+  it("이름을 바꾸고 남은 조각을 함께 돌려준다(안전 신호는 페이로드를 만든 뒤 sentSafetySignal이 본다)", async () => {
     const r = await runOp({ op: "rename", input: rename() });
-    expect(r).toMatchObject({ ok: true, safety: null, leftovers: [{ piece: "민지", count: 1, ids: [1] }] });
+    expect(r).toMatchObject({ ok: true, leftovers: [{ piece: "민지", count: 1, ids: [1] }] });
+    expect(r).not.toHaveProperty("safety");
     if (!("messages" in r)) throw new Error("ok가 아니다");
     expect(r.messages.map((m) => [m.sender, m.text])).toEqual([
       ["P1", "P2야 밥 먹자"],
@@ -82,10 +83,6 @@ describe("runOp rename", () => {
     expect(await runOp({ op: "rename", input: rename({ map: { 김민지: "P1", 철수: "a|b" } }) })).toEqual({ ok: false, reason: "invalid" });
   });
 
-  it("자해 신호가 있으면 safety로 알린다", async () => {
-    const r = await runOp({ op: "rename", input: rename({ messages: [msg(0, "김민지", "어제 자해 했어"), msg(1, "철수", "응")] }) });
-    expect(r).toMatchObject({ ok: true, safety: "self_harm" });
-  });
 });
 
 describe("runOp build", () => {

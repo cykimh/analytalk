@@ -47,7 +47,7 @@ export function parseInWorker(files: File[]): Promise<ParseResult> {
   return call({ op: "parse", files });
 }
 
-/** applyDisplayNames → 남은 조각 바꾸기(fixes) → findNameLeftovers·safetySignal */
+/** applyDisplayNames → 남은 조각 바꾸기(fixes) → findNameLeftovers */
 export function renameInWorker(input: RenameInput): Promise<RenameResult> {
   return call({ op: "rename", input });
 }

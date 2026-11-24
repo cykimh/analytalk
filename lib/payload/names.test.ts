@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/lib/parse/parse";
-import { applyDisplayNames, checkDisplayName, findNameLeftovers, type NameMap } from "./names";
+import { applyDisplayNames, applyNameFixes, checkDisplayName, findNameLeftovers, type NameMap } from "./names";
 
 let seq = 0;
 function msg(sender: string | null, text = "안녕"): ChatMessage {
@@ -193,7 +193,7 @@ describe("findNameLeftovers", () => {
     const map = { 김민지: "P1" };
     const msgs = renamed(["민지수 왔어", "김민지야", "민지수 또 민지수", "가민지"], map);
     expect(msgs.map((m) => m.text)).toEqual(["민지수 왔어", "P1야", "민지수 또 민지수", "가민지"]);
-    expect(findNameLeftovers(msgs, map)).toEqual([{ piece: "민지", count: 4, ids: [msgs[0].id, msgs[2].id, msgs[3].id] }]);
+    expect(findNameLeftovers(msgs, map)).toEqual([{ piece: "민지", count: 4, ids: [msgs[0].id, msgs[2].id, msgs[3].id], suggest: true }]);
   });
 
   it("다 바뀌었으면 빈 배열, 표시 이름 속 말과 미디어·시스템 메시지는 세지 않는다", () => {
@@ -207,13 +207,121 @@ describe("findNameLeftovers", () => {
     const map = { [name]: "P1" };
     const msgs = renamed(["민지야", "가민지"], map);
     expect(msgs.map((m) => m.text)).toEqual(["P1야", "가민지"]);
-    expect(findNameLeftovers(msgs, map)).toEqual([{ piece: "민지", count: 1, ids: [msgs[1].id] }]);
+    expect(findNameLeftovers(msgs, map)).toEqual([{ piece: "민지", count: 1, ids: [msgs[1].id], suggest: true }]);
   });
 
   it("한글이 아닌 조각은 대소문자를 무시하고 단어 속도 찾는다", () => {
     const map = { "Minji Kim": "P1" };
     expect(findNameLeftovers(renamed(["KIMCHI 먹자"], map), map)).toEqual([
-      { piece: "Kim", count: 1, ids: [expect.any(Number)] },
+      { piece: "Kim", count: 1, ids: [expect.any(Number)], suggest: true },
+    ]);
+  });
+
+  // 이름(김사랑·이우리)이 흔한 말(사랑·우리)과 같으면 본문에서 자동으로 바꾸지 않는다. 대신 이름처럼 쓰인 자리를
+  // 확인 화면에 보여 줘서, 업로더가 모른 채 실제 이름이 나가지 않게 한다 (P2·D6)
+  it("이름이 흔한 말과 같은 짧은 이름(사랑·우리)은 부르는 자리(아·야·이·가·한테…)에서 찾아 바꾸기를 권한다", () => {
+    const map = { 김사랑: "멤버1", 박민지: "멤버2", 이우리: "멤버3" };
+    const texts = ["사랑아 뭐해", "사랑이 어디야", "김사랑 바보", "민지야", "우리야 밥먹자", "사랑한테 물어봐", "우리가 갈게", "사랑해", "우리 집"];
+    // 세 사람 모두 발신자로 넣는다(map의 이름이 대화에 있어야 본문에서 찾는다)
+    const r = applyDisplayNames([...texts.map((t) => msg("김사랑", t)), msg("박민지", "응"), msg("이우리", "응")], map, []);
+    if (!r.ok) throw new Error(r.reason);
+    const msgs = r.messages.slice(0, texts.length);
+    expect(msgs.map((m) => m.text)).toEqual([
+      "사랑아 뭐해",
+      "사랑이 어디야",
+      "멤버1 바보",
+      "멤버2야",
+      "우리야 밥먹자",
+      "사랑한테 물어봐",
+      "우리가 갈게",
+      "사랑해",
+      "우리 집",
+    ]);
+    const left = findNameLeftovers(msgs, map);
+    expect(left).toEqual([
+      { piece: "사랑", count: 3, ids: [msgs[0].id, msgs[1].id, msgs[5].id], suggest: true },
+      { piece: "우리", count: 2, ids: [msgs[4].id, msgs[6].id], suggest: true },
+    ]);
+    const fixed = applyNameFixes(msgs, { 사랑: "멤버1", 우리: "멤버3" }, map).map((m) => m.text);
+    expect(fixed).toEqual([
+      "멤버1아 뭐해",
+      "멤버1이 어디야",
+      "멤버1 바보",
+      "멤버2야",
+      "멤버3야 밥먹자",
+      "멤버1한테 물어봐",
+      "멤버3가 갈게",
+      "사랑해",
+      "우리 집",
+    ]);
+    expect(findNameLeftovers(applyNameFixes(msgs, { 사랑: "멤버1", 우리: "멤버3" }, map), map)).toEqual([]);
+  });
+
+  it("김우리: 우리야 밥먹자도 확인 화면에 나온다", () => {
+    const map = { 김우리: "P1" };
+    const msgs = renamed(["우리야 밥먹자"], map);
+    expect(msgs[0].text).toBe("우리야 밥먹자");
+    expect(findNameLeftovers(msgs, map)).toEqual([{ piece: "우리", count: 1, ids: [msgs[0].id], suggest: true }]);
+  });
+});
+
+// 연락처 메모·관계 말·안드로이드 '회원님'처럼 사람 이름 모양이 아닌 이름에서 조각을 잘라 본문의 흔한 말을 바꾸지 않는다 (D4).
+// 그런 조각은 확인 화면에 보여 주되 바꾸기를 권하지 않는다(부르는 말 "~야"로 쓰인 적이 있으면 권한다)
+describe("이름 모양이 아닌 이름의 조각", () => {
+  const run = (texts: string[], map: NameMap) => {
+    const senders = Object.keys(map);
+    const r = applyDisplayNames(
+      texts.map((t, i) => msg(senders[i % senders.length], t)),
+      map,
+      [],
+    );
+    if (!r.ok) throw new Error(r.reason);
+    return { texts: r.messages.map((m) => m.text), left: findNameLeftovers(r.messages, map), messages: r.messages };
+  };
+
+  it("'동아리 민수'·'교회 박지훈': 이름 조각(민수·박지훈·지훈)만 바꾸고 메모 조각(동아리·교회)은 권하지 않는 확인 항목", () => {
+    const map = { "동아리 민수": "P1", "교회 박지훈": "P2" };
+    const r = run(["동아리 가자", "교회 갔다 왔어", "아리가또", "민수야 밥", "지훈아 어디", "박지훈 왔다"], map);
+    expect(r.texts).toEqual(["동아리 가자", "교회 갔다 왔어", "아리가또", "P1야 밥", "P2아 어디", "P2 왔다"]);
+    expect(r.left).toEqual([
+      { piece: "교회", count: 1, ids: [r.messages[1].id], suggest: false },
+      { piece: "동아리", count: 1, ids: [r.messages[0].id], suggest: false },
+    ]);
+  });
+
+  it("'어머니'·'작은이모'·'회원님': 앞뒤를 자른 말(어머·작은·회원)로 본문을 바꾸지 않는다", () => {
+    expect(run(["어머 진짜?", "어머니 오셨어"], { 어머니: "P1" }).texts).toEqual(["어머 진짜?", "P1 오셨어"]);
+    expect(run(["어머 진짜?"], { 어머니: "P1" }).left).toEqual([{ piece: "어머", count: 1, ids: [expect.any(Number)], suggest: false }]);
+    expect(run(["작은 문제야"], { 작은이모: "P1" }).texts).toEqual(["작은 문제야"]);
+    expect(run(["회원가입 했어"], { 회원님: "P1" }).texts).toEqual(["회원가입 했어"]);
+  });
+
+  it("흔한 성 목록 밖의 성 + 2글자(변민수·진서연)도 성을 뺀 이름을 자동으로 바꾼다", () => {
+    expect(run(["민수야 밥", "민수가 왔어"], { 변민수: "P1" }).texts).toEqual(["P1야 밥", "P1가 왔어"]);
+    expect(run(["서연아"], { 진서연: "P1" }).texts).toEqual(["P1아"]);
+  });
+
+  it("성 + 2글자가 아닌 별명(민지쓰)의 앞 2글자는 자동으로 바꾸지 않고, 부르는 말로 쓰였으면 바꾸기를 권한다", () => {
+    const map = { 민지쓰: "P1" };
+    const r = run(["민지야 밥 먹자", "민지쓰 왔다"], map);
+    expect(r.texts).toEqual(["민지야 밥 먹자", "P1 왔다"]);
+    expect(r.left).toEqual([{ piece: "민지", count: 1, ids: [r.messages[0].id], suggest: true }]);
+    // 확인 화면에서 바꾸면 이름 자리만 바꾼다(다른 단어 속은 둔다)
+    expect(applyNameFixes([...r.messages, msg("민지쓰", "민지수 왔어")], { 민지: "P1" }, map).map((m) => m.text)).toEqual([
+      "P1야 밥 먹자",
+      "P1 왔다",
+      "민지수 왔어",
+    ]);
+  });
+});
+
+describe("기호로만 된 이름 (D5)", () => {
+  it("'.' 같은 이름은 발신자만 바꾸고 본문은 건드리지 않는다(이메일 가리기가 깨지지 않는다)", () => {
+    const r = applyDisplayNames([msg(".", "먹었어... 진짜? a@b.com"), msg("김민지", "응.")], { ".": "P1", 김민지: "P2" }, []);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.messages.map((m) => [m.sender, m.text])).toEqual([
+      ["P1", "먹었어... 진짜? a@b.com"],
+      ["P2", "응."],
     ]);
   });
 });

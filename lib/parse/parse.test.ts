@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { decodeBytes } from "./decode";
-import type { FormatId } from "./formats";
+import { type FormatId, parseNotice } from "./formats";
 import { parseExport } from "./parse";
 
 const FIXTURE_DIR = fileURLToPath(new URL("../../test/fixtures/", import.meta.url));
@@ -140,6 +140,12 @@ describe("parseExport", () => {
       kind: "system",
       ts: kst(2020, 6, 28, 20, 36),
     });
+  });
+
+  it("안드로이드의 내 이름 '회원님'이 알림에서 '회원님이'로 와도 '회원'이라는 없는 사람을 만들지 않는다", () => {
+    expect(parseNotice("회원님이 김민지님을 초대했습니다.")).toEqual({ names: ["회원님", "김민지"] });
+    expect(parseNotice("철수님이 회원님을 초대했습니다.")).toEqual({ names: ["철수", "회원님"] });
+    expect(parseNotice("회원님이 들어왔습니다.")).toEqual({ names: ["회원님"] });
   });
 
   it("기간은 첫·마지막 메시지 시각이다", () => {

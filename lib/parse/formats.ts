@@ -270,15 +270,23 @@ const INVITE = /^(?:(.+?)님이 )?(.+)님을 초대(?:하였|했)습니다\.$/;
 const LEAVE = /^(.+)님이 나갔습니다\.$/;
 const JOIN = /^(.+)님이 들어왔습니다\.$/;
 
+/**
+ * 안드로이드는 내보낸 사람을 "회원님"으로 쓴다. 알림에서는 "회원님이 …"·"회원님을 …"이 되어 이름 자리에 "회원"이 잡히므로
+ * 발신자 이름("회원님")으로 되돌린다. 그대로 두면 대화에 없는 "회원"이 이름 정리 대상이 되고 본문의 "회원가입"까지 바뀐다
+ */
+const OWN_NAME_STEM = "회원";
+const OWN_NAME = "회원님";
+const noticeName = (name: string) => (name === OWN_NAME_STEM ? OWN_NAME : name);
+
 /** 사전에 맞는 알림이면 그 안의 이름들, 아니면 null */
 export function parseNotice(text: string): { names: string[] } | null {
   const inv = INVITE.exec(text);
   if (inv) {
     const invitees = inv[2].split(/님(?:, |과 )/);
-    return { names: inv[1] ? [inv[1], ...invitees] : invitees };
+    return { names: (inv[1] ? [inv[1], ...invitees] : invitees).map(noticeName) };
   }
   const other = LEAVE.exec(text) ?? JOIN.exec(text);
-  return other ? { names: [other[1]] } : null;
+  return other ? { names: [noticeName(other[1])] } : null;
 }
 
 // 미디어 사전. 본문 전체가 정확히 일치할 때만(파일은 `파일:` 머리) 인정한다.

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { BANNED_PATTERNS } from "./banned";
-import { safetySignal } from "./safety";
+import { buildPayload, payloadIndex } from "./build";
+import { safetySignal, sentSafetySignal } from "./safety";
 
 let seq = 0;
 function msg(text: string, sender: string | null = "P1"): ChatMessage {
@@ -23,6 +24,59 @@ describe("safetySignal", () => {
   it("과장 표현과 시스템 메시지는 신호가 아니다", () => {
     expect(safetySignal([msg("배고파 죽겠다 ㅋㅋ"), msg("이 노래 진짜 죽인다"), msg("자살하고 싶어", null)])).toBeNull();
   });
+
+  it.each([
+    "과목 졸라 어려워",
+    "발목 졸라 아파 ㅋㅋ",
+    "제목 졸라 웃기네",
+    "항목 졸라 많아",
+    "목 졸라 아프다",
+    "사유서 썼어",
+    "시말서 대신 사유서 써",
+    "거기선 살고 싶지 않아",
+    "협박하냐 ㅋㅋㅋ",
+    "협박하지마",
+    "흉기 난동 뉴스 봄?",
+    "흉기난동 뉴스 봤어?",
+    "성추행 뉴스",
+    "폭행했대 연예인",
+    "칼로 찌르는 장면 영화",
+  ])("친구 대화의 농담·뉴스 이야기는 신호가 아니다: %s", (text) => {
+    expect(safetySignal([msg(text)])).toBeNull();
+  });
+
+  it.each([
+    ["유서를 썼어", "self_harm"],
+    ["더 이상 살고 싶지 않아", "self_harm"],
+    ["목을 졸랐어", "violence"],
+    ["흉기로 위협당했어", "violence"],
+    ["어제 폭행 당했어", "violence"],
+    ["협박당하고 있어", "violence"],
+    ["성추행 당했어", "violence"],
+  ])("행동·피해가 드러나면 신호다: %s", (text, kind) => {
+    expect(safetySignal([msg(text)])).toBe(kind);
+  });
+});
+
+describe("sentSafetySignal (보낼 메시지만 본다)", () => {
+  const kst = (d: number, h: number) => Date.UTC(2026, 6, d, h) - 9 * 3_600_000;
+  const rows = (texts: string[]): ChatMessage[] =>
+    texts.map((text, id) => ({ id, ts: kst(1 + Math.floor(id / 4), 20) + (id % 4) * 60_000, sender: id % 2 ? "P2" : "P1", kind: "text", text, line: id + 1 }));
+
+  it("페이로드에 실리지 않은 메시지(최근 구간·발췌 밖)의 신호는 보지 않는다", () => {
+    const messages = rows(Array.from({ length: 300 }, (_, i) => (i === 150 ? "어제 자해 했어" : `평범한 이야기 ${i}`)));
+    // 최근 구간만 실리는 작은 예산
+    const p = buildPayload({ messages, me: "P1", concept: "couple", kind: "pair", tokenBudget: 2000, tokensPerChar: 1 });
+    expect(payloadIndex(p).has("m150")).toBe(false);
+    expect(safetySignal(messages)).toBe("self_harm");
+    expect(sentSafetySignal(p, messages)).toBeNull();
+  });
+
+  it("실린 메시지에 신호가 있으면 알린다", () => {
+    const messages = rows(["밥 먹었어?", "어제 자해 했어"]);
+    const p = buildPayload({ messages, me: "P1", concept: "couple", kind: "pair", tokenBudget: 100_000, tokensPerChar: 1 });
+    expect(sentSafetySignal(p, messages)).toBe("self_harm");
+  });
 });
 
 describe("BANNED_PATTERNS", () => {
@@ -43,6 +97,19 @@ describe("BANNED_PATTERNS", () => {
     "ENFP다운 반응",
     "정치 성향이 보이네요",
     "종교가 있는 것 같아요",
+    // 같은 뜻의 다른 말투(D7)
+    "관심이 있어 보여요",
+    "민지를 좋아하나 봐요",
+    "호감이 느껴져요",
+    "서운해하는 것 같아요",
+    "상대는 화가 난 것 같아요",
+    "귀찮아하는 듯해요",
+    "애정도가 높아요",
+    "친밀도가 떨어졌어요",
+    "서운해 보여요",
+    "삐진 것 같아요",
+    "설렌 것 같아요",
+    "사랑이 느껴지는 대화예요",
   ])("걸린다: %s", (s) => {
     expect(banned(s)).toBe(true);
   });
@@ -54,6 +121,11 @@ describe("BANNED_PATTERNS", () => {
     "사진 공유는 P2가 가장 많았어요",
     "둘 다 같은 노래를 좋아해서 링크가 자주 오갔어요",
     "P2가 좋아하는 것은 고양이 사진이에요",
+    "저녁에 대화가 몰리는 것 같아요",
+    "사진을 많이 보여줬어요",
+    "일정이 있는 날은 대화가 짧아요",
+    "기분 좋은 하루였던 것 같아요",
+    "따뜻함이 느껴지는 인사예요",
   ])("안 걸린다: %s", (s) => {
     expect(banned(s)).toBe(false);
   });

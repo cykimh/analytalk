@@ -19,6 +19,7 @@ import {
 } from "@/lib/client/worker";
 import { INPUT_TOKEN_BUDGET, TOKENS_PER_CHAR } from "@/lib/config";
 import type { Payload } from "@/lib/payload/build";
+import { sentSafetySignal } from "@/lib/payload/safety";
 import type { ParseResult } from "@/lib/parse/parse";
 import { ConfirmStep } from "./ConfirmStep";
 import {
@@ -68,6 +69,8 @@ export function UploadFlow({ inApp }: { inApp: boolean }) {
     for (const m of parse?.messages ?? []) if (m.sender !== null && m.kind !== "system") out[m.sender] = (out[m.sender] ?? 0) + 1;
     return out;
   }, [parse]);
+  /** 보낼 메시지(페이로드에 실린 것)의 안전 신호. 실리지 않는 옛 메시지는 보지 않는다 */
+  const safety = useMemo(() => (built ? sentSafetySignal(built.payload, built.input.messages) : null), [built]);
   const problem = parse ? nameProblem(names, targets) : null;
   const map = nameMapOf(names, targets);
 
@@ -116,9 +119,11 @@ export function UploadFlow({ inApp }: { inApp: boolean }) {
       if (!r.ok) throw new Error("이름을 다시 확인해 주세요");
       setRenamed(r);
       if (reviewLeftovers && r.leftovers.length > 0) {
-        // 조각의 주인이 분명하면 그 표시 이름으로 바꾸기를 미리 골라 둔다
+        // 바꾸기를 권할 조각(suggest)이고 주인이 분명하면 그 표시 이름으로 미리 골라 둔다.
+        // 이름 모양이 아닌 데서 나온 흔한 말(어머·교회)은 부르는 말로 쓰인 적이 없으면 그대로 두기가 기본이다
         const suggested: Record<string, string> = {};
         for (const l of r.leftovers) {
+          if (!l.suggest) continue;
           const owner = leftoverOwner(l.piece, map);
           if (owner) suggested[l.piece] = owner;
         }
@@ -230,7 +235,7 @@ export function UploadFlow({ inApp }: { inApp: boolean }) {
       <ReviewStep
         payload={built.payload}
         messages={built.input.messages}
-        safety={renamed.safety}
+        safety={safety}
         busy={busy}
         onBack={back("stats")}
         onCreate={create}
