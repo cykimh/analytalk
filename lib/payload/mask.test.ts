@@ -28,6 +28,11 @@ describe("maskPII", () => {
     ["카드 1234 5678 9012 3456", "카드 [가림:계좌]", "account"],
     ["신한 110 123 456789", "신한 [가림:계좌]", "account"],
     ["카뱅 3333 01 1234567 로", "카뱅 [가림:계좌] 로", "account"],
+    // 2글자 끝(so·me·io …)은 경로가 있거나 하위 도메인이 있으면 링크로 본다 (N4)
+    ["notion.so/minji 봐", "[가림:링크] 봐", "url"],
+    ["minji.github.io 블로그", "[가림:링크] 블로그", "url"],
+    ["블로그 minji.tistory.com", "블로그 [가림:링크]", "url"],
+    ["토스 1000 1234 5678", "토스 [가림:계좌]", "account"],
   ])("%s → %s", (input, expected, kind) => {
     const r = maskPII(input);
     expect(r.text).toBe(expected);
@@ -43,6 +48,12 @@ describe("maskPII", () => {
     "10 20 30 40 50 순서로",
     "node.js 공부",
     "3.5배 빨라",
+    // 문장 끝 마침표 뒤에 빈칸 없이 이어 쓴 말, 빈칸으로 나눈 날짜·시각 (N4)
+    "I love you.So much",
+    "Thank you.Me too",
+    "2026 10 01 12 30",
+    "출발 2026 10 01 12 30 이야",
+    "2026-10-01-12-30 기록",
   ])("개인정보가 아니면 그대로: %s", (s) => {
     expect(maskPII(s)).toEqual({ text: s, counts: ZERO });
   });
