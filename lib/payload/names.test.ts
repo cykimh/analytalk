@@ -334,6 +334,16 @@ describe("이름 모양이 아닌 이름의 조각", () => {
     },
   );
 
+  it("이름 같은 조각이 없을 때 3글자 조각('교회 봉민지'의 봉민지)은 성을 뺀 2글자를 확인 화면에 보여 준다(한 조각 '봉민지'와 같다)", () => {
+    const map = { "교회 봉민지": "P1" };
+    const r = run(["민지가 왔어", "교회 가자", "민지야 밥"], map);
+    expect(r.texts).toEqual(["민지가 왔어", "교회 가자", "민지야 밥"]);
+    expect(r.left).toEqual([
+      { piece: "민지", count: 2, ids: [r.messages[0].id, r.messages[2].id], suggest: true },
+      { piece: "교회", count: 1, ids: [r.messages[1].id], suggest: false },
+    ]);
+  });
+
   // 이름 조각은 2글자 이름(또는 별명형)에서 고른다. 1글자 조각(형·군·김)과 3글자 이상 말(동아리·대학동기)은 고르지 않는다 (R1)
   it.each([
     ["민수 형", "형이 그랬어", "민수가 왔어", "P1가 왔어"],

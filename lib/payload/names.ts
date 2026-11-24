@@ -191,7 +191,8 @@ function pickNamePiece(list: string[]): string | undefined {
  * - 성 + 2글자 조각이 없는 여러 조각 이름은 한글 조각 하나만 이름으로 고른다(pickNamePiece: 2글자 이름·별명형을 먼저,
  *   님으로 끝나는 말은 그다음, 같은 정도면 맨 끝 것, 괄호 밖을 먼저). 예: 교회 민수·민수 교회·민수 형·민수 동아리의 민수,
  *   지훈 대리님의 지훈, 교회 민지공주의 민지공주, 교회 민지님의 민지님.
- *   고를 조각이 없으면(교회 봉사랑) 모두 메모다. 호칭·관계 말(STOP_PIECES)인 조각은 이름 조각으로 세지 않는다(민지 엄마)
+ *   고를 조각이 없으면(교회 봉사랑·교회 봉민지) 모두 메모다. 이때 3글자 조각은 끝 2글자도 review에 넣는다(교회 봉민지의 민지).
+ *   호칭·관계 말(STOP_PIECES)인 조각은 이름 조각으로 세지 않는다(민지 엄마)
  * - 메모 말(MEMO_PIECES) 조각은 다른 조각이 있으면 언제나 메모 조각이다(Minji 교회의 교회)
  * - 한글이 아닌 덩어리("Minji Kim"의 Minji·Kim)는 2글자 이상이고 글자가 들어 있으면 auto
  * - 그 밖에 STOP_PIECES인 조각·짧은 이름은 뺀다. 글자·숫자가 하나도 없는 이름(".")은 본문에서 찾지 않는다
@@ -227,8 +228,13 @@ function nameTiers(name: string): { auto: string[]; called: string[]; review: st
       if (maybeName) likely.add(base);
       // 3글자 말의 끝 2글자가 흔한 말이면(봉사랑·예우리) 성 목록에 없는 성이어도 부르는 자리를 확인 화면에 보여 준다
       if (base.length === 3 && STOP_PIECES.has(base.slice(1))) called.add(base.slice(1));
-      // 메모 조각에서는 짧은 이름을 자르지 않는다("동아리"의 아리)
-      if (label) continue;
+      // 메모 조각에서는 짧은 이름을 자르지 않는다("동아리"의 아리). 다만 이름으로 고른 조각이 없으면 3글자 조각은
+      // 목록 밖의 성 + 2글자일 수 있어(교회 봉민지), 한 조각 이름(봉민지)처럼 끝 2글자를 확인 화면에 보여 준다
+      if (label) {
+        const lone3 = !shaped && namePiece === undefined && base.length === 3 && !MEMO_PIECES.has(base) && !honorific(base);
+        if (lone3 && !STOP_PIECES.has(base.slice(1))) review.add(base.slice(1));
+        continue;
+      }
       // 성 + 2글자 모양의 성을 뺀 이름만 auto(called). 나머지 자른 말(앞 2글자·끝 2글자)은 review
       const given = surnameShaped(base) ? givenName(base) : null;
       for (const short of shortForms(base)) {
