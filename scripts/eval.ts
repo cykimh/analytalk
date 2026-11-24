@@ -212,7 +212,10 @@ export function summarizeEval(files: FileEval[]) {
     quoteMatchRate: evidenceIn === 0 ? 1 : round(sum(eps.map((e) => e.evidenceMatched)) / evidenceIn),
     droppedParagraphs: sum(eps.map((e) => e.paragraphsDropped)),
     bannedHits: sum(eps.map((e) => e.bannedHits)),
-    overDeadline: eps.filter((e) => e.totalMs > EPISODE_DEADLINE_MS).length,
+    /** 마감에 걸린 편: runEpisode가 마감 시각에 끊으면 kind가 partial이고 총 시간은 마감 근처에서 멈춘다 */
+    overDeadline: eps.filter((e) => e.kind === "partial" || e.totalMs >= EPISODE_DEADLINE_MS).length,
+    /** kind가 ok가 아닌 편(error·refused·partial·truncated·skipped). 건진 JSON이 검증을 통과해도 센다 */
+    notOkEpisodes: eps.filter((e) => e.kind !== "ok").length,
     /** 편별(1~4편) 문단 삭제율 = 지운 문단 합 / 쓴 문단 합. '~것 같다' 금지 패턴의 오탐을 골든셋에서 확인하는 값 */
     dropRateByEpisode: byEpisode.map((g) => {
       const total = sum(g.map((e) => e.paragraphsIn));
@@ -229,7 +232,7 @@ export function judgeEval(s: ReturnType<typeof summarizeEval>) {
   const banned = s.bannedHits === 0;
   const deadline = s.overDeadline === 0;
   const cost = s.costUsdAvgPerFile <= 1.6;
-  return { quote, banned, deadline, cost, pass: s.files > 0 && s.failedEpisodes === 0 && quote && banned && deadline && cost, review: "manual" as const };
+  return { quote, banned, deadline, cost, pass: s.files > 0 && s.failedEpisodes === 0 && s.notOkEpisodes === 0 && quote && banned && deadline && cost, review: "manual" as const };
 }
 
 // ── 실행 ──
@@ -375,7 +378,7 @@ async function main(): Promise<void> {
   const summary = summarizeEval(results);
   const verdict = judgeEval(summary);
   console.log(
-    `원가 합 $${summary.costUsdTotal}, 파일당 평균 $${summary.costUsdAvgPerFile}, 근거 일치율 ${summary.quoteMatchRate}, 지운 문단 ${summary.droppedParagraphs}, 금지 ${summary.bannedHits}, 270초 초과 ${summary.overDeadline}`,
+    `원가 합 $${summary.costUsdTotal}, 파일당 평균 $${summary.costUsdAvgPerFile}, 근거 일치율 ${summary.quoteMatchRate}, 지운 문단 ${summary.droppedParagraphs}, 금지 ${summary.bannedHits}, 270초 초과 ${summary.overDeadline}, ok 아닌 편 ${summary.notOkEpisodes}`,
   );
   console.log(`편별 문단 삭제율 ${summary.dropRateByEpisode.map((x, i) => `${i + 1}편 ${(x * 100).toFixed(1)}%`).join(", ")}`);
   console.log(

@@ -180,6 +180,21 @@ describe("summarizeEval / judgeEval", () => {
     expect(judgeEval(summarizeEval([file([{ costUsd: 0.5 }, { costUsd: 0.5 }, { costUsd: 0.5 }, { costUsd: 0.5 }])])).cost).toBe(false);
     expect(judgeEval(summarizeEval([file([{ status: "failed" }])])).pass).toBe(false);
   });
+  it("마감에 끊긴 편(kind partial)은 총 시간이 270초 아래여도 초과로 센다", () => {
+    const s = summarizeEval([file([{ kind: "partial", status: "partial", totalMs: 269_900 }])]);
+    expect(s.overDeadline).toBe(1);
+    expect(judgeEval(s).deadline).toBe(false);
+    expect(judgeEval(s).pass).toBe(false);
+    expect(judgeEval(summarizeEval([file([{ totalMs: 270_000 }])])).deadline).toBe(false);
+  });
+  it("kind가 ok가 아닌 편은 건진 JSON이 검증을 통과해도 통과를 막는다", () => {
+    for (const kind of ["truncated", "error", "refused", "partial"]) {
+      const s = summarizeEval([file([{ kind, status: "done" }])]);
+      expect(s.notOkEpisodes).toBe(1);
+      expect(judgeEval(s).pass).toBe(false);
+    }
+    expect(summarizeEval([file()]).notOkEpisodes).toBe(0);
+  });
   it("파일이 없으면 통과하지 않는다", () => {
     expect(judgeEval(summarizeEval([])).pass).toBe(false);
   });
