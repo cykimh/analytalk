@@ -154,6 +154,18 @@ const BRACKETED = /[([{<（［【〔＜][^)\]}>）］】〕＞]*[)\]}>）］】�
 const nameShaped = (w: string) => !STOP_PIECES.has(w) && !MEMO_PIECES.has(w) && (w.length === 2 || surnameShaped(w));
 /** 높임 꼬리(님·씨)로 끝나는 말. 뗀 뒤 2글자 이상 남을 때만 */
 const honorific = (w: string) => /^[가-힣]{2,}[님씨]$/.test(w);
+/**
+ * 님·씨로 끝나는 성 + 2글자(박예님·김다님). 님·씨를 뗀 말이 호칭·관계·메모 말이면(이사님·원장님·차장님·고객님·선배님·이모님)
+ * 직함·호칭이라 아니다. 이름 조각을 고를 때는 성 + 2글자로 세지 않고(민지 박사님의 박사님은 직함일 수 있다),
+ * 성을 뺀 이름(박예님의 예님)을 자를 때만 쓴다
+ */
+const honorificShaped = (w: string) =>
+  honorific(w) &&
+  ((w.length === 3 && SHAPE_SURNAMES.has(w[0])) || (w.length === 4 && TWO_CHAR_SURNAMES.has(w.slice(0, 2)))) &&
+  !STOP_PIECES.has(w.slice(0, -1)) &&
+  !MEMO_PIECES.has(w.slice(0, -1));
+/** 성을 뺀 이름을 잘라도 되는 말: 성 + 2글자이거나 님·씨로 끝나는 성 + 2글자 */
+const givenShaped = (w: string) => surnameShaped(w) || honorificShaped(w);
 
 /**
  * 여러 조각 이름에서 한글 조각 하나를 이름 조각으로 고를 만한 정도.
@@ -180,6 +192,7 @@ function pickNamePiece(list: string[]): string | undefined {
 /**
  * 원래 이름 하나에서 나온 말을 세 갈래로 나눈다(같은 말이 여러 갈래면 auto > called > review).
  * - auto: 본문에서 자동으로 바꾼다. 전체 이름, 이름 조각, 별명 꼬리·머리말을 뗀 말, 성 + 2글자 모양에서 자른 짧은 이름
+ *   (님·씨로 끝나는 성 + 2글자 포함: 박예님의 예님. 이사님·원장님처럼 님을 뗀 말이 직함이면 아니다)
  * - called: 이름의 짧은 이름이 흔한 말(STOP_PIECES)과 같은 것. 성 + 2글자에서 자른 것(김사랑의 사랑, 남궁우리의 우리)과
  *   성 목록과 상관없이 3글자 말의 끝 2글자(봉사랑의 사랑, 예우리의 우리).
  *   바꾸지 않고, 부르는 자리(CALLED_PARTICLES 앞)에 남았으면 확인 화면에 보여 준다
@@ -187,7 +200,8 @@ function pickNamePiece(list: string[]): string | undefined {
  *   별명 꼬리를 뗀 메모 말(원장님의 원장)과 여러 조각 이름의 메모 조각. 바꾸지 않고 확인 화면에 보여 준다. 메모 조각은
  *   성 + 2글자 조각이 있으면 그 밖의 조각(교회 박지훈의 교회), 없으면 이름으로 고른 조각 하나 밖의 조각(교회 민수의 교회)
  *   - likely: review 중 이름으로 고를 만했던(nameRank > 0) 메모 조각과 그 꼬리를 뗀 말(민지 수아의 민지, 박지훈 민수의 민수,
- *     민지님 수아의 민지님·민지). 이름일 수 있어 확인 화면에서 바꾸기를 미리 고른다
+ *     민지님 수아의 민지님·민지), 그 조각의 성 + 2글자에서 성을 뺀 이름(김민지님 수아의 민지, 박예님 수아의 예님).
+ *     이름일 수 있어 확인 화면에서 바꾸기를 미리 고른다
  * - 성 + 2글자 조각이 없는 여러 조각 이름은 한글 조각 하나만 이름으로 고른다(pickNamePiece: 2글자 이름·별명형을 먼저,
  *   님으로 끝나는 말은 그다음, 같은 정도면 맨 끝 것, 괄호 밖을 먼저). 예: 교회 민수·민수 교회·민수 형·민수 동아리의 민수,
  *   지훈 대리님의 지훈, 교회 민지공주의 민지공주, 교회 민지님의 민지님.
@@ -233,10 +247,18 @@ function nameTiers(name: string): { auto: string[]; called: string[]; review: st
       if (label) {
         const lone3 = !shaped && namePiece === undefined && base.length === 3 && !MEMO_PIECES.has(base) && !honorific(base);
         if (lone3 && !STOP_PIECES.has(base.slice(1))) review.add(base.slice(1));
+        // 이름으로 고르지 않은 성 + 2글자(김민지님 수아의 김민지, 박예님 수아의 박예님)는 성을 뺀 이름도 확인 화면에 보여 준다.
+        // 흔한 말과 같은 이름(김사랑님의 사랑)은 부르는 자리만 본다
+        const given = givenShaped(base) ? givenName(base) : null;
+        if (given && STOP_PIECES.has(given)) called.add(given);
+        else if (given) {
+          review.add(given);
+          if (maybeName) likely.add(given);
+        }
         continue;
       }
-      // 성 + 2글자 모양의 성을 뺀 이름만 auto(called). 나머지 자른 말(앞 2글자·끝 2글자)은 review
-      const given = surnameShaped(base) ? givenName(base) : null;
+      // 성 + 2글자 모양(님·씨로 끝나는 것 포함)의 성을 뺀 이름만 auto(called). 나머지 자른 말(앞 2글자·끝 2글자)은 review
+      const given = givenShaped(base) ? givenName(base) : null;
       for (const short of shortForms(base)) {
         if (STOP_PIECES.has(short)) {
           if (short === given) called.add(short);

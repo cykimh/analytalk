@@ -406,6 +406,41 @@ describe("이름 모양이 아닌 이름의 조각", () => {
     expect(r.left).toEqual([{ piece, count: 1, ids: [r.messages[0].id], suggest: false }]);
   });
 
+  // 성 + 2글자 이름의 끝 글자가 님·씨이면(박예님·김다님) 성을 뺀 이름(예님)을 자동으로 바꾼다.
+  // 님·씨를 뗀 말이 직함·호칭·메모 말(이사님·원장님·차장님)일 때만 이름 모양이 아니다 (NF1)
+  it.each([
+    ["박예님", "예님"],
+    ["김다님", "다님"],
+    ["이새님", "새님"],
+    ["김하님", "하님"],
+  ])("'%s': 성을 뺀 이름('%s')을 자동으로 바꾸고 확인 화면에 남기지 않는다 (NF1)", (name, given) => {
+    const r = run([`${given}이가 왔어`, `${given} 봤어?`, `${given}이랑 갔어`], { [name]: "P1" });
+    expect(r.texts).toEqual(["P1이가 왔어", "P1 봤어?", "P1이랑 갔어"]);
+    expect(r.left).toEqual([]);
+  });
+
+  it("'교회 박예님': 메모 말(교회)은 그대로 두고 성을 뺀 이름(예님)은 바꾼다 (NF1)", () => {
+    const r = run(["예님이가 왔어", "교회 가자"], { "교회 박예님": "P1" });
+    expect(r.texts).toEqual(["P1이가 왔어", "교회 가자"]);
+    expect(r.left).toEqual([{ piece: "교회", count: 1, ids: [r.messages[1].id], suggest: false }]);
+  });
+
+  // 2글자 이름(수아)을 이름 조각으로 고르면, 남은 성 + 이름 조각(박예님·김민지님)의 성을 뺀 이름도 확인 화면에 보여 준다 (NF1)
+  it.each([
+    ["박예님 수아", "예님이 왔어", "예님"],
+    ["김민지님 수아", "민지가 왔어", "민지"],
+  ])("'%s': 이름으로 고르지 않은 성 + 이름 조각의 이름('%s')도 확인 화면에서 바꾸기를 미리 고른다 (NF1)", (name, text, piece) => {
+    const r = run(["수아가 왔어", text], { [name]: "P1" });
+    expect(r.texts).toEqual(["P1가 왔어", text]);
+    expect(r.left).toEqual([{ piece, count: 1, ids: [r.messages[1].id], suggest: true }]);
+  });
+
+  it("성으로 시작하는 목록 밖 직함('민지 박사님')은 이름 조각으로 고르지 않는다 (NF1 가드)", () => {
+    const r = run(["박사님 오셨다", "민지가 했어"], { "민지 박사님": "P1" });
+    expect(r.texts).toEqual(["박사님 오셨다", "P1가 했어"]);
+    expect(r.left).toEqual([{ piece: "박사님", count: 1, ids: [r.messages[0].id], suggest: true }]);
+  });
+
   it("님 꼬리를 떼야 이름이 남는 조각('민지님')은 다른 이름 조각이 없을 때 이름으로 본다", () => {
     expect(run(["교회 가자", "민지야 밥"], { "교회 민지님": "P1" }).texts).toEqual(["교회 가자", "P1야 밥"]);
   });
