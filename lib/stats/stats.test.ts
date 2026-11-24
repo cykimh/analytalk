@@ -201,6 +201,58 @@ describe("findCrossedPatterns", () => {
   });
 });
 
+describe("엇갈린 패턴의 표본 하한 (D11)", () => {
+  it("한 사람-달 메시지가 적으면(1 → 2개) 비교하지 않는다", () => {
+    expect(
+      findCrossedPatterns({
+        "2026-09": month({ median: 10 * MIN, q: 0.5, len: 30, count: 1 }),
+        "2026-10": month({ median: 5 * MIN, q: 0.1, len: 2, count: 2 }),
+      }),
+    ).toEqual([]);
+  });
+
+  it("답장 간격 표본이 적으면 답장 속도는 비교하지 않는다(다른 지표는 본다)", () => {
+    const monthly = {
+      "2026-09": month({ median: 10 * MIN, q: 0.3, len: 10, count: 100 }),
+      "2026-10": month({ median: 2 * MIN, q: 0.2, len: 10, count: 100 }),
+    };
+    const replies = { "2026-09": { 민지: 2 }, "2026-10": { 민지: 50 } };
+    expect(findCrossedPatterns(monthly, { replies })).toEqual([]);
+    expect(findCrossedPatterns(monthly, { replies: { "2026-09": { 민지: 50 }, "2026-10": { 민지: 50 } } })).toHaveLength(1);
+  });
+
+  it("텍스트가 없는 달(사진만 보냄)은 질문 비율·평균 길이가 null이라 -100%가 나오지 않는다", () => {
+    const s = computeStats([msg("민지", T0 + HOUR, "사진", "photo"), msg("철수", T0 + HOUR + MIN, "응")]);
+    expect(s.monthly["2026-10"].questionRate.민지).toBeNull();
+    expect(s.monthly["2026-10"].avgLen.민지).toBeNull();
+    expect(s.monthly["2026-10"].avgLen.철수).toBe(1);
+  });
+
+  it("앞뒤가 잘린 달(대화가 그달 며칠만 덮음)은 비교하지 않는다: 9월 30일 내내 + 10월 1일 하루", () => {
+    const sept = Date.UTC(2026, 8, 1) - 9 * HOUR;
+    const msgs: ChatMessage[] = [];
+    for (let d = 0; d < 30; d++) {
+      for (let k = 0; k < 4; k++) {
+        msgs.push(msg("철수", sept + d * DAY + 20 * HOUR + k * 10 * MIN, "뭐해?"), msg("민지", sept + d * DAY + 20 * HOUR + k * 10 * MIN + 2 * MIN, "쉬는 중"));
+      }
+    }
+    // 10월 1일 하루: 답장이 느리고 메시지가 적다
+    for (let k = 0; k < 3; k++) {
+      msgs.push(msg("철수", T0 + 20 * HOUR + k * 60 * MIN, "뭐해 오늘은 바빠?"), msg("민지", T0 + 20 * HOUR + k * 60 * MIN + 40 * MIN, "응"));
+    }
+    const s = computeStats(msgs);
+    expect(s.crossed.filter((c) => c.month === "2026-10")).toEqual([]);
+  });
+
+  it("다 덮은 달끼리는 하루 평균 메시지 수로 비교한다(31일 달과 30일 달의 차이는 패턴이 아니다)", () => {
+    const monthly = {
+      "2026-09": month({ median: 10 * MIN, q: 0.3, len: 10, count: 300 }),
+      "2026-10": month({ median: 10 * MIN, q: 0.3, len: 10, count: 310 }),
+    };
+    expect(findCrossedPatterns(monthly, { coveredDays: { "2026-09": 30, "2026-10": 31 } })).toEqual([]);
+  });
+});
+
 describe("resolveStat", () => {
   const s = computeStats([
     msg("철수", T0 + 10 * HOUR),

@@ -7,8 +7,9 @@ export interface MonthStats {
   count: Record<string, number>;
   replyMedianMs: Record<string, number | null>;
   replyP75Ms: Record<string, number | null>;
-  questionRate: Record<string, number>;
-  avgLen: Record<string, number>;
+  /** 텍스트 메시지가 없는 달은 null(사진만 보낸 달을 0으로 세지 않는다) */
+  questionRate: Record<string, number | null>;
+  avgLen: Record<string, number | null>;
 }
 
 /** replySpeed = 1 / replyMedianMs (클수록 빠르다) */
@@ -207,10 +208,28 @@ export function computeStats(messages: ChatMessage[]): ChatStats {
       const s = summarize(a.intervals[who] ?? []);
       ms.replyMedianMs[who] = s.median;
       ms.replyP75Ms[who] = s.p75;
-      ms.questionRate[who] = ratio(a.questionCount[who] ?? 0, a.textCount[who] ?? 0);
-      ms.avgLen[who] = ratio(a.lenSum[who] ?? 0, a.textCount[who] ?? 0);
+      const texts = a.textCount[who] ?? 0;
+      ms.questionRate[who] = texts > 0 ? ratio(a.questionCount[who] ?? 0, texts) : null;
+      ms.avgLen[who] = texts > 0 ? ratio(a.lenSum[who] ?? 0, texts) : null;
     }
     monthly[key] = ms;
+  }
+  // 엇갈린 패턴의 표본: 달·사람별 답장 간격 수, 대화 기간(첫·마지막 메시지 날짜)이 그달에서 덮은 날짜 수
+  const replyCounts: Record<string, Record<string, number>> = {};
+  for (const [key, a] of Object.entries(months)) {
+    replyCounts[key] = Object.fromEntries(Object.entries(a.intervals).map(([who, xs]) => [who, xs.length]));
+  }
+  const coveredDays: Record<string, number> = {};
+  if (msgs.length > 0) {
+    const dayNum = (ts: number) => Math.floor((ts + KST_OFFSET_MS) / DAY_MS);
+    const first = dayNum(msgs[0].ts);
+    const last = dayNum(msgs[msgs.length - 1].ts);
+    for (const key of Object.keys(months)) {
+      const [y, mo] = key.split("-").map(Number);
+      const start = Date.UTC(y, mo - 1, 1) / DAY_MS;
+      const end = Date.UTC(y, mo, 1) / DAY_MS - 1;
+      coveredDays[key] = Math.min(end, last) - Math.max(start, first) + 1;
+    }
   }
 
   // 연속 일수: 메시지가 있는 날짜를 일 번호로 바꿔 이어지는 최장 구간을 센다
@@ -249,6 +268,6 @@ export function computeStats(messages: ChatMessage[]): ChatStats {
     questionRate,
     media,
     addressTerms,
-    crossed: findCrossedPatterns(monthly),
+    crossed: findCrossedPatterns(monthly, { replies: replyCounts, coveredDays }),
   };
 }
