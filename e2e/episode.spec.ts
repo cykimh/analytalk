@@ -19,31 +19,40 @@ const messages: ChatMessage[] = [1, 2, 3].flatMap((d, i) => [
 ]);
 const stats = computeStats(messages);
 
-function content(n: number, quote: string) {
+/**
+ * 저장된 편. statText면 문단 밖 글(헤드라인·dek·섹션 제목·예고·메모)에도 {{stat:…}}을 넣는다.
+ * 2편 헤드라인은 모르는 경로뿐이라 채우면 빈 글이 된다
+ */
+function content(n: number, quote: string, statText = false) {
   return {
     episode: n,
     safety: { flag: "none" },
     declined_topics: [],
-    reading_notes: [{ range: "10-01~10-03", note: "저녁마다 이야기했다" }],
-    headline: `${n}편 헤드라인`,
-    dek: "사흘 동안의 흐름",
+    reading_notes: [{ range: "10-01~10-03", note: statText ? "{{stat:total}}개를 읽었다" : "저녁마다 이야기했다" }],
+    headline: !statText ? `${n}편 헤드라인` : n === 2 ? "{{stat:nope}}" : `${n}편 민지의 {{stat:replyMedianMs.민지}} 법칙`,
+    dek: statText ? "{{stat:longestStreakDays}} 동안의 흐름" : "사흘 동안의 흐름",
     sections: [
       {
         icon: "🌙",
-        title: "저녁의 리듬",
+        title: statText ? "{{stat:total}}번의 저녁{{stat:nope}}" : "저녁의 리듬",
         about: "pair",
         paragraphs: [{ key: "p1", text: "민지의 답장은 {{stat:replyMedianMs.민지}} 안에 왔어요", evidence_ids: ["e1"] }],
         evidence: [{ id: "e1", msg_id: "m1", quote, sender: "민지", at: "2026-10-01T20:04:00+09:00" }],
       },
     ],
-    next_teaser: n === 4 ? null : `${n + 1}편 예고`,
+    next_teaser: n === 4 ? null : statText ? `${n + 1}편: {{stat:replyMedianMs.민지}} 뒤의 이야기` : `${n + 1}편 예고`,
   };
 }
 
 /** 편 상태(statuses)를 바꿔 가며 대화·상태 API를 흉내 낸다. 다시 쓰기·피드백 요청 본문을 모은다 */
-async function fakeApi(context: BrowserContext, statuses: string[], o: { paused?: boolean; quote?: string } = {}) {
+async function fakeApi(
+  context: BrowserContext,
+  statuses: string[],
+  o: { paused?: boolean; quote?: string; statText?: boolean } = {},
+) {
   const api = { statuses: [...statuses], paused: o.paused ?? false, retries: [] as unknown[], feedback: [] as unknown[], deleted: 0 };
   const hasContent = (s: string) => s === "done" || s === "partial";
+  const note = o.statText ? "{{stat:total}}개를 {{stat:nope}}읽었다" : "저녁마다 이야기했다";
   await context.route(`**/api/conversations/${ID}`, (route) => {
     if (route.request().method() === "DELETE") {
       api.deleted++;
@@ -63,7 +72,7 @@ async function fakeApi(context: BrowserContext, statuses: string[], o: { paused?
         episodes: api.statuses.map((status, i) => ({
           n: i + 1,
           status,
-          content: hasContent(status) ? content(i + 1, o.quote ?? "집에서 쉬는 중") : null,
+          content: hasContent(status) ? content(i + 1, o.quote ?? "집에서 쉬는 중", o.statText) : null,
           errorCode: status === "failed" ? "retryable" : null,
         })),
       },
@@ -75,7 +84,13 @@ async function fakeApi(context: BrowserContext, statuses: string[], o: { paused?
         episodes: api.statuses.map((status, i) => ({
           n: i + 1,
           status,
-          progress: status === "queued" ? null : [{ range: "10-01~10-03", note: `${i + 1}편 메모: 저녁마다 이야기했다` }],
+          progress:
+            status === "queued"
+              ? null
+              : [
+                  { range: "10-01~10-03", note: `${i + 1}편 메모: ${note}` },
+                  ...(o.statText ? [{ range: "10-04~10-05", note: "{{stat:nope}}" }] : []),
+                ],
           errorCode: status === "failed" ? "retryable" : null,
         })),
         paused: api.paused,
@@ -293,6 +308,39 @@ test.describe("AI 연재", () => {
     await expect(page.getByText("알려 줘서 고마워요")).toBeVisible();
     expect(api.feedback).toEqual([{ id: ID, n: 1, paragraphKey: "s1.p1", reason: "wrong_fact" }]);
     expect(dialogs).toEqual([]);
+  });
+
+  test("문단 밖의 {{stat:…}}도 채운다: 진행 메모·카드 헤드라인·헤드라인·dek·섹션 제목·예고, 모르는 경로는 빼고 빈 헤드라인은 'N편'", async ({
+    page,
+    context,
+  }) => {
+    const api = await fakeApi(context, ["running", "queued", "queued", "queued"], { statText: true });
+    const bodyText = () => page.locator("body").innerText();
+
+    await page.goto(`/c/${ID}/steps`);
+    await expect(page.getByText("1편 메모: 6개를 읽었다")).toBeVisible();
+    // 채운 뒤 빈 메모는 날짜 범위까지 그리지 않는다
+    await expect(page.getByText("10-04~10-05")).toHaveCount(0);
+    expect(await bodyText()).not.toContain("{{");
+
+    api.statuses = ["done", "done", "done", "done"];
+    await page.goto(`/c/${ID}`);
+    await expect(card(page, 1).getByRole("heading")).toHaveText("1편 민지의 4분 법칙");
+    await expect(card(page, 2).getByRole("heading")).toHaveText("2편");
+    expect(await bodyText()).not.toContain("{{");
+
+    await page.goto(`/c/${ID}/e/1`);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("1편 민지의 4분 법칙");
+    await expect(page.getByRole("heading", { level: 2 })).toHaveText(/6번의 저녁$/);
+    const article = page.getByRole("article");
+    await expect(article).toContainText("3일 동안의 흐름");
+    await expect(article).toContainText("민지의 답장은 4분 안에 왔어요");
+    await expect(article).toContainText("2편: 4분 뒤의 이야기");
+    expect(await bodyText()).not.toMatch(/\{\{|stat:/);
+
+    await page.goto(`/c/${ID}/e/2`);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("2편");
+    expect(await bodyText()).not.toMatch(/\{\{|stat:/);
   });
 
   test.describe("375px", () => {

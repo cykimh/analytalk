@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { validateEpisode } from "@/lib/llm/validate";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { buildPayload, payloadIndex } from "@/lib/payload/build";
-import { renderStatText } from "./statText";
+import { hasStatText, renderStatPlain, renderStatText } from "./statText";
 
 /** KST 벽시계 → UTC epoch ms */
 const kst = (d: number, h: number, mi: number) => Date.UTC(2026, 9, d, h, mi) - 9 * 3_600_000;
@@ -92,5 +92,28 @@ describe("renderStatText", () => {
       { path, display: "4분" },
       "였어요",
     ]);
+  });
+});
+
+describe("renderStatPlain", () => {
+  it("헤드라인처럼 문자열이 필요한 곳: 채운 값을 이어 붙인 글자", () => {
+    expect(renderStatPlain("민지의 {{stat:replyMedianMs.민지}} 법칙", stats)).toBe("민지의 4분 법칙");
+    expect(renderStatPlain("{{stat:longestStreakDays}} 동안 {{stat:total}}개", stats)).toBe("3일 동안 6개");
+  });
+
+  it("풀리지 않는 자리표시자는 빼고, 자리표시자가 없으면 글자 그대로", () => {
+    expect(renderStatPlain("{{stat:nope}}의 {{name}} 법칙", stats)).toBe("의  법칙");
+    expect(renderStatPlain("저녁의 리듬", stats)).toBe("저녁의 리듬");
+    expect(renderStatPlain("", stats)).toBe("");
+  });
+});
+
+describe("hasStatText", () => {
+  it("채운 뒤 보일 글자가 남는지(없으면 화면이 기본 제목을 쓰거나 줄을 숨긴다)", () => {
+    expect(hasStatText("{{stat:total}}개", stats)).toBe(true);
+    expect(hasStatText("{{stat:total}}", stats)).toBe(true);
+    expect(hasStatText("{{stat:nope}} {{stat:replyMedianMs.철수}}", stats)).toBe(false);
+    expect(hasStatText("  ", stats)).toBe(false);
+    expect(hasStatText(null, stats)).toBe(false);
   });
 });

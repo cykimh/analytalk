@@ -1,6 +1,6 @@
-// 편 본문의 {{stat:경로}} 자리표시자를 통계 값으로 채운 조각으로 나눈다(브라우저·서버 공용).
+// 모델이 쓴 글(headline·dek·섹션 제목·문단·예고·reading_notes)의 {{stat:경로}} 자리표시자를 통계 값으로 채운다(브라우저·서버 공용).
 // 값은 validateEpisode와 같은 resolveStat으로 풀어서, 저장 전 검증이 남긴 문단은 화면에서도 같은 값으로 보인다.
-// 화면은 조각을 React 텍스트 노드로만 그린다.
+// 화면은 조각을 React 텍스트 노드로만 그린다(components/episode/StatText). <title>·OG처럼 문자열이 필요하면 renderStatPlain.
 import { formatCount, formatDuration, formatPercent } from "@/components/stats/format";
 import type { ChatStats } from "@/lib/stats/compute";
 import { resolveStat, type StatUnit } from "@/lib/stats/paths";
@@ -43,3 +43,14 @@ export function renderStatText(text: string, stats: ChatStats): (string | StatTo
   pushText(text.slice(at));
   return out;
 }
+
+/** 채운 글을 문자열 하나로(<title>·OG·공유 카드처럼 조각을 그릴 수 없는 곳) */
+export function renderStatPlain(text: string, stats: ChatStats): string {
+  return renderStatText(text, stats)
+    .map((t) => (typeof t === "string" ? t : t.display))
+    .join("");
+}
+
+/** 채운 뒤 보일 글자가 남는다. 아니면 화면은 기본 제목을 쓰거나 그 줄을 그리지 않는다 */
+export const hasStatText = (text: string | null, stats: ChatStats): text is string =>
+  text !== null && renderStatPlain(text, stats).trim() !== "";

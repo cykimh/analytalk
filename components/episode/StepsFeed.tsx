@@ -2,13 +2,16 @@
 
 // /c/[id]/steps: 편마다 상태와 진행 메모(검증을 거친 reading_notes)를 쌓아 보여 준다.
 // AI가 생각하는 동안에는 통계 카드를 돌아가며 보여 주고, 1편이 끝나면 [1편 읽기]를 띄운다.
-// 인용·본문은 이 화면에 나오지 않는다(검증을 통과한 편 화면에서만 보인다)
+// 인용·본문은 이 화면에 나오지 않는다(검증을 통과한 편 화면에서만 보인다).
+// 메모의 {{stat:경로}}는 대화 통계로 채우므로, 통계(대화)를 받은 뒤에 메모를 그린다
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
+import { hasStatText } from "@/lib/episode/statText";
 import type { ChatStats } from "@/lib/stats/compute";
 import { AI_NOTICE, isActive, PAUSED_TEXT, SAFETY_HELP, statCards, STATUS_TEXT } from "./model";
 import { blocking, PageFrame, PageState } from "./PageState";
+import { StatText } from "./StatText";
 import { useConversation } from "./useConversation";
 
 const STAT_ROTATE_MS = 4000;
@@ -36,6 +39,7 @@ export function StepsFeed({ id }: { id: string }) {
   const episodes = status!.episodes;
   const first = episodes.find((e) => e.n === 1)?.status;
   const active = isActive(episodes);
+  const stats = conversation?.stats ?? null;
 
   return (
     <PageFrame>
@@ -53,26 +57,34 @@ export function StepsFeed({ id }: { id: string }) {
         </p>
       )}
 
-      {active && conversation && <StatTicker stats={conversation.stats} />}
+      {active && stats && <StatTicker stats={stats} />}
 
       <ol className="grid gap-3">
-        {episodes.map((e) => (
-          <li key={e.n} className="grid gap-2 rounded-xl border p-4">
-            <h2 className="text-sm font-semibold">
-              {e.n}편 <span className="font-normal text-muted-foreground">· {STATUS_TEXT[e.status] ?? e.status}</span>
-            </h2>
-            {(notes[e.n]?.length ?? 0) > 0 && (
-              <ul className="grid gap-1 text-sm">
-                {notes[e.n].map((note) => (
-                  <li key={`${note.range}|${note.note}`} className="flex min-w-0 gap-2">
-                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{note.range}</span>
-                    <span className="min-w-0 break-words">{note.note}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </li>
-        ))}
+        {episodes.map((e) => {
+          // 채운 뒤 빈 메모(모르는 자리표시자뿐)는 그리지 않는다
+          const shown = stats ? (notes[e.n] ?? []).filter((note) => hasStatText(note.note, stats)) : [];
+          return (
+            <li key={e.n} className="grid gap-2 rounded-xl border p-4">
+              <h2 className="text-sm font-semibold">
+                {e.n}편 <span className="font-normal text-muted-foreground">· {STATUS_TEXT[e.status] ?? e.status}</span>
+              </h2>
+              {stats && shown.length > 0 && (
+                <ul className="grid gap-1 text-sm">
+                  {shown.map((note) => (
+                    <li key={`${note.range}|${note.note}`} className="flex min-w-0 gap-2">
+                      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                        <StatText text={note.range} stats={stats} />
+                      </span>
+                      <span className="min-w-0 break-words">
+                        <StatText text={note.note} stats={stats} />
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          );
+        })}
       </ol>
 
       {first === "failed" && <p className="text-sm">1편을 쓰지 못했어요. 대화 홈에서 [다시 쓰기]를 눌러 주세요.</p>}

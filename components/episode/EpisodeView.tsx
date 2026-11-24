@@ -1,26 +1,15 @@
 // 편 한 편: 헤드라인 → dek → 섹션(아이콘·제목·문단 → 근거 말풍선) → 다음 편 예고. 'AI 생성, 재미·참고용'을 단다.
-// 모든 글은 React 텍스트 노드로만 그린다. 숫자는 {{stat:경로}}를 renderStatText로 채운다.
+// 모든 글은 React 텍스트 노드로만 그린다. 모델이 쓴 글은 모두 StatText로 그려 {{stat:경로}}를 통계 값으로 채운다.
+// 채운 뒤 빈 헤드라인은 'N편'으로, 빈 dek·예고는 그리지 않는다.
 // feedback이 있으면(대화 주인) 문단마다 [틀렸어요]를 단다. 공유 화면은 feedback 없이 쓴다
-import { Fragment } from "react";
 import { paragraphRef } from "@/lib/episode/feedback";
-import { renderStatText } from "@/lib/episode/statText";
+import { hasStatText } from "@/lib/episode/statText";
 import type { StoredEpisode } from "@/lib/llm/schema";
 import type { ChatStats } from "@/lib/stats/compute";
 import { Evidence } from "./Evidence";
 import { FeedbackButton } from "./FeedbackButton";
 import { AI_NOTICE } from "./model";
-
-function StatText({ text, stats }: { text: string; stats: ChatStats }) {
-  return renderStatText(text, stats).map((t, i) =>
-    typeof t === "string" ? (
-      <Fragment key={i}>{t}</Fragment>
-    ) : (
-      <strong key={i} className="font-semibold tabular-nums">
-        {t.display}
-      </strong>
-    ),
-  );
-}
+import { StatText } from "./StatText";
 
 export function EpisodeView({
   n,
@@ -39,8 +28,14 @@ export function EpisodeView({
         <p className="text-xs text-muted-foreground">
           {n}편 · {AI_NOTICE}
         </p>
-        <h1 className="text-2xl leading-snug font-semibold break-words">{content.headline || `${n}편`}</h1>
-        {content.dek && <p className="text-muted-foreground break-words">{content.dek}</p>}
+        <h1 className="text-2xl leading-snug font-semibold break-words">
+          {hasStatText(content.headline, stats) ? <StatText text={content.headline} stats={stats} /> : `${n}편`}
+        </h1>
+        {hasStatText(content.dek, stats) && (
+          <p className="text-muted-foreground break-words">
+            <StatText text={content.dek} stats={stats} />
+          </p>
+        )}
       </header>
 
       {content.sections.map((section, si) => (
@@ -49,7 +44,7 @@ export function EpisodeView({
             <span aria-hidden className="mr-1.5">
               {section.icon}
             </span>
-            {section.title}
+            <StatText text={section.title} stats={stats} />
           </h2>
           {section.paragraphs.map((p, pi) => (
             <div key={`${pi}-${p.key}`} className="grid gap-1">
@@ -69,10 +64,12 @@ export function EpisodeView({
         </section>
       ))}
 
-      {content.next_teaser && (
+      {hasStatText(content.next_teaser, stats) && (
         <footer className="grid gap-1 rounded-xl bg-muted p-4 text-sm">
           <span className="text-xs text-muted-foreground">다음 편 예고</span>
-          <p className="break-words">{content.next_teaser}</p>
+          <p className="break-words">
+            <StatText text={content.next_teaser} stats={stats} />
+          </p>
         </footer>
       )}
     </article>

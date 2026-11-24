@@ -9,9 +9,12 @@ import { StatsDashboard } from "@/components/stats/StatsDashboard";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { deletePayload } from "@/lib/client/idb";
 import type { SubmitResult } from "@/lib/client/submit";
+import { hasStatText } from "@/lib/episode/statText";
 import type { StoredEpisode } from "@/lib/llm/schema";
+import type { ChatStats } from "@/lib/stats/compute";
 import { AI_NOTICE, episodeAction, kstDay, PAUSED_TEXT, readRange, SAFETY_HELP, STATUS_TEXT } from "./model";
 import { blocking, PageFrame, PageState } from "./PageState";
+import { StatText } from "./StatText";
 import { useConversation } from "./useConversation";
 
 function EpisodeCard({
@@ -19,6 +22,7 @@ function EpisodeCard({
   n,
   status,
   content,
+  stats,
   paused,
   onRetry,
 }: {
@@ -26,6 +30,7 @@ function EpisodeCard({
   n: number;
   status: string;
   content: StoredEpisode | null;
+  stats: ChatStats;
   paused: boolean;
   onRetry: (n: number) => Promise<SubmitResult>;
 }) {
@@ -46,7 +51,11 @@ function EpisodeCard({
       <p className="text-xs text-muted-foreground">
         {n}편 · {STATUS_TEXT[status] ?? status}
       </p>
-      {content && <h3 className="font-semibold break-words">{content.headline || `${n}편`}</h3>}
+      {content && (
+        <h3 className="font-semibold break-words">
+          {hasStatText(content.headline, stats) ? <StatText text={content.headline} stats={stats} /> : `${n}편`}
+        </h3>
+      )}
       {status === "safety" && <p className="text-sm">{SAFETY_HELP}</p>}
       {(action.read || action.retry) && (
         <div className="flex flex-wrap items-center gap-2">
@@ -158,6 +167,7 @@ export function ConversationHome({ id }: { id: string }) {
               n={e.n}
               status={status?.episodes.find((s) => s.n === e.n)?.status ?? e.status}
               content={e.content}
+              stats={c.stats}
               paused={paused}
               onRetry={retry}
             />
