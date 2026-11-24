@@ -8,19 +8,19 @@ import { validateEpisode } from "./validate";
 /** KST 벽시계 → UTC epoch ms */
 const kst = (d: number, h: number, mi: number) => Date.UTC(2026, 9, d, h, mi) - 9 * 3_600_000;
 
-/** 2026-10-01~03 저녁마다 철수·민지가 네 번 주고받는 대화. id는 0부터, 하루 4개 */
-function fixture() {
+/** 2026-10-01~03 저녁마다 철수·민지(표시 이름)가 네 번 주고받는 대화. id는 0부터, 하루 4개 */
+function fixture(other = "철수", me = "민지") {
   const rows: [string, number, string][] = [];
   for (let d = 1; d <= 3; d++) {
     rows.push(
-      ["철수", kst(d, 20, 0), "오늘 뭐해?"],
-      ["민지", kst(d, 20, 5), "집에서 쉬는 중 ㅋㅋ"],
-      ["철수", kst(d, 20, 6), "영화 볼래?\n내일 저녁"],
-      ["민지", kst(d, 20, 10), "좋아!"],
+      [other, kst(d, 20, 0), "오늘 뭐해?"],
+      [me, kst(d, 20, 5), "집에서 쉬는 중 ㅋㅋ"],
+      [other, kst(d, 20, 6), "영화 볼래?\n내일 저녁"],
+      [me, kst(d, 20, 10), "좋아!"],
     );
   }
   const messages: ChatMessage[] = rows.map(([sender, ts, text], id) => ({ id, ts, sender, kind: "text", text, line: id + 1 }));
-  const p = buildPayload({ messages, me: "민지", concept: "couple", kind: "pair", tokenBudget: 1_000_000, tokensPerChar: 1 });
+  const p = buildPayload({ messages, me, concept: "couple", kind: "pair", tokenBudget: 1_000_000, tokensPerChar: 1 });
   return { idx: payloadIndex(p), stats: p.stats };
 }
 const { idx, stats } = fixture();
@@ -249,6 +249,41 @@ describe("validateEpisode", () => {
     expect(r.content?.sections[0].paragraphs.map((p) => p.key)).toEqual(["p1"]);
     expect(r.content?.reading_notes).toEqual([{ range: "10-02", note: "저녁 대화" }]);
     expect(r.dropped.paragraphs).toBe(2);
+  });
+
+  // 표시 이름이 링크 끝과 같은 영어 낱말(Me·Com …)이어도 풀리는 자리표시자는 개인정보 검사에서 뺀다 (N1)
+  it("풀리는 {{stat:…}} 자리표시자 속 표시 이름(Me·Com)은 링크로 보지 않는다. 자리표시자 밖의 개인정보는 그대로 지운다", () => {
+    const f = fixture("Com", "Me");
+    const r = validateEpisode(
+      episode(
+        [
+          sec("{{stat:byPerson.Me}}개의 메시지", [
+            para("p1", "메시지 {{stat:byPerson.Me}}개"),
+            para("p2", "10월엔 {{stat:monthly.2026-10.count.Me}}개, 상대는 {{stat:byPerson.Com}}개"),
+            para("p3", "{{stat:byPerson.Me}}개, 번호는 010-9999-8888이에요"),
+            para("p4", "{{stat:byPerson.Com}}개, minji.github.io 블로그"),
+          ]),
+        ],
+        { headline: "{{stat:share.Me}}만큼 먼저", dek: "{{stat:byPerson.Com}}개의 답장" },
+      ),
+      f.idx,
+      f.stats,
+      { truncated: false },
+    );
+    expect(r.content?.sections[0].paragraphs.map((p) => p.key)).toEqual(["p1", "p2"]);
+    expect(r.content?.sections[0].title).toBe("{{stat:byPerson.Me}}개의 메시지");
+    expect(r.content?.headline).toBe("{{stat:share.Me}}만큼 먼저");
+    expect(r.content?.dek).toBe("{{stat:byPerson.Com}}개의 답장");
+  });
+
+  it("풀리지 않는 자리표시자 속 개인정보는 숨지 않는다: 제목·headline을 비운다", () => {
+    const r = run(
+      episode([sec("{{stat:010-1234-5678}} 연락", [para("p1", "저녁 대화가 이어져요")])], {
+        headline: "{{minji@example.com}}",
+      }),
+    );
+    expect(r.content?.sections[0].title).toBe("");
+    expect(r.content?.headline).toBe("");
   });
 
   it("가린 표시([가림:…])가 든 인용·문단은 개인정보로 보지 않는다", () => {

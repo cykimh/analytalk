@@ -35,9 +35,18 @@ const TRUNCATED_DEFAULTS = { declined_topics: [], reading_notes: [], headline: "
 const MAX_CHARS = { headline: 80, dek: 200, title: 60, paragraph: 800, teaser: 120, icon: 8 } as const;
 const length = (text: string) => Array.from(text).length;
 
+/**
+ * 풀리는 {{stat:경로}} 자리표시자를 뺀 글. 경로 속 표시 이름이 링크 끝과 같은 말(Me·Com)이어도 개인정보로 보지 않게 한다.
+ * 풀리지 않는 자리표시자는 남겨서 그 속의 개인정보도 검사한다
+ */
+const withoutStats = (text: string, stats: ChatStats) =>
+  text.replace(PLACEHOLDER, (whole, inner: string) =>
+    inner.startsWith("stat:") && resolveStat(inner.slice("stat:".length), stats) !== null ? "" : whole,
+  );
 /** 저장해도 되는 모델 글인가: 금지 표현·개인정보(PRD 5장 6)가 없고 글자 수 상한 이하(PRD 5장 1) */
-const storable = (text: string, max: number) => length(text) <= max && !isBanned(text) && !hasPII(text);
-const clean = (text: string, max: number) => (storable(text, max) ? text : "");
+const storable = (text: string, max: number, stats: ChatStats) =>
+  length(text) <= max && !isBanned(text) && !hasPII(withoutStats(text, stats));
+const clean = (text: string, max: number, stats: ChatStats) => (storable(text, max, stats) ? text : "");
 /** 이모지 몇 글자만. 글자·숫자가 들었으면(문장을 넣었으면) 비운다 */
 const cleanIcon = (icon: string) => {
   const t = icon.trim();
@@ -124,7 +133,7 @@ export function validateEpisode(
     const aboutPerson = section.about === "me" || people.includes(section.about);
     const paragraphs = section.paragraphs.flatMap((p): Paragraph[] => {
       const placeholders = placeholderCount(p.text, stats);
-      if (p.text.trim() === "" || placeholders === null || !storable(p.text, MAX_CHARS.paragraph)) return [];
+      if (p.text.trim() === "" || placeholders === null || !storable(p.text, MAX_CHARS.paragraph, stats)) return [];
       const ids = p.evidence_ids.filter((id) => kept.has(id));
       // 사람 문단은 남은 근거가 있거나, 처음부터 근거 없이 자리표시자로만 쓴 것만 남긴다
       const person = aboutPerson || people.some((name) => p.text.includes(name));
@@ -140,7 +149,7 @@ export function validateEpisode(
     sections.push({
       ...section,
       icon: cleanIcon(section.icon),
-      title: clean(section.title, MAX_CHARS.title),
+      title: clean(section.title, MAX_CHARS.title, stats),
       about: ABOUT_FIXED.has(section.about) || people.includes(section.about) ? section.about : "group",
       paragraphs,
       evidence,
@@ -152,10 +161,10 @@ export function validateEpisode(
   const content: StoredEpisode = {
     ...ep,
     reading_notes: sanitizeNotes(ep.reading_notes),
-    headline: clean(ep.headline, MAX_CHARS.headline),
-    dek: clean(ep.dek, MAX_CHARS.dek),
+    headline: clean(ep.headline, MAX_CHARS.headline, stats),
+    dek: clean(ep.dek, MAX_CHARS.dek, stats),
     sections,
-    next_teaser: ep.next_teaser === null ? null : clean(ep.next_teaser, MAX_CHARS.teaser),
+    next_teaser: ep.next_teaser === null ? null : clean(ep.next_teaser, MAX_CHARS.teaser, stats),
   };
   const partial = opts.truncated || dropped.paragraphs / paragraphsIn >= PARTIAL_DROP_RATIO;
   return { status: partial ? "partial" : "done", content, dropped };
