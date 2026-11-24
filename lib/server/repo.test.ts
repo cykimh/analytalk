@@ -575,6 +575,19 @@ describe("memoryRepo 삭제·공유·피드백", () => {
     expect(await repo.getConversation(id)).toMatchObject({ shareTokenHash: null, shareScope: "all", shareHidden: [] });
   });
 
+  it("expectHash가 지금 해시와 다르면 공유 설정을 쓰지 않는다", async () => {
+    const { repo, many } = await fixture();
+    const id = await created(claim(repo, many));
+    const base = { scope: "all" as const, hidden: [] };
+    expect(await repo.setShare(id, many, { ...base, tokenHash: "h1", expectHash: "x" })).toBe(false);
+    expect(await repo.setShare(id, many, { ...base, tokenHash: "h1", expectHash: null })).toBe(true);
+    expect(await repo.setShare(id, many, { ...base, tokenHash: "h2", expectHash: null })).toBe(false);
+    expect(await repo.setShare(id, many, { ...base, tokenHash: "h1", scope: "first", expectHash: "h1" })).toBe(true);
+    await repo.setShare(id, many, { ...base, tokenHash: null });
+    expect(await repo.setShare(id, many, { ...base, tokenHash: "h1", expectHash: "h1" })).toBe(false);
+    expect((await repo.getConversation(id))!.shareTokenHash).toBeNull();
+  });
+
   it("만료된 대화는 공유 링크로도 읽히지 않는다", async () => {
     const { repo, many } = await fixture();
     const id = await created(claim(repo, many));

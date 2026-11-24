@@ -26,8 +26,9 @@ const sha256 = (value: string) => createHash("sha256").update(value).digest("hex
 
 /**
  * 공유 범위를 정한다.
- * - 아직 공유 중이 아니면 새 토큰을 만들고 `{ url }`을 돌려준다
- * - 이미 공유 중이면 토큰은 그대로 두고 범위·숨김만 바꾼다. 원문 토큰은 DB에 없어 `{ url: null }`이다(새 링크가 필요하면 폐기 후 다시 만든다)
+ * - 아직 공유 중이 아니면 새 토큰을 만들고 `{ url, shared: true }`를 돌려준다
+ * - 이미 공유 중이면 토큰은 그대로 두고 범위·숨김만 바꾼다. 원문 토큰은 DB에 없어 `{ url: null, shared: true }`이다(발급한 URL은 클라이언트가 보관한다. 새 링크가 필요하면 폐기 후 다시 만든다)
+ * - 읽은 뒤 토큰이 동시에 바뀌었으면(폐기·중복 발급) 쓰지 않고 409다
  */
 export async function handleCreateShare(req: Request, deps: HandlerDeps): Promise<HandlerResult> {
   const auth = await requireInvite(req, deps);
@@ -40,18 +41,20 @@ export async function handleCreateShare(req: Request, deps: HandlerDeps): Promis
   if (!row) return fail(404, "not_found");
 
   const hiddenSet = [...new Set(hidden)].sort();
-  if (row.shareTokenHash !== null) {
-    if (!(await deps.repo.setShare(id, auth.inviteId, { tokenHash: row.shareTokenHash, scope, hidden: hiddenSet }))) {
-      return fail(404, "not_found");
-    }
-    return { status: 200, body: { url: null }, headers: NO_STORE };
+  const issued = row.shareTokenHash === null ? randomBytes(TOKEN_BYTES).toString("base64url") : null;
+  const ok = await deps.repo.setShare(id, auth.inviteId, {
+    tokenHash: issued === null ? row.shareTokenHash : sha256(issued),
+    scope,
+    hidden: hiddenSet,
+    // 읽은 뒤 다른 요청이 토큰을 바꿨으면(폐기·중복 발급) 쓰지 않는다
+    expectHash: row.shareTokenHash,
+  });
+  if (!ok) {
+    // 조건이 안 맞았다: 대화가 사라졌으면 404, 아니면 동시에 바뀐 것이라 409
+    return (await deps.repo.getConversation(id)) ? fail(409, "conflict") : fail(404, "not_found");
   }
-
-  const token = randomBytes(TOKEN_BYTES).toString("base64url");
-  if (!(await deps.repo.setShare(id, auth.inviteId, { tokenHash: sha256(token), scope, hidden: hiddenSet }))) {
-    return fail(404, "not_found");
-  }
-  return { status: 200, body: { url: `${resolveBaseUrl(req.url).baseUrl}/s/${token}` }, headers: NO_STORE };
+  if (issued === null) return { status: 200, body: { url: null, shared: true }, headers: NO_STORE };
+  return { status: 200, body: { url: `${resolveBaseUrl(req.url).baseUrl}/s/${issued}`, shared: true }, headers: NO_STORE };
 }
 
 /** 링크를 폐기한다(토큰 해시를 null로). 범위·숨김 설정은 남긴다 */

@@ -73,7 +73,15 @@ export interface AppRepo {
   getPausedUntil(): Promise<Date | null>;
   /** 대화·편·피드백을 지운다. claim 원장과 사용량 원장은 남는다 */
   deleteConversation(id: string, inviteId: string): Promise<boolean>;
-  setShare(id: string, inviteId: string, share: { tokenHash: string | null; scope: "first" | "all"; hidden: number[] }): Promise<boolean>;
+  /**
+   * 공유 설정을 쓴다. `expectHash`를 주면 지금 토큰 해시가 그 값(null 포함)일 때만 쓴다(읽고 쓰는 사이의 폐기·중복 발급을 막는다).
+   * 안 주면 무조건 쓴다(폐기용). 대화가 없거나 조건이 안 맞으면 false
+   */
+  setShare(
+    id: string,
+    inviteId: string,
+    share: { tokenHash: string | null; scope: "first" | "all"; hidden: number[]; expectHash?: string | null },
+  ): Promise<boolean>;
   getByShareHash(hash: string): Promise<ConversationRow | null>;
   addFeedback(a: { id: string; n: number; paragraphKey: string; reason: string }): Promise<void>;
 }
@@ -386,6 +394,7 @@ export function memoryRepo(seed: { invites?: { code: string; monthlyLimit: numbe
     async setShare(id, inviteId, share) {
       const c = conversations.get(id);
       if (!c || c.inviteId !== inviteId || !live(c, Date.now())) return false;
+      if (share.expectHash !== undefined && c.shareTokenHash !== share.expectHash) return false;
       if (share.tokenHash !== null) {
         for (const other of conversations.values()) {
           if (other.id !== id && other.shareTokenHash === share.tokenHash) throw new Error("[memoryRepo] share_token_hash unique");
@@ -569,15 +578,14 @@ function supabaseRepo(db: PrivilegedDb): AppRepo {
 
     async setShare(id, inviteId, share) {
       if (!UUID.test(id)) return false;
-      const data = check(
-        "setShare",
-        await conversations()
-          .update({ share_token_hash: share.tokenHash, share_scope: share.scope, share_hidden: share.hidden })
-          .eq("id", id)
-          .eq("invite_id", inviteId)
-          .gt("expires_at", nowIso())
-          .select("id"),
-      );
+      let query = conversations()
+        .update({ share_token_hash: share.tokenHash, share_scope: share.scope, share_hidden: share.hidden })
+        .eq("id", id)
+        .eq("invite_id", inviteId)
+        .gt("expires_at", nowIso());
+      if (share.expectHash === null) query = query.is("share_token_hash", null);
+      else if (share.expectHash !== undefined) query = query.eq("share_token_hash", share.expectHash);
+      const data = check("setShare", await query.select("id"));
       return (data ?? []).length > 0;
     },
 

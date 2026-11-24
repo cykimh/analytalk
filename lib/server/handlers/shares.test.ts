@@ -52,7 +52,7 @@ describe("POST /api/shares", () => {
   it("이미 공유 중이면 토큰은 그대로 두고 범위만 바꾼다(url은 null)", async () => {
     const { h, id, token } = await shared("all", []);
     const res = await handleCreateShare(post(h.cookie, { id, scope: "first", hidden: [2] }), h.deps);
-    expect(res).toMatchObject({ status: 200, body: { url: null } });
+    expect(res).toMatchObject({ status: 200, body: { url: null, shared: true } });
     const row = await h.repo.getConversation(id);
     expect(row!.shareTokenHash).toBe(sha(token));
     expect([row!.shareScope, row!.shareHidden]).toEqual(["first", [2]]);
@@ -66,6 +66,44 @@ describe("POST /api/shares", () => {
     expect(next).not.toBe(token);
     expect(await loadSharedView(h.repo, token)).toBeNull();
     expect(await loadSharedView(h.repo, next)).not.toBeNull();
+  });
+});
+
+describe("POST/DELETE 동시 요청", () => {
+  it("범위 변경이 읽은 뒤 폐기와 겹치면 폐기가 살아 있다(409)", async () => {
+    const { h, id, token } = await shared();
+    const real = h.deps.repo.getConversation.bind(h.deps.repo);
+    let first = true;
+    h.deps.repo.getConversation = async (cid: string) => {
+      const row = await real(cid);
+      if (first) {
+        first = false;
+        await handleRevokeShare(del(h.cookie, { id }), h.deps);
+      }
+      return row;
+    };
+    const res = await handleCreateShare(post(h.cookie, { id, scope: "first", hidden: [] }), h.deps);
+    expect(res.status).toBe(409);
+    expect(await loadSharedView(h.repo, token)).toBeNull();
+    expect((await real(id))!.shareTokenHash).toBeNull();
+  });
+
+  it("미공유 대화에 겹친 두 POST는 하나만 토큰을 얻고 다른 하나는 409다", async () => {
+    const c = await created();
+    const real = c.h.deps.repo.getConversation.bind(c.h.deps.repo);
+    let nested = false;
+    c.h.deps.repo.getConversation = async (cid: string) => {
+      const row = await real(cid);
+      if (!nested) {
+        nested = true;
+        const inner = await handleCreateShare(post(c.h.cookie, { id: c.id, scope: "all", hidden: [] }), c.h.deps);
+        expect(inner.status).toBe(200);
+      }
+      return row;
+    };
+    const res = await handleCreateShare(post(c.h.cookie, { id: c.id, scope: "all", hidden: [] }), c.h.deps);
+    expect(res.status).toBe(409);
+    expect((await real(c.id))!.shareTokenHash).not.toBeNull();
   });
 });
 
