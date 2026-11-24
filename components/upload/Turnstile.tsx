@@ -1,7 +1,10 @@
 "use client";
 
 // Cloudflare Turnstile 위젯(명시적 렌더). 토큰은 한 번만 쓸 수 있어 부모가 resetKey를 바꾸면 새로 받는다.
-import { useEffect, useRef } from "react";
+// 스크립트는 <Script nonce>로 넣는다. nonce는 layout이 proxy의 x-nonce를 읽어 내려 준다(CSP strict-dynamic)
+import Script from "next/script";
+import { useEffect, useRef, useState } from "react";
+import { useNonce } from "@/components/NonceProvider";
 
 interface TurnstileApi {
   render: (container: HTMLElement, options: Record<string, unknown>) => string | undefined;
@@ -17,24 +20,6 @@ declare global {
 
 const SCRIPT_URL = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
 
-let scriptLoad: Promise<TurnstileApi> | null = null;
-
-function loadTurnstile(): Promise<TurnstileApi> {
-  if (window.turnstile) return Promise.resolve(window.turnstile);
-  scriptLoad ??= new Promise<TurnstileApi>((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = SCRIPT_URL;
-    script.async = true;
-    script.onload = () => (window.turnstile ? resolve(window.turnstile) : reject(new Error("turnstile missing")));
-    script.onerror = () => reject(new Error("turnstile load failed"));
-    document.head.append(script);
-  }).catch((error: unknown) => {
-    scriptLoad = null;
-    throw error;
-  });
-  return scriptLoad;
-}
-
 export function Turnstile({
   siteKey,
   action,
@@ -48,41 +33,46 @@ export function Turnstile({
   onToken: (token: string | null) => void;
   onError: () => void;
 }) {
+  const nonce = useNonce();
   const box = useRef<HTMLDivElement>(null);
-  const widget = useRef<{ api: TurnstileApi; id: string } | null>(null);
+  const [api, setApi] = useState<TurnstileApi | null>(null);
+  const widgetId = useRef<string | null>(null);
   // 콜백은 최신 것을 쓰되 위젯은 다시 그리지 않는다
   const handlers = useRef({ onToken, onError });
   useEffect(() => {
     handlers.current = { onToken, onError };
   });
 
+  // 처음 받았을 때(onLoad)와 이미 받아 둔 뒤 다시 그릴 때(onReady) 모두 window.turnstile을 집는다
+  const pickApi = () => (window.turnstile ? setApi(window.turnstile) : handlers.current.onError());
+
   useEffect(() => {
-    let cancelled = false;
-    loadTurnstile()
-      .then((api) => {
-        if (cancelled || !box.current) return;
-        const id = api.render(box.current, {
-          sitekey: siteKey,
-          action,
-          language: "ko",
-          size: box.current.clientWidth < 300 ? "compact" : "flexible",
-          callback: (token: string) => handlers.current.onToken(token),
-          "expired-callback": () => handlers.current.onToken(null),
-          "error-callback": () => handlers.current.onError(),
-        });
-        if (id) widget.current = { api, id };
-      })
-      .catch(() => handlers.current.onError());
+    if (!api || !box.current) return;
+    const id = api.render(box.current, {
+      sitekey: siteKey,
+      action,
+      language: "ko",
+      size: box.current.clientWidth < 300 ? "compact" : "flexible",
+      callback: (token: string) => handlers.current.onToken(token),
+      "expired-callback": () => handlers.current.onToken(null),
+      "error-callback": () => handlers.current.onError(),
+    });
+    if (!id) return;
+    widgetId.current = id;
     return () => {
-      cancelled = true;
-      if (widget.current) widget.current.api.remove(widget.current.id);
-      widget.current = null;
+      api.remove(id);
+      widgetId.current = null;
     };
-  }, [siteKey, action]);
+  }, [api, siteKey, action]);
 
   useEffect(() => {
-    if (resetKey > 0 && widget.current) widget.current.api.reset(widget.current.id);
-  }, [resetKey]);
+    if (resetKey > 0 && api && widgetId.current) api.reset(widgetId.current);
+  }, [api, resetKey]);
 
-  return <div ref={box} className="min-h-16 w-full" />;
+  return (
+    <>
+      <Script src={SCRIPT_URL} nonce={nonce} onLoad={pickApi} onReady={pickApi} onError={() => handlers.current.onError()} />
+      <div ref={box} className="min-h-16 w-full" />
+    </>
+  );
 }

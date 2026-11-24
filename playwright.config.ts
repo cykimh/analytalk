@@ -36,10 +36,13 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 120_000,
     },
+    // 빌드 출력은 security.spec.ts가 라우트 표(모두 ƒ)를 읽도록 test-results/prod-build.log에 남긴다
+    // (Playwright가 test-results를 비운 뒤에 webServer를 띄운다). 사이트 키는 Cloudflare 공식 테스트 키(늘 통과)다
     ...(withProd
       ? [
           {
-            command: "pnpm build && ANALYTALK_E2E=1 pnpm start --port 3200",
+            command:
+              "mkdir -p test-results && (NEXT_PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA pnpm build > test-results/prod-build.log 2>&1 || (cat test-results/prod-build.log >&2; exit 1)) && ANALYTALK_E2E=1 pnpm start --port 3200",
             url: "http://localhost:3200",
             reuseExistingServer: false,
             timeout: 300_000,

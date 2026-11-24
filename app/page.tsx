@@ -25,6 +25,9 @@ export default async function Home() {
       ) : (
         <InviteForm />
       )}
+      <Link href="/about" className="justify-self-center text-xs text-muted-foreground underline underline-offset-4">
+        무엇이 어디로 가나요?
+      </Link>
     </main>
   );
 }

@@ -2,9 +2,9 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { SESSION_COOKIE } from "@/lib/config";
+import { routeConfig } from "./env";
 import { requireInvite } from "./handlers/invite";
 import { getRepo, NotReadyError } from "./repo";
-import { routeConfig } from "./route";
 
 /** 유효한 세션이면 true. DB가 준비되지 않았으면(프로덕션에 키 없음) false로 보고 초대 코드 화면을 보여 준다 */
 export async function hasInvite(): Promise<boolean> {
