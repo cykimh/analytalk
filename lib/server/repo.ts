@@ -3,7 +3,7 @@
 // 규칙을 바꾸면 SQL·pgTAP과 이 파일·repo.test.ts를 함께 고친다.
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { E2E_INVITE_CODE, isE2E, MONTHLY_BUDGET_USD, RETENTION_DAYS, WEEKLY_CAP_USD } from "@/lib/config";
+import { CYCLE_ANCHOR_DAY, E2E_INVITE_CODE, isE2E, MONTHLY_BUDGET_USD, RETENTION_DAYS, WEEKLY_CAP_USD } from "@/lib/config";
 import { hashCode } from "@/lib/invite/code";
 import type { Usage } from "@/lib/llm/cost";
 import type { StoredEpisode } from "@/lib/llm/schema";
@@ -85,8 +85,6 @@ export class NotReadyError extends Error {
 
 const DAY_MS = 86_400_000;
 const SEOUL_OFFSET_MS = 9 * 3_600_000; // Asia/Seoul은 서머타임이 없다
-/** settings 기본값과 같다(cycle_anchor_day 1, 예산·주간 차단은 config) */
-const CYCLE_ANCHOR_DAY = 1;
 const STATUSES = new Set(["queued", "running", "done", "partial", "failed", "refused", "safety"]);
 const STARTABLE = new Set(["queued", "failed", "partial"]);
 /** 평균 원가 표본에서 '끝난' 편 */

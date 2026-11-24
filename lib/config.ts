@@ -18,6 +18,7 @@ export const DEFAULT_MONTHLY_LIMIT = 2; // 초대 코드 기본 월 한도(건)
 export const WEEKLY_CAP_USD = 22.5; // 전역 주간 차단
 export const MONTHLY_BUDGET_USD = 90;
 export const DEFAULT_EST_COST_USD = 1.31; // 실측 전 건당 추정 원가
+export const CYCLE_ANCHOR_DAY = 1; // 크레딧 주기 기준일(서울 00:00 시작). settings.cycle_anchor_day 기본값과 같다
 
 // 검증
 export const MAX_QUOTES_PER_EPISODE = 8;

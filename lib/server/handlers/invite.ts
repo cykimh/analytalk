@@ -6,7 +6,7 @@ import { SESSION_COOKIE, SESSION_TTL_DAYS, TURNSTILE_INVITE_ACTION } from "@/lib
 import { hashCode } from "@/lib/invite/code";
 import { readCookie, sessionCookie, signSession, verifySession } from "@/lib/invite/session";
 import { verifyTurnstile } from "@/lib/invite/turnstile";
-import type { HandlerDeps, HandlerResult } from "@/lib/server/route";
+import { fail, type HandlerDeps, type HandlerResult, readJson } from "@/lib/server/route";
 
 const bodySchema = z.object({
   code: z.string().trim().min(1).max(64),
@@ -16,17 +16,9 @@ const bodySchema = z.object({
 /** Vercel이 넣는 x-forwarded-for의 첫 번째 값. 없으면(로컬) "local" */
 const clientIp = (req: Request) => req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
 
-const fail = (status: number, error: string): HandlerResult => ({ status, body: { error } });
-
 export async function handleInvite(req: Request, deps: HandlerDeps): Promise<HandlerResult> {
   if (!deps.secrets.session) return fail(503, "not_ready");
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    return fail(400, "bad_request");
-  }
-  const body = bodySchema.safeParse(json);
+  const body = bodySchema.safeParse(await readJson(req));
   if (!body.success) return fail(400, "bad_request");
 
   const human = await verifyTurnstile(body.data.turnstileToken ?? "", clientIp(req), TURNSTILE_INVITE_ACTION, {

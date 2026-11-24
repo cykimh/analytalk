@@ -63,6 +63,18 @@ export function routeDeps(start = Date.now()): HandlerDeps {
   };
 }
 
+/** 오류 응답 `{ error }` */
+export const fail = (status: number, error: string): HandlerResult => ({ status, body: { error } });
+
+/** 요청 본문 JSON. JSON이 아니면 undefined(핸들러가 400·404로 바꾼다) */
+export async function readJson(req: Request): Promise<unknown> {
+  try {
+    return await req.json();
+  } catch {
+    return undefined;
+  }
+}
+
 export function toResponse({ status, body, headers }: HandlerResult): Response {
   if (status === 204 || body === undefined) return new Response(null, { status, headers });
   return Response.json(body, { status, headers });
