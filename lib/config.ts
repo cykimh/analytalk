@@ -22,6 +22,8 @@ export const NOTE_MAX_CHARS = 60;
 // 통계·앵커
 export const ANCHOR_FIRST_N = 100;
 export const ANCHOR_BUSY_DAYS = 3;
+// buildPayload tokenBudget(anchors+transcript) 중 anchors 상한. PRD의 anchors 약 10K / (anchors+transcript) 약 120K
+export const ANCHOR_BUDGET_SHARE = 0.08;
 export const SILENCE_GAP_MS = 21_600_000; // 6시간
 export const NIGHT_START = 22;
 export const NIGHT_END = 5;

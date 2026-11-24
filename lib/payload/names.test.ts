@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/lib/parse/parse";
-import { applyDisplayNames, checkDisplayName, type NameMap } from "./names";
+import { applyDisplayNames, checkDisplayName, findNameLeftovers, type NameMap } from "./names";
 
 let seq = 0;
 function msg(sender: string | null, text = "안녕"): ChatMessage {
@@ -73,8 +73,9 @@ describe("applyDisplayNames: 본문 속 이름", () => {
     expect(body(text)).toBe(expected);
   });
 
-  it("앞이 한글이면 그대로, 조사·공백·기호 앞뒤면 바꾼다", () => {
-    expect(body("우리민지 왔어")).toBe("우리민지 왔어");
+  it("앞이 한글 음절이면 그대로(우리·울·내는 예외), 조사·공백·기호 앞뒤면 바꾼다", () => {
+    expect(body("가민지 왔어")).toBe("가민지 왔어");
+    expect(body("우리민지 울민지 내민지")).toBe("우리P1 울P1 내P1");
     expect(body("@김민지님 민지한테 줘 (민지)")).toBe("@P1님 P1한테 줘 (P1)");
     expect(body("ㅋㅋ민지는 민지씨 민지도")).toBe("ㅋㅋP1는 P1씨 P1도");
   });
@@ -82,6 +83,50 @@ describe("applyDisplayNames: 본문 속 이름", () => {
   it("목록 밖의 흔한 조사·호칭(을·를·에·으로·언니 등)이 붙어도 바꾼다", () => {
     expect(body("김민지를 봤어 민지언니랑 민지네 민지에게")).toBe("P1를 봤어 P1언니랑 P1네 P1에게");
     expect(body("민지폰으로 보냄", { 김민지: "P1", 민지폰: "P1" }, [["김민지", "민지폰"]])).toBe("P1으로 보냄");
+  });
+
+  it.each([
+    ["민지라고 했잖아", "P1라고 했잖아"],
+    ["민지인데", "P1인데"],
+    ["민지였어", "P1였어"],
+    ["민지이었어", "P1이었어"],
+    ["민지잖아", "P1잖아"],
+    ["민지면 돼", "P1면 돼"],
+    ["민지임", "P1임"],
+    ["민지예요", "P1예요"],
+  ])("서술격·어미가 붙어도 바꾼다: %s → %s", (text, expected) => {
+    expect(body(text)).toBe(expected);
+  });
+
+  it("별명형 이름은 꼬리를 뗀 말을 바꾸고, 꼬리만 있는 말은 둔다", () => {
+    const nick = { 민지공주: "P1" };
+    expect(body("민지 어디야 민지공주 왔다", nick)).toBe("P1 어디야 P1 왔다");
+    expect(body("공주님 오셨다", nick)).toBe("공주님 오셨다");
+    expect(body("민지야 김민지 왔어", { 김민지님: "P1" })).toBe("P1야 P1 왔어");
+    expect(body("민지랑 지니", { 민지짱: "P1" })).toBe("P1랑 지니");
+  });
+
+  it("흔한 성으로 시작하는 3글자 이름은 앞 2글자를 이름으로 보지 않는다", () => {
+    expect(body("이 정도면 돼 도윤아", { 정도윤: "P1" })).toBe("이 정도면 돼 P1아");
+    expect(body("고민이야 민지는", { 고민지: "P1" })).toBe("고민이야 P1는");
+    expect(body("남궁 씨 민수야", { 남궁민수: "P1" })).toBe("남궁 씨 P1야");
+  });
+
+  it("이모지·괄호가 붙은 이름은 한글 덩어리로 찾고, 호칭·직함 조각은 둔다", () => {
+    expect(body("민지야 김민지 왔어", { "김민지💕": "P1" })).toBe("P1야 P1 왔어");
+    expect(body("민지 회사 가자", { "민지(회사)": "P1" })).toBe("P1 회사 가자");
+    expect(body("민지야 우리 엄마가 그러는데", { "민지 엄마": "P1" })).toBe("P1야 우리 엄마가 그러는데");
+  });
+
+  it("한글이 아닌 이름은 대소문자를 무시하고 이름 조각도 바꾼다. 다른 단어 속은 둔다", () => {
+    const latin = { "Minji Kim": "P1" };
+    expect(body("Minji 어디 minji kim MINJI야 ㅋㅋMinjiㅋㅋ", latin)).toBe("P1 어디 P1 P1야 ㅋㅋP1ㅋㅋ");
+    expect(body("kimchi 먹자 Kim!", latin)).toBe("kimchi 먹자 P1!");
+    expect(body("Tommy 왔어 tom이랑 TOM", { Tom: "P1" })).toBe("Tommy 왔어 P1이랑 P1");
+  });
+
+  it("낱자 이름은 낱자가 이어지면 다른 말로 본다", () => {
+    expect(body("ㅋㅋㅋ 웃겨 ㅋ", { ㅋ: "P1" })).toBe("ㅋㅋㅋ 웃겨 P1");
   });
 
   it("이름 속 정규식 특수 문자는 글자 그대로 찾는다", () => {
@@ -97,5 +142,39 @@ describe("applyDisplayNames: 본문 속 이름", () => {
     const out = apply(msgs, { 김민지: "P1", 박영희: "P3" }, ["박영희"]);
     expect(typeof out !== "string" && out.map((m) => m.text)).toEqual(["P3 나갔네", "P3님이 나갔습니다."]);
     expect(typeof out !== "string" && out[1].sender).toBeNull();
+  });
+});
+
+describe("findNameLeftovers", () => {
+  const renamed = (texts: string[], map: NameMap, kinds: ChatMessage["kind"][] = []) => {
+    const [first] = Object.keys(map);
+    const r = applyDisplayNames(
+      texts.map((t, i) => ({ ...msg(first, t), kind: kinds[i] ?? "text" })),
+      map,
+      [],
+    );
+    if (!r.ok) throw new Error(r.reason);
+    return r.messages;
+  };
+
+  it("경계 규칙 때문에 남은 원래 이름 조각을 많이 남은 순서로 돌려준다", () => {
+    const map = { 김민지: "P1" };
+    const msgs = renamed(["민지수 왔어", "김민지야", "민지수 또 민지수", "가민지"], map);
+    expect(msgs.map((m) => m.text)).toEqual(["민지수 왔어", "P1야", "민지수 또 민지수", "가민지"]);
+    expect(findNameLeftovers(msgs, map)).toEqual([{ piece: "민지", count: 4, ids: [msgs[0].id, msgs[2].id, msgs[3].id] }]);
+  });
+
+  it("다 바뀌었으면 빈 배열, 표시 이름 속 말과 미디어·시스템 메시지는 세지 않는다", () => {
+    expect(findNameLeftovers(renamed(["민지야 밥 먹자"], { 김민지: "P1" }), { 김민지: "P1" })).toEqual([]);
+    expect(findNameLeftovers(renamed(["민지수"], { 김민지: "민지" }), { 김민지: "민지" })).toEqual([]);
+    const media = renamed(["민지수"], { 김민지: "P1" }, ["photo"]);
+    expect(findNameLeftovers([...media, { ...msg(null, "민지수님이 나갔습니다.") }], { 김민지: "P1" })).toEqual([]);
+  });
+
+  it("한글이 아닌 조각은 대소문자를 무시하고 단어 속도 찾는다", () => {
+    const map = { "Minji Kim": "P1" };
+    expect(findNameLeftovers(renamed(["KIMCHI 먹자"], map), map)).toEqual([
+      { piece: "Kim", count: 1, ids: [expect.any(Number)] },
+    ]);
   });
 });

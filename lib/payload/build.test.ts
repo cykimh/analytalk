@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/lib/parse/parse";
-import { buildPayload, payloadIndex } from "./build";
+import { ANCHOR_BUDGET_SHARE } from "@/lib/config";
+import { buildPayload, payloadIndex, payloadTokens } from "./build";
 import { applyDisplayNames, type NameMap } from "./names";
 
 const MIN = 60_000;
@@ -38,8 +39,10 @@ function named(): ChatMessage[] {
   return r.messages;
 }
 
-const build = (messages: ChatMessage[], tokenBudget = 1_000_000) =>
-  buildPayload({ messages, me: "P1", concept: "couple", kind: "pair", tokenBudget, tokensPerChar: 1 });
+const build = (messages: ChatMessage[], tokenBudget = 1_000_000, anchorShare?: number) =>
+  buildPayload({ messages, me: "P1", concept: "couple", kind: "pair", tokenBudget, tokensPerChar: 1, anchorShare });
+/** 덩어리 하나의 추정 토큰(tokensPerChar 1). 구현과 같은 정의: 줄마다 글자 수 + 1 */
+const tokens = (block: string) => lines(block).reduce((sum, l) => sum + l.length + 1, 0);
 
 const lines = (block: string) => (block === "" ? [] : block.split("\n"));
 /** 블록의 메시지 줄 msg_id들(날짜 헤더 제외) */
@@ -56,8 +59,10 @@ describe("buildPayload", () => {
     const sent = ids(p.transcript);
     const last = messages[messages.length - 1];
 
-    expect(p.transcript.length).toBeLessThanOrEqual(1000);
-    expect(p.transcript.length).toBeGreaterThan(900);
+    // 예산은 anchors + transcript 몫이고, 남김없이 거의 다 쓴다
+    expect(tokens(p.anchors) + tokens(p.transcript)).toBeLessThanOrEqual(1000);
+    expect(tokens(p.anchors) + tokens(p.transcript)).toBeGreaterThan(900);
+    expect(payloadTokens(p, 1).text).toBe(tokens(p.anchors) + tokens(p.transcript));
     expect(lines(p.transcript).at(-1)).toMatch(new RegExp(`^m${last.id}\\|`));
     expect(p.msgSent).toBe(sent.length);
     expect(p.msgSent).toBeLessThan(p.msgTotal);
@@ -107,6 +112,17 @@ describe("buildPayload", () => {
     expect(p).toMatchObject({ v: 1, concept: "couple", kind: "pair", me: "P1", members: ["P1", "P2"], msgTotal: 5, msgSent: 5 });
   });
 
+  it("대화 전체가 예산에 들어가면 모두 transcript이고 anchors는 비어 있다", () => {
+    const messages = named();
+    const all = build(messages);
+    expect(all.anchors).toBe("");
+    expect(all.msgSent).toBe(all.msgTotal);
+    // 딱 맞는 예산이어도 anchors 몫을 떼지 않는다
+    const exact = build(messages, payloadTokens(all, 1).text);
+    expect(exact.transcript).toBe(all.transcript);
+    expect(exact.anchors).toBe("");
+  });
+
   it("anchors: 첫 메시지 100개 + 메시지 수 상위 3일, transcript와 겹치는 것은 뺀다", () => {
     // 날짜별 개수. 상위 3일은 10일(90), 5일(80), 7일(60)
     const perDay: Record<number, number> = { 1: 30, 2: 50, 3: 30, 4: 10, 5: 80, 6: 10, 7: 60, 8: 10, 9: 10, 10: 90 };
@@ -118,7 +134,8 @@ describe("buildPayload", () => {
         rows.push([i % 2 ? "P1" : "P2", kst(2026, 10, Number(day), 10) + i * MIN, "ㅇㅇ"]);
       }
     }
-    const p = build(chat(rows), 300);
+    // anchors 몫을 넉넉히 줘서 고르는 범위만 본다(예산 상한은 아래 테스트)
+    const p = build(chat(rows), 8000, 0.95);
     const sent = new Set(ids(p.transcript));
     const anchored = ids(p.anchors);
 
@@ -139,6 +156,41 @@ describe("buildPayload", () => {
     ]);
   });
 
+  it("활발한 단톡방: anchors는 예산 × ANCHOR_BUDGET_SHARE 안에서 묶음마다 담고, 예산을 줄이면 전체도 줄어든다", () => {
+    // 평소 60일 × 20개 + 상위 3일 × 1,500개. 상위 날짜만 해도 예산의 몇 배다
+    const rows: Raw[] = [];
+    const busy = new Set([10, 30, 50]);
+    for (let day = 0; day < 60; day++) {
+      const n = busy.has(day) ? 1500 : 20;
+      for (let i = 0; i < n; i++) {
+        rows.push([`P${(i % 4) + 1}`, kst(2026, 1, 1, 9) + day * 86_400_000 + i * 20_000, `오늘 ${day}일 ${i}번째 이야기`]);
+      }
+    }
+    const messages = chat(rows);
+    const dayOf = (id: number) => new Date(messages[id].ts + 9 * 3_600_000).toISOString().slice(0, 10);
+    const busyDays = [...busy].map((d) => dayOf(rows.findIndex((r) => r[1] >= kst(2026, 1, 1, 9) + d * 86_400_000)));
+
+    let budget = 50_000;
+    let prevText = Infinity;
+    for (let round = 0; round < 3; round++) {
+      const p = buildPayload({ messages, me: "P1", concept: "group", kind: "group", tokenBudget: budget, tokensPerChar: 1 });
+      const { text, total } = payloadTokens(p, 1);
+      expect(text).toBeLessThanOrEqual(budget);
+      expect(text).toBeGreaterThan(budget * 0.95);
+      expect(tokens(p.anchors)).toBeLessThanOrEqual(budget * ANCHOR_BUDGET_SHARE);
+      expect(total).toBe(text + JSON.stringify(p.stats).length);
+      expect(text).toBeLessThan(prevText);
+      // 첫 대화와 상위 3일이 모두 조금씩 들어 있다
+      const anchored = ids(p.anchors);
+      expect(anchored[0]).toBe(0);
+      for (const d of busyDays) expect(anchored.some((id) => dayOf(id) === d)).toBe(true);
+      expect(lines(p.transcript).at(-1)).toMatch(new RegExp(`^m${messages.length - 1}\\|`));
+      // T10의 413 재요청처럼 예산을 0.95배로 줄인다
+      prevText = text;
+      budget = Math.floor(budget * 0.95);
+    }
+  });
+
   it("시스템 메시지뿐이면 던진다", () => {
     expect(() => build(chat([[null, kst(2026, 10, 1, 8), "P1님이 들어왔습니다."]]))).toThrow("보낼 메시지가 없다");
   });
@@ -157,7 +209,7 @@ describe("payloadIndex", () => {
   });
 
   it("anchors와 transcript의 메시지를 모두 담는다", () => {
-    const p = build(named(), 500);
+    const p = build(named(), 5000);
     const idx = payloadIndex(p);
     expect(idx.size).toBe(ids(p.anchors).length + p.msgSent);
     expect(idx.has("m1")).toBe(true);

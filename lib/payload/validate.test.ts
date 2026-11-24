@@ -12,7 +12,8 @@ function payload(): Payload {
     const sender = i % 2 ? "P2" : "P1";
     messages.push({ id: i, ts: kst(1 + Math.floor(i / 10), 10, i), sender, kind: "text", text: `메시지 ${i} https://a.kr`, line: i + 1 });
   }
-  return buildPayload({ messages, me: "P1", concept: "couple", kind: "pair", tokenBudget: 400, tokensPerChar: 1 });
+  // anchors도 채우려고 anchors 몫을 넉넉히 준다
+  return buildPayload({ messages, me: "P1", concept: "couple", kind: "pair", tokenBudget: 400, tokensPerChar: 1, anchorShare: 0.5 });
 }
 
 /** transcript 끝에 같은 시각·다음 msg_id로 줄 하나를 붙이고 msgSent도 늘린다 */
