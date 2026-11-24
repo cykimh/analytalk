@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { E2E_INVITE_CODE } from "@/lib/config";
 import { hashCode } from "@/lib/invite/code";
 import type { Usage } from "@/lib/llm/cost";
-import { type AppRepo, type ClaimResult, getRepo, memoryRepo, NotReadyError } from "./repo";
+import { type AppRepo, type ClaimResult, getRepo, isPaused, memoryRepo, NotReadyError } from "./repo";
 
 /** 서울 시각 문자열 → ms */
 const kst = (local: string) => new Date(`${local}+09:00`).getTime();
@@ -144,6 +144,22 @@ describe("memoryRepo claim 판정 순서", () => {
     expect(await claim(repo, many)).toEqual({ id: null, outcome: "paused" });
     at("2026-11-30T11:00:01");
     await created(claim(repo, many));
+  });
+
+  it("getPausedUntil은 setPaused로 건 시각(없으면 null)을 돌려준다. isPaused는 그 시각 > now", async () => {
+    const repo = memoryRepo();
+    expect(await repo.getPausedUntil()).toBeNull();
+    expect(await isPaused(repo, kst("2026-11-30T11:00:00"))).toBe(false);
+    const until = new Date(kst("2026-11-30T11:00:00"));
+    await repo.setPaused(until);
+    const got = await repo.getPausedUntil();
+    expect(got).toEqual(until);
+    // 돌려준 Date를 바꿔도 저장소 값은 그대로다
+    got!.setTime(0);
+    expect(await repo.getPausedUntil()).toEqual(until);
+    // claim_conversation과 같이 paused_until > now()
+    expect(await isPaused(repo, kst("2026-11-30T10:59:59"))).toBe(true);
+    expect(await isPaused(repo, kst("2026-11-30T11:00:00"))).toBe(false);
   });
 
   it("추정 원가가 없거나 0 이하면 거부한다", async () => {
@@ -595,10 +611,10 @@ describe("memoryRepo 삭제·공유·피드백", () => {
 });
 
 describe("getRepo", () => {
-  const g = globalThis as { analytalkRepoV1?: AppRepo; analytalkDevRepoV1?: AppRepo };
+  const g = globalThis as { analytalkRepoV2?: AppRepo; analytalkDevRepoV2?: AppRepo };
   afterEach(() => {
-    delete g.analytalkRepoV1;
-    delete g.analytalkDevRepoV1;
+    delete g.analytalkRepoV2;
+    delete g.analytalkDevRepoV2;
   });
 
   it("E2E 모드는 키가 있어도 고정 초대 코드(월 99건)가 든 memoryRepo를 전역에 하나 둔다", async () => {
@@ -608,7 +624,7 @@ describe("getRepo", () => {
     vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_test");
     const repo = getRepo();
     expect(getRepo()).toBe(repo);
-    expect(g.analytalkRepoV1).toBe(repo);
+    expect(g.analytalkRepoV2).toBe(repo);
     const invite = await repo.findInvite(hashCode(E2E_INVITE_CODE));
     expect(await repo.getInvite(invite!.id)).toMatchObject({ revoked: false, monthlyLimit: 99 });
   });
@@ -647,5 +663,27 @@ describe("getRepo", () => {
     const headers = new Headers(init?.headers);
     expect(headers.get("apikey")).toBe("sb_secret_test");
     expect(headers.get("content-profile") ?? headers.get("accept-profile")).toBe("analytalk");
+  });
+
+  it("Supabase getPausedUntil은 settings(id 1)의 paused_until을 읽는다. null이면 null, 오류면 코드만 담아 던진다", async () => {
+    vi.stubEnv("ANALYTALK_E2E", "");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_test");
+    const replies = [
+      Response.json([{ paused_until: "2026-12-01T00:00:00+00:00" }]),
+      Response.json([{ paused_until: null }]),
+      Response.json({ code: "42501", message: "permission denied", details: "secret detail" }, { status: 403 }),
+    ];
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => replies.shift()!);
+    vi.stubGlobal("fetch", fetch);
+    const repo = getRepo();
+    expect(await repo.getPausedUntil()).toEqual(new Date("2026-12-01T00:00:00Z"));
+    const url = new URL(String(fetch.mock.calls[0][0]));
+    expect(url.pathname).toBe("/rest/v1/settings");
+    expect(Object.fromEntries(url.searchParams)).toEqual({ select: "paused_until", id: "eq.1" });
+    expect(new Headers(fetch.mock.calls[0][1]?.headers).get("accept-profile")).toBe("analytalk");
+    expect(await repo.getPausedUntil()).toBeNull();
+    await expect(repo.getPausedUntil()).rejects.toThrow("[repo] getPausedUntil 실패 (42501)");
   });
 });

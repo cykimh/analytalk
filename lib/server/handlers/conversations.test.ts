@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_EST_COST_USD, INPUT_TOKEN_BUDGET, TOKENS_PER_CHAR } from "@/lib/config";
+import { CYCLE_ANCHOR_DAY, DEFAULT_EST_COST_USD, INPUT_TOKEN_BUDGET, TOKENS_PER_CHAR } from "@/lib/config";
 import { PROMPT_VERSION } from "@/lib/llm/prompt";
 import { type Payload, payloadTokens } from "@/lib/payload/build";
 import { sha256Hex } from "@/lib/payload/hash";
@@ -20,7 +20,7 @@ import {
   textStart,
   until,
 } from "@/test/generation";
-import { verifyInternal } from "../jobs";
+import { nextCycleStart, verifyInternal } from "../jobs";
 import { handleDeleteConversation } from "./conversation";
 import { handleCreateConversation } from "./conversations";
 import { handleStatus } from "./status";
@@ -116,7 +116,7 @@ describe("POST /api/conversations", () => {
     expect(h.streams).toHaveLength(4);
   });
 
-  it("429 enforced_spend_limit_reached → 정지, 다음 POST는 423, 생성 재호출 0번 (Review Focus 3)", async () => {
+  it("429 enforced_spend_limit_reached → 정지, 다음 POST는 423, Anthropic 재호출 0번(생성·countTokens 모두) (Review Focus 3)", async () => {
     const h = await harness({
       reply: () => ({
         status: 429,
@@ -126,6 +126,7 @@ describe("POST /api/conversations", () => {
     const res = await handleCreateConversation(create(h.cookie, makePayload(0)), h.deps);
     expect(res.status).toBe(202);
     await h.settle();
+    expect(h.counts).toHaveLength(1);
     const { id } = res.body as { id: string };
     const status = await handleStatus(statusOf(h.cookie, id), h.deps, id);
     expect(status.body).toEqual({
@@ -138,11 +139,79 @@ describe("POST /api/conversations", () => {
       paused: true,
     });
 
+    const claim = vi.spyOn(h.repo, "claim");
     const next = await handleCreateConversation(create(h.cookie, makePayload(1)), h.deps);
     await h.settle();
-    expect(next.status).toBe(423);
+    expect(next).toEqual({ status: 423, body: { error: "paused" } });
+    expect(h.counts).toHaveLength(1);
     expect(h.streams).toHaveLength(1);
     expect(h.internal).toHaveLength(0);
+    expect(claim).not.toHaveBeenCalled();
+  });
+
+  it("전역 정지 중: 같은 payload는 200·기존 id, 새 payload는 countTokens·claim 전에 423. 정지가 풀리면 받는다", async () => {
+    const h = await harness();
+    h.state.manual = true;
+    const payload = makePayload(0);
+    const first = await handleCreateConversation(create(h.cookie, payload), h.deps);
+    expect(first.status).toBe(202);
+    await h.repo.setPaused(new Date(Date.now() + 3_600_000));
+    const claim = vi.spyOn(h.repo, "claim");
+
+    // claim_conversation처럼 중복 확인이 정지보다 먼저다
+    expect(await handleCreateConversation(create(h.cookie, payload), h.deps)).toEqual({ status: 200, body: first.body });
+    expect(await handleCreateConversation(create(h.cookie, makePayload(1)), h.deps)).toEqual({ status: 423, body: { error: "paused" } });
+    expect(h.counts).toHaveLength(1);
+    expect(claim).not.toHaveBeenCalled();
+
+    await h.repo.setPaused(new Date(Date.now() - 1));
+    expect((await handleCreateConversation(create(h.cookie, makePayload(1)), h.deps)).status).toBe(202);
+    expect(h.counts).toHaveLength(2);
+  });
+
+  describe("countTokens가 거부되면 오류를 분류한다", () => {
+    it.each([
+      [
+        "credit_exhausted(402)",
+        { status: 402, error: { type: "billing_error", message: "Your credit balance is too low" } },
+        () => nextCycleStart(new Date(), CYCLE_ANCHOR_DAY),
+      ],
+      [
+        "spend_limit(429)",
+        { status: 429, error: { type: "rate_limit_error", message: "spend limit", details: { error_code: "enforced_spend_limit_reached" } } },
+        () => {
+          const now = new Date();
+          return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+        },
+      ],
+    ])("%s → 정지 시각을 걸고 423. claim 없음, 다음 POST는 countTokens 없이 423", async (kind, reply, until) => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const h = await harness({ counted: () => reply });
+      const setPaused = vi.spyOn(h.repo, "setPaused");
+      const claim = vi.spyOn(h.repo, "claim");
+      expect(await handleCreateConversation(create(h.cookie, makePayload(0)), h.deps)).toEqual({ status: 423, body: { error: "paused" } });
+      expect(setPaused.mock.calls).toEqual([[until()]]);
+      expect(claim).not.toHaveBeenCalled();
+      expect(error.mock.calls.map(([m]) => m)).toEqual([`[conversations] countTokens 실패: ${kind.split("(")[0]}`]);
+
+      expect((await handleCreateConversation(create(h.cookie, makePayload(1)), h.deps)).status).toBe(423);
+      expect(h.counts).toHaveLength(1);
+      expect(h.streams).toHaveLength(0);
+    });
+
+    it("그 밖의 오류(5xx 등)는 502 count_tokens_failed. 정지하지 않고 오류 종류만 남긴다", async () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const h = await harness({ counted: () => ({ status: 500, error: { type: "api_error", message: "Internal server error" } }) });
+      const setPaused = vi.spyOn(h.repo, "setPaused");
+      const claim = vi.spyOn(h.repo, "claim");
+      expect(await handleCreateConversation(create(h.cookie, makePayload()), h.deps)).toEqual({
+        status: 502,
+        body: { error: "count_tokens_failed" },
+      });
+      expect(setPaused).not.toHaveBeenCalled();
+      expect(claim).not.toHaveBeenCalled();
+      expect(error.mock.calls.map(([m]) => m)).toEqual(["[conversations] countTokens 실패: retryable"]);
+    });
   });
 
   it("내부 fetch가 401이면 2~4편은 failed(dispatch), 1편은 그대로 done", async () => {

@@ -64,26 +64,29 @@ export interface StreamCall {
   body: { model: string; messages: { role: string; content: unknown }[] } & Record<string, unknown>;
 }
 
+/** JSON 오류 본문의 HTTP 응답 */
+const errorResponse = (r: { status: number; error: object }) =>
+  new Response(JSON.stringify({ type: "error", error: r.error }), { status: r.status, headers: { "content-type": "application/json" } });
+
+/** count_tokens 응답: 토큰 수, 또는 JSON 오류 본문의 HTTP 응답 */
+export type Counted = () => number | { status: number; error: object };
+
 /** 요청을 기록하고 reply(편 번호, 그 편의 몇 번째 호출)로 응답하는 Anthropic 클라이언트. count_tokens는 counted()를 돌려준다 */
-export function fakeAnthropic(reply: (n: number, call: number) => Reply, counted: () => number = () => 1000) {
+export function fakeAnthropic(reply: (n: number, call: number) => Reply, counted: Counted = () => 1000) {
   const streams: StreamCall[] = [];
   const counts: Record<string, unknown>[] = [];
   const fetch = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const body = JSON.parse(String(init?.body));
     if (String(url).includes("/v1/messages/count_tokens")) {
       counts.push(body);
-      return Response.json({ input_tokens: counted() });
+      const c = counted();
+      return typeof c === "number" ? Response.json({ input_tokens: c }) : errorResponse(c);
     }
     const n = Number(/episode는 (\d)이다/.exec(JSON.stringify(body.messages))?.[1]);
     const call = streams.filter((s) => s.n === n).length + 1;
     streams.push({ n, body });
     const r = reply(n, call);
-    if ("status" in r) {
-      return new Response(JSON.stringify({ type: "error", error: r.error }), {
-        status: r.status,
-        headers: { "content-type": "application/json" },
-      });
-    }
+    if ("status" in r) return errorResponse(r);
     let ctrl!: ReadableStreamDefaultController<Uint8Array>;
     let closed = false;
     const stream = new ReadableStream<Uint8Array>({
@@ -189,7 +192,7 @@ type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 export async function harness(
   o: {
     reply?: (n: number, call: number) => Reply;
-    counted?: () => number;
+    counted?: Counted;
     monthlyLimit?: number;
     internal?: Fetch;
     deadlineMs?: number;

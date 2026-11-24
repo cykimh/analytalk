@@ -1,10 +1,11 @@
 // POST /api/episodes/retry 본체: [다시 쓰기]. 브라우저가 IndexedDB에 둔 페이로드를 다시 보낸다.
-// 같은 초대 코드의 대화이고, 페이로드 해시가 같고, 그 편을 시작할 수 있어야(queued·failed·partial) 받는다.
+// 같은 초대 코드의 대화이고, 페이로드 해시가 같고, 정지 중이 아니고(423), 그 편을 시작할 수 있어야(queued·failed·partial) 받는다.
 import "server-only";
 import { z } from "zod";
 import { sha256Hex } from "@/lib/payload/hash";
 import { validatePayload } from "@/lib/payload/validate";
 import { jobDeps, runEpisodeJob } from "@/lib/server/jobs";
+import { isPaused } from "@/lib/server/repo";
 import { fail, type HandlerDeps, type HandlerResult, readJson } from "@/lib/server/route";
 import { requireInvite } from "./invite";
 
@@ -24,6 +25,8 @@ export async function handleRetry(req: Request, deps: HandlerDeps): Promise<Hand
 
   const row = await deps.repo.getConversation(id);
   if (!row || row.inviteId !== auth.inviteId || row.payloadSha256 !== payloadSha256) return fail(409, "payload_mismatch");
+  // 정지 중에는 편을 시작하지 않는다(Anthropic을 다시 부르지 않는다)
+  if (await isPaused(deps.repo, deps.now())) return fail(423, "paused");
   if (!(await deps.repo.startEpisode(id, n))) return fail(409, "not_startable");
 
   const job = jobDeps(deps, req.url);

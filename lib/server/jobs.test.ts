@@ -300,6 +300,42 @@ describe("1편 응답 시작과 dispatchRest", () => {
     expect(s.finish).not.toHaveBeenCalled();
   });
 
+  it("1편이 스트리밍하는 동안 2~4편 띄우기가 거부돼도(DB 오류) 처리되지 않은 rejection 없이 1편을 끝낸다", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const s = await setup(
+        (n) => ({
+          steps: [
+            messageStart(),
+            // 띄우기가 세 편 모두 실패할 때까지 1편 스트림을 붙잡아 둔다. 매크로태스크를 넘겨 unhandledRejection이 뜰 틈을 준다
+            async () => {
+              await until(() => s.finish.mock.calls.length === 3);
+              await new Promise((r) => setTimeout(r, 20));
+            },
+            textStart,
+            delta(JSON.stringify(episodeJson(n))),
+            blockStop,
+            messageDelta("end_turn"),
+            messageStop,
+          ],
+        }),
+        { internal: async () => new Response(null, { status: 401 }) },
+      );
+      // 2~4편 중 처음 failed(dispatch) 저장이 DB 오류로 거부된다
+      s.finish.mockRejectedValueOnce(new Error("[repo] finishEpisode 실패 (XX000)"));
+      await s.run(1);
+      expect(unhandled).toEqual([]);
+      expect(await s.episode(1)).toMatchObject({ status: "done" });
+      expect(lastFinish(s.finish)).toMatchObject({ n: 1, status: "done" });
+      expect(error.mock.calls.map(([m]) => m)).toEqual(["[jobs] 2~4편 띄우기 실패: [repo] finishEpisode 실패 (XX000)"]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("202가 아니거나(200 포함) fetch가 거부되면 그 편만 failed(dispatch)", async () => {
     const s = await setup(ok, {
       internal: async (_url, init) => {

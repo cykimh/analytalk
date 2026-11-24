@@ -1,14 +1,16 @@
-// POST /api/conversations 본체: 초대 코드 → 페이로드 재검사 → 중복 → 입력 토큰 → claim → 1편 예약.
-// 중복이면 Claude를 부르지 않고 기존 id를 돌려준다. 1편은 after()에서 돌고, 응답이 시작되면 2~4편을 띄운다.
+// POST /api/conversations 본체: 초대 코드 → 페이로드 재검사 → 중복 → 정지 → 입력 토큰 → claim → 1편 예약.
+// 중복이거나 정지 중이면 Claude를 부르지 않는다(중복은 기존 id, 정지는 423). 1편은 after()에서 돌고, 응답이 시작되면 2~4편을 띄운다.
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { MessageCountTokensParams } from "@anthropic-ai/sdk/resources/messages";
 import { DEFAULT_EST_COST_USD, INPUT_TOKEN_BUDGET, TOKENS_PER_CHAR } from "@/lib/config";
+import { classifyError } from "@/lib/llm/errors";
 import { buildRequest, PROMPT_VERSION } from "@/lib/llm/prompt";
 import { type Payload, payloadTokens } from "@/lib/payload/build";
 import { sha256Hex } from "@/lib/payload/hash";
 import { validatePayload } from "@/lib/payload/validate";
-import { jobDeps, runEpisodeJob } from "@/lib/server/jobs";
+import { jobDeps, limitLiftsAt, runEpisodeJob } from "@/lib/server/jobs";
+import { isPaused } from "@/lib/server/repo";
 import { fail, type HandlerDeps, type HandlerResult, readJson } from "@/lib/server/route";
 import { requireInvite } from "./invite";
 
@@ -60,11 +62,20 @@ export async function handleCreateConversation(req: Request, deps: HandlerDeps):
 
   const duplicate = await deps.repo.findDuplicate({ inviteId, payloadSha256, concept: p.concept, promptVersion: PROMPT_VERSION });
   if (duplicate) return { status: 200, body: { id: duplicate } };
+  // claim도 정지를 보지만(중복 다음), 그 전에 countTokens로 Anthropic을 부르지 않게 먼저 본다
+  if (await isPaused(deps.repo, deps.now())) return fail(423, "paused");
 
   let counted: number;
   try {
     counted = await countInputTokens(client, p);
-  } catch {
+  } catch (e) {
+    // 오류 종류만 남긴다(본문·문구는 남기지 않는다). 한도 오류면 생성 때와 같이 정지 시각을 걸고 423
+    const kind = classifyError(e);
+    console.error(`[conversations] countTokens 실패: ${kind}`);
+    if (kind === "spend_limit" || kind === "credit_exhausted") {
+      await deps.repo.setPaused(limitLiftsAt(kind, new Date(deps.now())));
+      return fail(423, "paused");
+    }
     return fail(502, "count_tokens_failed");
   }
   if (counted > INPUT_TOKEN_BUDGET * BUDGET_TOLERANCE) {

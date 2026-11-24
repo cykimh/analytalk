@@ -74,6 +74,11 @@ export function nextCycleStart(now: Date, anchorDay: number): Date {
   return new Date(Date.UTC(seoul.getUTCFullYear(), month, anchorDay) - SEOUL_OFFSET_MS);
 }
 
+/** 한도 오류가 풀리는 시각 = setPaused에 거는 값. 지출 한도는 다음 달 1일 00:00 UTC, 크레딧 소진은 다음 주기 시작 */
+export function limitLiftsAt(kind: "spend_limit" | "credit_exhausted", now: Date): Date {
+  return kind === "spend_limit" ? nextMonthUtc(now) : nextCycleStart(now, CYCLE_ANCHOR_DAY);
+}
+
 // ===== 2~4편 띄우기 =====
 
 /** 편마다 서명한 내부 호출을 보낸다. 202가 아니거나 fetch가 거부되면(10초 timeout 포함) 그 편은 failed(dispatch) */
@@ -166,12 +171,11 @@ async function judge(
     case "refused":
       return { status: "refused", content: null, errorCode: null };
     case "error": {
-      const limit = r.error === "spend_limit" || r.error === "credit_exhausted";
-      if (limit) {
-        const now = new Date(deps.now());
-        await deps.repo.setPaused(r.error === "spend_limit" ? nextMonthUtc(now) : nextCycleStart(now, CYCLE_ANCHOR_DAY));
+      let errorCode: string = r.error ?? "fatal";
+      if (r.error === "spend_limit" || r.error === "credit_exhausted") {
+        await deps.repo.setPaused(limitLiftsAt(r.error, new Date(deps.now())));
+        errorCode = "limit";
       }
-      const errorCode = limit ? "limit" : (r.error ?? "fatal");
       // 응답이 시작된 뒤 끊겼으면 받은 데까지 살린다(R8)
       if (r.startedStream && r.raw !== "") return salvage(r.raw, errorCode);
       return { status: "failed", content: null, errorCode };
@@ -201,10 +205,14 @@ export async function runEpisodeJob(deps: JobDeps, a: { id: string; n: EpisodeN;
     const onStreamStart = (model: string) => {
       if (model !== req.model) console.warn(`[jobs] fallback_on_writer: ${a.n}편 ${req.model} → ${model}`);
       if (a.n === 1 && !pending.dispatch) {
-        pending.dispatch = repo.getConversation(a.id).then((row) => {
-          const ns = (row?.episodes ?? []).filter((e) => e.n > 1 && e.status === "queued").map((e) => e.n as 2 | 3 | 4);
-          return dispatchRest(deps, { id: a.id, payload: a.payload, ns });
-        });
+        // 1편이 아직 스트리밍하는 중에 거부될 수 있으니(DB 오류) 처리기를 만들 때 바로 붙인다
+        pending.dispatch = repo
+          .getConversation(a.id)
+          .then((row) => {
+            const ns = (row?.episodes ?? []).filter((e) => e.n > 1 && e.status === "queued").map((e) => e.n as 2 | 3 | 4);
+            return dispatchRest(deps, { id: a.id, payload: a.payload, ns });
+          })
+          .catch((e) => console.error(`[jobs] 2~4편 띄우기 실패: ${e instanceof Error ? e.message : "unknown"}`));
       }
     };
     const attempt = () =>
@@ -230,6 +238,7 @@ export async function runEpisodeJob(deps: JobDeps, a: { id: string; n: EpisodeN;
     console.error(`[jobs] ${a.n}편 실행 실패: ${e instanceof Error ? e.message : "unknown"}`);
     await repo.finishEpisode(failure(a.id, a.n, "internal")).catch(() => {});
   } finally {
-    await pending.dispatch?.catch((e) => console.error(`[jobs] 2~4편 띄우기 실패: ${e instanceof Error ? e.message : "unknown"}`));
+    // 거부는 위에서 처리했다. 함수가 끝나기 전에 2~4편 호출이 다 나가게 기다린다
+    await pending.dispatch;
   }
 }

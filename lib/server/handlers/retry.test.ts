@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cut, cutInSecondSection, episodeJson, harness, makePayload, request, whole } from "@/test/generation";
 import { handleCreateConversation } from "./conversations";
 import { handleRetry } from "./retry";
 import { handleStatus } from "./status";
+
+afterEach(() => vi.restoreAllMocks());
 
 const retry = (cookie: string | null, body: unknown) => request("POST", "/api/episodes/retry", cookie, body);
 const accepted = async () => new Response(null, { status: 202 });
@@ -73,6 +75,31 @@ describe("POST /api/episodes/retry", () => {
     // 같은 코드·같은 payload면 받는다
     expect((await handleRetry(retry(h.cookie, { id, n: 2, payload }), h.deps)).status).toBe(202);
     expect(h.queued).toHaveLength(1);
+  });
+
+  it("정지 중이면 423: 편을 시작하지 않고 Anthropic을 부르지 않는다. 정지가 풀리면 받는다", async () => {
+    const h = await harness({
+      reply: (n, call) =>
+        n === 1 && call <= 2 ? { status: 503, error: { type: "api_error", message: "unavailable" } } : whole(JSON.stringify(episodeJson(n))),
+    });
+    const payload = makePayload();
+    const res = await handleCreateConversation(request("POST", "/api/conversations", h.cookie, payload), h.deps);
+    await h.settle();
+    const { id } = res.body as { id: string };
+    expect((await statuses(h, id))[0]).toEqual(["failed", "retryable"]);
+
+    await h.repo.setPaused(new Date(Date.now() + 3_600_000));
+    const start = vi.spyOn(h.repo, "startEpisode");
+    expect(await handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps)).toEqual({ status: 423, body: { error: "paused" } });
+    await h.settle();
+    expect(start).not.toHaveBeenCalled();
+    expect((await statuses(h, id))[0]).toEqual(["failed", "retryable"]);
+    expect(h.streams).toHaveLength(2);
+
+    await h.repo.setPaused(new Date(Date.now() - 1));
+    expect((await handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps)).status).toBe(202);
+    await h.settle();
+    expect(await statuses(h, id)).toEqual(Array(4).fill(["done", null]));
   });
 
   it("본문이 틀리면 400, 쿠키가 없으면 401, client가 없으면 503", async () => {

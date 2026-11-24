@@ -69,11 +69,19 @@ export interface AppRepo {
     cost: number;
   }): Promise<void>;
   setPaused(until: Date): Promise<void>;
+  /** settings.paused_until. 건 적이 없거나 풀어 두었으면 null. 지난 시각일 수 있다(isPaused로 비교한다) */
+  getPausedUntil(): Promise<Date | null>;
   /** 대화·편·피드백을 지운다. claim 원장과 사용량 원장은 남는다 */
   deleteConversation(id: string, inviteId: string): Promise<boolean>;
   setShare(id: string, inviteId: string, share: { tokenHash: string | null; scope: "first" | "all"; hidden: number[] }): Promise<boolean>;
   getByShareHash(hash: string): Promise<ConversationRow | null>;
   addFeedback(a: { id: string; n: number; paragraphKey: string; reason: string }): Promise<void>;
+}
+
+/** 지금(now ms) 새 생성을 멈춰 둔 상태인가. claim_conversation의 paused 판정(paused_until > now())과 같은 비교다 */
+export async function isPaused(repo: AppRepo, now: number): Promise<boolean> {
+  const until = await repo.getPausedUntil();
+  return until !== null && until.getTime() > now;
 }
 
 /** 프로덕션인데 DB 키가 없다. 라우트가 503으로 바꾼다 */
@@ -362,6 +370,10 @@ export function memoryRepo(seed: { invites?: { code: string; monthlyLimit: numbe
       pausedUntil = until.getTime();
     },
 
+    async getPausedUntil() {
+      return pausedUntil === null ? null : new Date(pausedUntil);
+    },
+
     async deleteConversation(id, inviteId) {
       const c = conversations.get(id);
       if (!c || c.inviteId !== inviteId) return false;
@@ -541,6 +553,14 @@ function supabaseRepo(db: PrivilegedDb): AppRepo {
       check("setPaused", await db.rpc("set_paused", { p_until: until.toISOString() }));
     },
 
+    async getPausedUntil() {
+      const data = check("getPausedUntil", await db.from("settings").select("paused_until").eq("id", 1).maybeSingle()) as {
+        paused_until: string | null;
+      } | null;
+      const iso = isoOf(data?.paused_until);
+      return iso === null ? null : new Date(iso);
+    },
+
     async deleteConversation(id, inviteId) {
       if (!UUID.test(id)) return false;
       const data = check("deleteConversation", await conversations().delete().eq("id", id).eq("invite_id", inviteId).select("id"));
@@ -581,13 +601,14 @@ function supabaseRepo(db: PrivilegedDb): AppRepo {
 // ===== 선택 =====
 
 // 개발 서버가 다시 컴파일돼도 memoryRepo가 유지되게 전역에 둔다. 저장소 모양이 바뀌면 키 버전을 올린다
-const memory = globalThis as unknown as { analytalkRepoV1?: AppRepo; analytalkDevRepoV1?: AppRepo };
+// V2: getPausedUntil 추가
+const memory = globalThis as unknown as { analytalkRepoV2?: AppRepo; analytalkDevRepoV2?: AppRepo };
 
 /** E2E → 고정 코드 memoryRepo, secret 키 있음 → Supabase, 개발에서 키 없음 → memoryRepo, 프로덕션에서 키 없음 → NotReadyError(503) */
 export function getRepo(): AppRepo {
-  if (isE2E()) return (memory.analytalkRepoV1 ??= memoryRepo({ invites: [{ code: E2E_INVITE_CODE, monthlyLimit: 99 }] }));
+  if (isE2E()) return (memory.analytalkRepoV2 ??= memoryRepo({ invites: [{ code: E2E_INVITE_CODE, monthlyLimit: 99 }] }));
   const db = privilegedDb();
   if (db) return supabaseRepo(db);
   if (process.env.NODE_ENV === "production") throw new NotReadyError("Supabase secret 키가 없다");
-  return (memory.analytalkDevRepoV1 ??= memoryRepo());
+  return (memory.analytalkDevRepoV2 ??= memoryRepo());
 }
