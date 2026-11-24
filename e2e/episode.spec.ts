@@ -202,6 +202,24 @@ test.describe("AI 연재", () => {
     }
   });
 
+  test("만든 연재는 시작 화면의 '내 연재'에서 다시 열 수 있고, [지금 삭제]하면 목록에서 빠진다", async ({ page, context }) => {
+    await fakeApi(context, ["done", "done", "done", "done"]);
+    await fakeCreate(page);
+    await toReview(page);
+    await create(page).click();
+    await expect(page).toHaveURL(`/c/${ID}/steps`);
+
+    await page.goto("/");
+    const mine = page.getByRole("region", { name: "내 연재" });
+    await expect(mine.getByRole("link", { name: /연재/ })).toHaveAttribute("href", `/c/${ID}`);
+    await mine.getByRole("link", { name: /연재/ }).click();
+    await expect(page).toHaveURL(`/c/${ID}`);
+    await page.getByRole("button", { name: "지금 삭제" }).click();
+    await page.getByRole("button", { name: "정말 지우기" }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole("region", { name: "내 연재" })).toHaveCount(0);
+  });
+
   test("413이면 maxTokens × 0.95로 한 번만 다시 만들어 보내고, 또 413이면 오류를 보여 준다", async ({ page, context }) => {
     await fakeApi(context, ["running", "queued", "queued", "queued"]);
     const posts = await fakeCreate(page, [413, 413, 413, 202]);
@@ -295,7 +313,7 @@ test.describe("AI 연재", () => {
     api.statuses = ["done", "done", "done", "failed"];
     await page.reload();
     await card(page, 4).getByRole("button", { name: "다시 쓰기" }).click();
-    await expect(card(page, 4)).toContainText("같은 파일을 다시 올려 주세요");
+    await expect(card(page, 4)).toContainText("처음 올린 그 파일을 같은 이름");
     expect(api.retries).toHaveLength(1);
   });
 
@@ -303,7 +321,7 @@ test.describe("AI 연재", () => {
     const api = await fakeApi(context, ["done", "failed", "partial", "done"]);
     await page.goto(`/c/${ID}`);
     await card(page, 2).getByRole("button", { name: "다시 쓰기" }).click();
-    await expect(card(page, 2)).toContainText("같은 파일을 다시 올려 주세요");
+    await expect(card(page, 2)).toContainText("처음 올린 그 파일을 같은 이름");
     expect(api.retries).toHaveLength(0);
     // partial 편은 읽을 수도 있다
     await expect(card(page, 3).getByRole("link", { name: "3편 읽기" })).toBeVisible();

@@ -8,11 +8,22 @@ import { useState } from "react";
 import { StatsDashboard } from "@/components/stats/StatsDashboard";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { deletePayload } from "@/lib/client/idb";
+import { forgetSeries } from "@/lib/client/recent";
 import type { SubmitResult } from "@/lib/client/submit";
 import { hasStatText } from "@/lib/episode/statText";
 import type { StoredEpisode } from "@/lib/llm/schema";
 import type { ChatStats } from "@/lib/stats/compute";
-import { AI_NOTICE, episodeAction, kstDay, PAUSED_TEXT, readRange, SAFETY_HELP, STATUS_TEXT } from "./model";
+import {
+  AI_NOTICE,
+  episodeAction,
+  kstDay,
+  PAUSED_TEXT,
+  RETRY_KEPT_TEXT,
+  readRange,
+  retryKept,
+  SAFETY_HELP,
+  STATUS_TEXT,
+} from "./model";
 import { blocking, PageFrame, PageState } from "./PageState";
 import { SharePanel } from "./SharePanel";
 import { StatText } from "./StatText";
@@ -22,6 +33,7 @@ function EpisodeCard({
   id,
   n,
   status,
+  errorCode,
   content,
   stats,
   paused,
@@ -30,6 +42,7 @@ function EpisodeCard({
   id: string;
   n: number;
   status: string;
+  errorCode: string | null;
   content: StoredEpisode | null;
   stats: ChatStats;
   paused: boolean;
@@ -37,7 +50,7 @@ function EpisodeCard({
 }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const action = episodeAction(status, paused);
+  const action = episodeAction(status, paused, n);
 
   async function retry() {
     setBusy(true);
@@ -58,6 +71,7 @@ function EpisodeCard({
         </h3>
       )}
       {status === "safety" && <p className="text-sm">{SAFETY_HELP}</p>}
+      {retryKept(status, errorCode) && <p className="text-xs text-muted-foreground">{RETRY_KEPT_TEXT}</p>}
       {(action.read || action.retry) && (
         <div className="flex flex-wrap items-center gap-2">
           {action.read && (
@@ -97,6 +111,7 @@ function DeleteBox({ id }: { id: string }) {
       // 404: 이미 지워졌거나 만료됐다
       if (res.status === 204 || res.status === 404) {
         await deletePayload(id).catch(() => undefined);
+        forgetSeries(id);
         router.replace("/");
         return;
       }
@@ -161,18 +176,22 @@ export function ConversationHome({ id }: { id: string }) {
           연재 4편
         </h2>
         <div className="grid gap-3 sm:grid-cols-2">
-          {c.episodes.map((e) => (
-            <EpisodeCard
-              key={e.n}
-              id={id}
-              n={e.n}
-              status={status?.episodes.find((s) => s.n === e.n)?.status ?? e.status}
-              content={e.content}
-              stats={c.stats}
-              paused={paused}
-              onRetry={retry}
-            />
-          ))}
+          {c.episodes.map((e) => {
+            const live = status?.episodes.find((s) => s.n === e.n);
+            return (
+              <EpisodeCard
+                key={e.n}
+                id={id}
+                n={e.n}
+                status={live?.status ?? e.status}
+                errorCode={live ? live.errorCode : e.errorCode}
+                content={e.content}
+                stats={c.stats}
+                paused={paused}
+                onRetry={retry}
+              />
+            );
+          })}
         </div>
       </section>
 

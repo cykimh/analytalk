@@ -65,7 +65,7 @@ export function ReviewStep({
       : "1편은 몇 분 걸려요. 창을 닫아도 서버에서 계속 써요.";
 
   return (
-    <StepFrame title="보낼 내용 확인" onBack={onBack}>
+    <StepFrame title="보낼 내용 확인" onBack={onBack} busy={busy}>
       <p className="rounded-xl bg-muted p-4 text-sm">
         이름을 바꾸고 일부를 가린 최근 대화가 미국 Anthropic으로 가서 AI가 읽어요. 30일 보관되고, 학습에는 쓰이지 않아요
       </p>

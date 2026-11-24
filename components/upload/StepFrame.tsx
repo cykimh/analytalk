@@ -1,6 +1,7 @@
 "use client";
 
-// 업로드 흐름 한 단계의 틀: 제목(단계가 바뀌면 포커스) → 내용 → [이전]·[다음]
+// 업로드 흐름 한 단계의 틀: 제목(단계가 바뀌면 포커스) → 내용 → [이전]·[다음].
+// busy(Worker가 이름을 바꾸거나 페이로드를 만드는 중)이면 [이전]을 막는다: 앞 단계에서 값을 바꾸면 끝난 작업이 옛 값으로 덮는다
 import { type ReactNode, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 
@@ -10,12 +11,14 @@ export function StepFrame({
   children,
   onBack,
   action,
+  busy = false,
 }: {
   title: string;
   description?: ReactNode;
   children: ReactNode;
   onBack?: () => void;
   action?: ReactNode;
+  busy?: boolean;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => heading.current?.focus(), []);
@@ -32,7 +35,7 @@ export function StepFrame({
       {(onBack || action) && (
         <footer className="flex flex-wrap items-center justify-between gap-2">
           {onBack ? (
-            <Button variant="ghost" size="lg" onClick={onBack}>
+            <Button variant="ghost" size="lg" onClick={onBack} disabled={busy}>
               이전
             </Button>
           ) : (

@@ -4,10 +4,11 @@
 // → [AI 연재 만들기](페이로드만 보낸다) → /c/[id]/steps.
 // 원본 파일·파싱 결과·실제 이름은 이 컴포넌트와 Worker(브라우저 메모리)에만 있다.
 import { useRouter } from "next/navigation";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { StatsDashboard } from "@/components/stats/StatsDashboard";
-import { savePayload } from "@/lib/client/idb";
+import { savePayload, sweepPayloads } from "@/lib/client/idb";
+import { rememberSeries } from "@/lib/client/recent";
 import { createSeries, postJson } from "@/lib/client/submit";
 import {
   buildInWorker,
@@ -62,6 +63,11 @@ export function UploadFlow({ inApp }: { inApp: boolean }) {
   const [renamed, setRenamed] = useState<Renamed | null>(null);
   const [fixes, setFixes] = useState<Record<string, string>>({});
   const [built, setBuilt] = useState<Built | null>(null);
+
+  // 24시간 지난 재시도용 페이로드를 지운다(다른 대화를 올리러 왔을 때도)
+  useEffect(() => {
+    void sweepPayloads().catch(() => undefined);
+  }, []);
 
   const targets = useMemo(() => (parse ? nameTargets(parse) : []), [parse]);
   const counts = useMemo(() => {
@@ -158,6 +164,8 @@ export function UploadFlow({ inApp }: { inApp: boolean }) {
         save: savePayload,
       });
       if (r.ok) {
+        // 시작 화면의 '내 연재'에서 다시 찾을 수 있게 이 브라우저에 id만 남긴다
+        rememberSeries({ id: r.id, concept: built.payload.concept, createdAt: Date.now() });
         router.push(`/c/${r.id}/steps`);
         return;
       }

@@ -4,6 +4,7 @@ import { computeStats } from "@/lib/stats/compute";
 import {
   episodeAction,
   formatAt,
+  retryKept,
   isActive,
   isSettled,
   kstDay,
@@ -95,6 +96,14 @@ describe("날짜·시각 (KST)", () => {
   });
 });
 
+describe("retryKept (다시 쓰기가 실패해 앞의 글을 남겼다)", () => {
+  it("partial인데 오류 코드가 있으면 true(잘라 살린 partial은 오류 코드가 없다)", () => {
+    expect(retryKept("partial", "retryable")).toBe(true);
+    expect(retryKept("partial", null)).toBe(false);
+    expect(retryKept("failed", "retryable")).toBe(false);
+  });
+});
+
 describe("episodeAction (편 카드의 버튼)", () => {
   it("done은 읽기, partial은 읽기 + 다시 쓰기, failed는 다시 쓰기", () => {
     expect(episodeAction("done", false)).toEqual({ read: true, retry: null });
@@ -108,7 +117,13 @@ describe("episodeAction (편 카드의 버튼)", () => {
   });
 
   it("그 밖의 상태는 버튼이 없다", () => {
-    for (const s of ["queued", "running", "refused", "safety"]) expect(episodeAction(s, false)).toEqual({ read: false, retry: null });
+    for (const s of ["queued", "running", "refused", "safety"]) expect(episodeAction(s, false, 2)).toEqual({ read: false, retry: null });
+    for (const s of ["running", "refused", "safety"]) expect(episodeAction(s, false, 1)).toEqual({ read: false, retry: null });
+  });
+
+  it("1편이 queued면 [다시 쓰기]를 준다(정상 흐름은 202 전에 running이라 화면이 보는 queued 1편은 시작 전 유실이다)", () => {
+    expect(episodeAction("queued", false, 1)).toEqual({ read: false, retry: "button" });
+    expect(episodeAction("queued", true, 1)).toEqual({ read: false, retry: "paused" });
   });
 });
 

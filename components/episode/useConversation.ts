@@ -5,6 +5,7 @@
 // 편 상태가 바뀌면 대화를 다시 읽어 끝난 편의 내용을 받는다. 다시 쓸 편이 없으면 이 브라우저의 페이로드를 지운다.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deletePayload, loadPayload, sweepPayloads } from "@/lib/client/idb";
+import { forgetSeries } from "@/lib/client/recent";
 import { postJson, retryEpisode, type SubmitResult } from "@/lib/client/submit";
 import { POLL_MS } from "@/lib/config";
 import { type ConversationView, isActive, isSettled, mergeEpisodeNotes, type Note, statusChanged, type StatusView } from "./model";
@@ -84,6 +85,11 @@ export function useConversation(id: string) {
   useEffect(() => {
     if (conversation && isSettled(conversation.episodes)) void deletePayload(id).catch(() => undefined);
   }, [conversation, id]);
+
+  // 지워졌거나 만료된 대화는 시작 화면의 '내 연재'에서 뺀다
+  useEffect(() => {
+    if (error === "not_found") forgetSeries(id);
+  }, [error, id]);
 
   /** [다시 쓰기]. 받아 주면 바로 status를 다시 읽어 폴링을 잇는다 */
   const retry = useCallback(

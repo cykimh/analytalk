@@ -47,6 +47,13 @@ export const SAFETY_HELP =
   "걱정되는 이야기가 보여서 이 편은 쓰지 않았어요. 힘들 때는 109(자살예방상담전화, 24시간), 위험할 때는 112·1366(여성긴급전화, 24시간)에서 도와줘요.";
 export const AI_NOTICE = "AI 생성, 재미·참고용";
 export const PAUSED_TEXT = "이번 달 AI 마감";
+export const RETRY_KEPT_TEXT = "다시 쓰지 못해서 앞의 글을 그대로 뒀어요.";
+
+/**
+ * [다시 쓰기]가 실패해 앞의 글을 남긴 편. 서버(finish_episode)는 그때 partial에 이번 실패의 오류 코드를 남긴다.
+ * 끊긴 응답을 살린 partial은 오류 코드가 없고, 다시 쓰기를 시작하면 오류 코드를 비운다
+ */
+export const retryKept = (status: string, errorCode: string | null) => status === "partial" && errorCode !== null;
 
 const statusOf = (episodes: EpisodeState[], n: number) => episodes.find((e) => e.n === n)?.status;
 
@@ -103,10 +110,14 @@ export function formatAt(iso: string): string {
 /** 읽은 범위 "YYYY-MM-DD 이후 N개" */
 export const readRange = (cutoffAt: string, msgSent: number) => `${kstDay(cutoffAt)} 이후 ${formatCount(msgSent)}개`;
 
-/** 편 카드의 버튼: 내용이 있으면 [읽기], failed·partial이면 [다시 쓰기](정지 중이면 마감 안내) */
-export function episodeAction(status: string, paused: boolean): { read: boolean; retry: "button" | "paused" | null } {
+/**
+ * 편 카드의 버튼: 내용이 있으면 [읽기], failed·partial이면 [다시 쓰기](정지 중이면 마감 안내).
+ * 1편 queued도 [다시 쓰기]다: 정상 흐름은 생성 응답(202) 전에 1편을 running으로 바꾸므로, 화면이 보는 queued 1편은
+ * claim 뒤 시작 전에 유실된 것이다(그대로 두면 폴링만 계속된다). 서버가 그사이 시작했으면 다시 쓰기는 409다
+ */
+export function episodeAction(status: string, paused: boolean, n = 0): { read: boolean; retry: "button" | "paused" | null } {
   const read = status === "done" || status === "partial";
-  const retryable = status === "failed" || status === "partial";
+  const retryable = status === "failed" || status === "partial" || (n === 1 && status === "queued");
   return { read, retry: retryable ? (paused ? "paused" : "button") : null };
 }
 

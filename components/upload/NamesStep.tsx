@@ -52,6 +52,7 @@ export function NamesStep({
               value={value}
               maxLength={40}
               aria-invalid={invalid || undefined}
+              disabled={busy}
               onChange={(e) => setName(who, e.target.value)}
               className={cn(
                 "h-9 min-w-0 flex-1 rounded-lg border border-input bg-background px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
@@ -62,6 +63,7 @@ export function NamesStep({
               <select
                 aria-label={`${who}을(를) 합칠 사람`}
                 value=""
+                disabled={busy}
                 onChange={(e) => e.target.value && onChange({ ...state, sameAs: mergeInto(state.sameAs, who, e.target.value) })}
                 className="h-9 w-28 shrink-0 rounded-lg border border-input bg-background px-2 text-sm"
               >
@@ -81,7 +83,12 @@ export function NamesStep({
             <span className="min-w-0 break-all text-muted-foreground">
               같은 사람: {root} · {state.names[root]}
             </span>
-            <button type="button" className="text-xs underline" onClick={() => onChange({ ...state, sameAs: unmerge(state.sameAs, who) })}>
+            <button
+              type="button"
+              className="text-xs underline disabled:opacity-50"
+              disabled={busy}
+              onClick={() => onChange({ ...state, sameAs: unmerge(state.sameAs, who) })}
+            >
               풀기
             </button>
           </div>
@@ -95,6 +102,7 @@ export function NamesStep({
       title="이름 정리"
       description="AI와 서버는 여기서 정한 표시 이름만 봐요. 실제 이름 대신 별명을 써 주세요. 본문 속 이름도 함께 바꿔요."
       onBack={onBack}
+      busy={busy}
       action={<NextButton onClick={onNext} disabled={problem !== null || busy} describedBy={problem ? "name-problem" : undefined} />}
     >
       <ul className="grid gap-2">{targets.map(row)}</ul>

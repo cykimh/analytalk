@@ -2,11 +2,12 @@ import { headers } from "next/headers";
 import Link from "next/link";
 import { InAppBanner } from "@/components/upload/InAppBanner";
 import { InviteForm } from "@/components/upload/InviteForm";
+import { RecentSeries } from "@/components/upload/RecentSeries";
 import { buttonVariants } from "@/components/ui/button";
 import { isKakaoInApp } from "@/lib/client/inapp";
 import { hasInvite } from "@/lib/server/viewer";
 
-// 쿠키가 없으면 초대 코드, 있으면 [대화 올리기]
+// 쿠키가 없으면 초대 코드, 있으면 [대화 올리기]와 이 브라우저에서 만든 연재 목록
 export default async function Home() {
   const [invited, ua] = await Promise.all([hasInvite(), headers().then((h) => h.get("user-agent") ?? "")]);
   return (
@@ -19,9 +20,12 @@ export default async function Home() {
       </header>
       {isKakaoInApp(ua) && <InAppBanner />}
       {invited ? (
-        <Link href="/new" className={buttonVariants({ size: "lg" })}>
-          대화 올리기
-        </Link>
+        <>
+          <Link href="/new" className={buttonVariants({ size: "lg" })}>
+            대화 올리기
+          </Link>
+          <RecentSeries />
+        </>
       ) : (
         <InviteForm />
       )}

@@ -44,6 +44,7 @@ export function LeftoversStep({
       title="본문에 남은 이름"
       description="이름을 바꾼 뒤에도 원래 이름 조각이 남은 곳이 있어요. 그대로 두면 AI에게 보내는 대화에 실려요. 이름이 아니라 흔한 말이면 그대로 두세요."
       onBack={onBack}
+      busy={busy}
       action={<NextButton onClick={onNext} disabled={busy} />}
     >
       <ul className="grid gap-2">
@@ -57,6 +58,7 @@ export function LeftoversStep({
             <select
               aria-label={`${l.piece} 바꾸기`}
               value={fixes[l.piece] ?? KEEP}
+              disabled={busy}
               onChange={(e) => {
                 const { [l.piece]: _, ...rest } = fixes;
                 onFixes(e.target.value === KEEP ? rest : { ...rest, [l.piece]: e.target.value });

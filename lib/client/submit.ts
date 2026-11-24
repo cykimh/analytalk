@@ -6,8 +6,13 @@ export const SUBMIT_TEXT = {
   paused: "이번 달 AI 마감",
   inviteLimit: "이 코드의 이번 달 횟수를 다 썼어요",
   dayFull: "오늘 분량이 다 찼어요. 내일 다시 와 주세요",
-  tooLong: "대화가 너무 길어서 AI에게 보내지 못했어요. 잠시 뒤 다시 시도해 주세요.",
-  reupload: "같은 파일을 다시 올려 주세요",
+  weekFull: "이번 주 AI 사용량이 다 찼어요. 며칠 뒤 다시 와 주세요",
+  // 페이로드는 같은 파일·같은 설정이면 똑같이 만들어진다. 다시 보내도 결과가 같다는 것을 알린다
+  tooLong: "대화가 너무 길어서 AI에게 보내지 못했어요. 같은 파일로 다시 보내도 결과가 같아요.",
+  cannotSend: "이 대화는 AI에게 보낼 수 없어요. 화면을 새로 고친 뒤에도 같으면 이 대화로는 만들 수 없어요.",
+  // [다시 쓰기]용 사본이 없거나 다르다: 같은 파일을 같은 설정으로 올리면 같은 연재로 이어진다(한도를 더 쓰지 않는다)
+  reupload: "이 브라우저에 다시 쓰기용 사본이 없어요. 처음 올린 그 파일을 같은 이름·'나'·방 종류로 다시 올리면 이어서 쓸 수 있어요.",
+  retryLimit: "이 편은 더 다시 쓸 수 없어요. 한 편은 3번까지 써요.",
   notStartable: "이 편은 지금 다시 쓸 수 없어요. 화면을 새로 고쳐 주세요.",
   session: "초대 코드 확인이 만료됐어요. 처음 화면에서 코드를 다시 넣어 주세요.",
   notReady: "아직 AI 연재를 만들 준비가 안 됐어요. 잠시 뒤 다시 시도해 주세요.",
@@ -23,12 +28,21 @@ async function readBody(res: Response): Promise<Record<string, unknown>> {
   return typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
 }
 
-/** 두 요청에 같은 뜻으로 오는 응답의 문구 */
-function commonText(status: number, body: Record<string, unknown>): string {
+const LIMIT_TEXT: Record<string, string> = {
+  invite_limit: SUBMIT_TEXT.inviteLimit,
+  global_limit: SUBMIT_TEXT.weekFull,
+  retry_limit: SUBMIT_TEXT.retryLimit,
+};
+
+/**
+ * 두 요청에 같은 뜻으로 오는 응답의 문구. 400 bad_payload는 요청마다 다르다:
+ * 새 연재는 같은 파일로 다시 만들어도 같은 페이로드라 cannotSend, [다시 쓰기]는 이 브라우저의 사본이 상한 것이라 reupload
+ */
+function commonText(status: number, body: Record<string, unknown>, badPayload: string): string {
   if (status === 423) return SUBMIT_TEXT.paused;
-  if (status === 429) return body.reason === "invite_limit" ? SUBMIT_TEXT.inviteLimit : SUBMIT_TEXT.dayFull;
+  if (status === 429) return LIMIT_TEXT[String(body.reason)] ?? SUBMIT_TEXT.dayFull;
   if (status === 401) return SUBMIT_TEXT.session;
-  if (status === 400 && body.error === "bad_payload") return SUBMIT_TEXT.reupload;
+  if (status === 400 && body.error === "bad_payload") return badPayload;
   if (status === 503) return SUBMIT_TEXT.notReady;
   return SUBMIT_TEXT.generic;
 }
@@ -75,7 +89,7 @@ export async function createSeries(payload: Payload, deps: CreateDeps): Promise<
       }
       continue;
     }
-    return failed(commonText(res.status, body));
+    return failed(commonText(res.status, body, SUBMIT_TEXT.cannotSend));
   }
 }
 
@@ -97,5 +111,5 @@ export async function retryEpisode(id: string, n: number, deps: RetryDeps): Prom
   if (res.status === 202) return { ok: true };
   const body = await readBody(res);
   if (res.status === 409) return failed(body.error === "payload_mismatch" ? SUBMIT_TEXT.reupload : SUBMIT_TEXT.notStartable);
-  return failed(commonText(res.status, body));
+  return failed(commonText(res.status, body, SUBMIT_TEXT.reupload));
 }

@@ -40,6 +40,11 @@ describe("createSeries ([AI 연재 만들기])", () => {
     expect(d.save).toHaveBeenCalledExactlyOnceWith(ID, smaller);
   });
 
+  it("두 번째 413 문구는 다시 시도하라고 하지 않는다(같은 파일이면 결과가 같다)", () => {
+    expect(SUBMIT_TEXT.tooLong).not.toContain("잠시 뒤");
+    expect(SUBMIT_TEXT.cannotSend).not.toContain("잠시 뒤");
+  });
+
   it("다시 만든 뒤에도 413이면 더 줄이지 않고 오류 문구", async () => {
     const d = deps(json(413, { maxTokens: 100_000 }), json(413, { maxTokens: 90_000 }));
     expect(await createSeries(first, d)).toEqual({ ok: false, message: SUBMIT_TEXT.tooLong });
@@ -65,9 +70,10 @@ describe("createSeries ([AI 연재 만들기])", () => {
     [json(423, { error: "paused" }), "이번 달 AI 마감"],
     [json(429, { reason: "invite_limit" }), "이 코드의 이번 달 횟수를 다 썼어요"],
     [json(429, { reason: "daily_limit" }), "오늘 분량이 다 찼어요. 내일 다시 와 주세요"],
-    [json(429, { reason: "global_limit" }), "오늘 분량이 다 찼어요. 내일 다시 와 주세요"],
+    [json(429, { reason: "global_limit" }), SUBMIT_TEXT.weekFull],
     [json(401, { error: "unauthorized" }), SUBMIT_TEXT.session],
-    [json(400, { error: "bad_payload", reason: "lines" }), SUBMIT_TEXT.reupload],
+    // 페이로드는 같은 파일·같은 설정이면 똑같이 만들어져 다시 올려도 같은 400이다
+    [json(400, { error: "bad_payload", reason: "size" }), SUBMIT_TEXT.cannotSend],
     [json(503, { error: "not_ready" }), SUBMIT_TEXT.notReady],
     [json(502, { error: "count_tokens_failed" }), SUBMIT_TEXT.generic],
     [new TypeError("Failed to fetch"), SUBMIT_TEXT.generic],
@@ -112,17 +118,22 @@ describe("retryEpisode ([다시 쓰기])", () => {
     expect(d.sent).toEqual([{ id: ID, n: 2, payload: first }]);
   });
 
-  it("페이로드가 없으면(24시간 지남·다른 브라우저) 보내지 않고 '같은 파일을 다시 올려 주세요'", async () => {
+  it("페이로드가 없으면(24시간 지남·다른 브라우저) 보내지 않고 같은 파일·같은 설정으로 다시 올리라고 안내한다", async () => {
     const d = retryDeps(null);
-    expect(await retryEpisode(ID, 1, d)).toEqual({ ok: false, message: "같은 파일을 다시 올려 주세요" });
+    expect(await retryEpisode(ID, 1, d)).toEqual({ ok: false, message: SUBMIT_TEXT.reupload });
+    expect(SUBMIT_TEXT.reupload).toContain("처음 올린 그 파일");
+    expect(SUBMIT_TEXT.reupload).toContain("이름");
     expect(d.post).not.toHaveBeenCalled();
     const broken = retryDeps(first);
     broken.load.mockRejectedValueOnce(new Error("blocked"));
-    expect(await retryEpisode(ID, 1, broken)).toEqual({ ok: false, message: "같은 파일을 다시 올려 주세요" });
+    expect(await retryEpisode(ID, 1, broken)).toEqual({ ok: false, message: SUBMIT_TEXT.reupload });
   });
 
   it.each([
-    [json(409, { error: "payload_mismatch" }), "같은 파일을 다시 올려 주세요"],
+    [json(409, { error: "payload_mismatch" }), SUBMIT_TEXT.reupload],
+    [json(400, { error: "bad_payload", reason: "lines" }), SUBMIT_TEXT.reupload],
+    [json(429, { reason: "retry_limit" }), SUBMIT_TEXT.retryLimit],
+    [json(429, { reason: "global_limit" }), SUBMIT_TEXT.weekFull],
     [json(409, { error: "not_startable" }), SUBMIT_TEXT.notStartable],
     [json(423, { error: "paused" }), "이번 달 AI 마감"],
     [json(401, { error: "unauthorized" }), SUBMIT_TEXT.session],
