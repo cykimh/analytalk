@@ -1,6 +1,7 @@
 // 편 하나를 스트리밍으로 받는다. 서버 전용.
 // deadlineAt에 끊고(완결된 섹션은 호출하는 쪽이 salvageEpisode로 살린다), 첫 message_start에서 실제 모델을 알리고,
 // 스트리밍 중에는 NOTES_FLUSH_MS마다 정리된 reading_notes만 내보낸다. 출력 원문은 로그에 남기지 않는다.
+// 응답이 시작된 뒤 끊긴 편은 출력량을 알 수 없어 max_tokens 상한으로 센다(원장이 차단 원가를 낮게 세지 않게).
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { BetaMessageStreamParams, BetaUsage } from "@anthropic-ai/sdk/resources/beta/messages";
@@ -17,6 +18,8 @@ export interface RunResult {
   /** 실제로 응답한 모델 */
   model: string;
   usage: Usage | null;
+  /** usage의 출력 토큰이 실측이 아니라 max_tokens 상한인지. message_start 뒤에 끊긴 편(partial·error)에서만 true */
+  usageEstimated?: boolean;
   error?: ErrorClass;
   /** message_start를 받았는지. 받기 전 오류만 같은 함수에서 재시도할 수 있다 */
   startedStream: boolean;
@@ -42,6 +45,23 @@ function toUsage(u: BetaUsage | undefined, model: string): Usage | null {
       cache_creation_input_tokens: it.cache_creation_input_tokens,
       cache_read_input_tokens: it.cache_read_input_tokens,
     }));
+  }
+  return usage;
+}
+
+/**
+ * message_start 뒤에 끊긴 편(마감 abort, 스트림 중간 오류)의 usage.
+ * output_tokens는 message_delta가 와야 갱신되므로 끊긴 스트림에서는 message_start 값(1)이고,
+ * adaptive thinking 토큰은 raw에도 없어 다시 셀 수 없다. 그래서 출력은 max_tokens(thinking 포함 상한)만큼 쓴 것으로 본다.
+ * iterations가 있으면 원가를 그것으로 계산하므로, 마지막(진행 중이던) 항목에도 같은 상한을 둔다
+ */
+function cutUsage(u: Usage, maxTokens: number): Usage {
+  const usage: Usage = { ...u, output_tokens: Math.max(u.output_tokens, maxTokens) };
+  if (u.iterations?.length) {
+    const last = u.iterations.length - 1;
+    usage.iterations = u.iterations.map((it, i) =>
+      i === last ? { ...it, output_tokens: Math.max(it.output_tokens, maxTokens) } : it,
+    );
   }
   return usage;
 }
@@ -96,11 +116,15 @@ export async function runEpisode(
   } catch (e) {
     const current = stream.currentMessage;
     const model = current?.model ?? startModel ?? req.model;
+    const measured = toUsage(current?.usage, model);
+    // 응답이 시작된 뒤 끊겼으면 출력은 상한으로 센다. 시작 전이면 usage가 없다(받은 토큰이 없다)
+    const estimated = startModel !== null && measured !== null;
     const base = {
       raw,
       stopReason: current?.stop_reason ?? null,
       model,
-      usage: toUsage(current?.usage, model),
+      usage: estimated ? cutUsage(measured, req.max_tokens) : measured,
+      ...(estimated ? { usageEstimated: true } : {}),
       startedStream: startModel !== null,
     };
     // 마감으로 끊은 것은 오류가 아니다: 받은 데까지 partial

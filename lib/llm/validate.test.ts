@@ -233,10 +233,34 @@ describe("validateEpisode", () => {
     expect(r).toEqual({ status: "safety", content: null, dropped: { paragraphs: 0, evidence: 0 } });
   });
 
+  it("표에 없는 none 아닌 flag도 safety (SDK 스키마 변환이 enum을 강제하지 않는다)", () => {
+    for (const flag of ["unknown", "self-harm", "자해", ""]) {
+      const r = run(episode([sec("s", [para("p1", "저녁 대화")])], { safety: { flag: flag as "none" } }));
+      expect(r, flag).toEqual({ status: "safety", content: null, dropped: { paragraphs: 0, evidence: 0 } });
+    }
+  });
+
+  it("safety가 걸린 응답은 다른 필드가 구조 검사에 맞지 않아도 safety", () => {
+    const flagged = { safety: { flag: "violence" } };
+    // episode 범위 밖(min·max도 API가 강제하지 않는다)
+    expect(run({ ...episode([sec("s", [para("p1", "저녁 대화")])]), ...flagged, episode: 7 }).status).toBe("safety");
+    // 뒤쪽 필드가 없다(truncated 아님)
+    expect(run({ episode: 1, ...flagged }).status).toBe("safety");
+    expect(run({ ...flagged, sections: "x" }, true).status).toBe("safety");
+  });
+
+  it("flag의 대소문자·앞뒤 공백은 무시한다: ' None '은 none", () => {
+    const r = run(episode([sec("s", [para("p1", "저녁 대화가 이어져요")])], { safety: { flag: " None " as "none" } }));
+    expect(r.status).toBe("done");
+    expect(r.content?.safety).toEqual({ flag: "none" });
+  });
+
   it("구조가 틀리면 failed, 완결 섹션이 0개여도 failed", () => {
     expect(run({ episode: 1 }).status).toBe("failed");
     expect(run("not json").status).toBe("failed");
-    expect(run(episode([sec("s", [para("p1", "저녁 대화")])], { safety: { flag: "unknown" as "none" } })).status).toBe("failed");
+    // flag가 문자열이 아니면 safety 판정을 할 수 없다
+    expect(run(episode([sec("s", [para("p1", "저녁 대화")])], { safety: { flag: 3 as unknown as "none" } })).status).toBe("failed");
+    expect(run({ ...episode([sec("s", [para("p1", "저녁 대화")])]), safety: null }).status).toBe("failed");
     expect(run(episode([])).status).toBe("failed");
     expect(run(episode([sec("s", [para("p1", "확률 99")])])).content).toBeNull();
   });

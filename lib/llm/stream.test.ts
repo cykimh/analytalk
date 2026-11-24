@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
 import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
 import { NOTES_FLUSH_MS } from "@/lib/config";
+import { estimateCostUsd } from "./cost";
 import { runEpisode } from "./stream";
 
 // ── 가짜 fetch: 공식 SSE 형식(event: … / data: …)의 ReadableStream 응답 ──
@@ -163,7 +164,7 @@ describe("runEpisode", () => {
     expect(r.model).toBe("claude-opus-4-8");
   });
 
-  it("SSE가 deadline을 넘기면 abort하고 partial. usage는 currentMessage에서", async () => {
+  it("SSE가 deadline을 넘기면 abort하고 partial. usage는 currentMessage에서, 출력은 max_tokens 상한으로 센다", async () => {
     const s = sse([messageStart(), textStart, delta('{"episode":1,"safety":{"flag":"none"},"rea')], false);
     const r = await runEpisode(client(s.fetch), REQ, opts({ deadlineAt: Date.now() + 80 }));
     expect(s.state.aborted).toBe(true);
@@ -172,15 +173,40 @@ describe("runEpisode", () => {
       raw: '{"episode":1,"safety":{"flag":"none"},"rea',
       stopReason: null,
       model: "claude-opus-5-5",
-      usage: { input_tokens: 120, output_tokens: 1, cache_creation_input_tokens: 128_000, cache_read_input_tokens: 0 },
+      // 입력·캐시는 message_start 값 그대로, 출력은 message_start 값(1) 대신 max_tokens(thinking 포함 상한)
+      usage: { input_tokens: 120, output_tokens: 12_000, cache_creation_input_tokens: 128_000, cache_read_input_tokens: 0 },
+      usageEstimated: true,
       startedStream: true,
     });
+    // 원장 원가: 캐시 쓰기 128K($0.64) + 입력 120 + 출력 12K($0.24)
+    expect(estimateCostUsd(r.usage!, r.model)).toBeCloseTo(0.64 + 0.00048 + 0.24, 5);
   });
 
-  it("응답 시작 전에 deadline이 지나면 partial, startedStream false", async () => {
+  it("끊긴 편에 iterations가 있으면 마지막(진행 중이던) 항목의 출력도 상한으로 센다", async () => {
+    const start = messageStart();
+    const msg = start.message as { usage: Record<string, unknown> };
+    msg.usage = {
+      ...msg.usage,
+      iterations: [
+        { type: "message", model: "claude-opus-5-5", input_tokens: 120, output_tokens: 300 },
+        { type: "fallback_message", model: "claude-opus-4-8", input_tokens: 120, output_tokens: 1 },
+      ],
+    };
+    const s = sse([start, textStart, delta('{"episode":1')], false);
+    const r = await runEpisode(client(s.fetch), REQ, opts({ deadlineAt: Date.now() + 80 }));
+    expect(r.kind).toBe("partial");
+    expect(r.usageEstimated).toBe(true);
+    expect(r.usage?.iterations?.map((it) => [it.model, it.output_tokens])).toEqual([
+      ["claude-opus-5-5", 300],
+      ["claude-opus-4-8", 12_000],
+    ]);
+  });
+
+  it("응답 시작 전에 deadline이 지나면 partial, startedStream false, usage는 null(추정 없음)", async () => {
     const s = sse([], false);
     const r = await runEpisode(client(s.fetch), REQ, opts({ deadlineAt: Date.now() + 30 }));
     expect(r).toMatchObject({ kind: "partial", raw: "", usage: null, startedStream: false, model: "claude-opus-5-5" });
+    expect(r.usageEstimated).toBeUndefined();
   });
 
   it("HTTP 오류는 classifyError로 분류한 error (재시도 없음)", async () => {
@@ -196,6 +222,7 @@ describe("runEpisode", () => {
     );
     expect(calls).toBe(1);
     expect(r).toMatchObject({ kind: "error", error: "retryable", startedStream: false, usage: null, raw: "" });
+    expect(r.usageEstimated).toBeUndefined();
     const spend = await runEpisode(
       client(
         failing(429, {
@@ -219,6 +246,9 @@ describe("runEpisode", () => {
     const r = await done;
     expect(r).toMatchObject({ kind: "error", error: "retryable", startedStream: true, raw: '{"episode":1' });
     expect(r.usage?.cache_creation_input_tokens).toBe(128_000);
+    // 응답이 시작된 뒤 끊겼으니 출력은 max_tokens 상한으로 센다
+    expect(r.usage?.output_tokens).toBe(12_000);
+    expect(r.usageEstimated).toBe(true);
   });
 
   it("NOTES_FLUSH_MS마다 정리된 reading_notes를 onNotes로 넘긴다(바뀌었을 때만)", async () => {

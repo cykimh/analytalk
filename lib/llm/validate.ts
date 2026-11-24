@@ -1,4 +1,5 @@
 // 저장 전 검증(PRD 5장). 서버 전용. 검증을 거치지 않은 문장은 저장하지도 보여 주지도 않는다.
+// safety: 구조 검사보다 먼저 원본에서 본다. flag가 none이 아닌 문자열이면 다른 필드가 틀려도 도움 안내로 간다.
 // 근거: msg_id가 보낸 줄에 있고 quote가 그 본문의 부분 문자열이어야 남는다(편 전체 8개, 앞 섹션부터).
 // 문단: 근거를 잃은 사람 문단, 풀리지 않는 자리표시자, 금지 표현이 든 문단을 지운다.
 import "server-only";
@@ -31,13 +32,25 @@ const TRUNCATED_DEFAULTS = { declined_topics: [], reading_notes: [], headline: "
 const clean = (text: string) => (isBanned(text) ? "" : text);
 const toNewlines = (text: string) => text.replaceAll(LINE_BREAK_MARK, "\n");
 
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
 /**
- * 구조 검사 전 손질. truncated면 빠진 뒤쪽 필드에 기본값을 넣는다.
- * declined_topics는 참고용이고 SDK 스키마 변환이 enum을 설명으로만 넘겨 API가 강제하지 않으므로, 모르는 값은 버린다
+ * 원본의 safety.flag(대소문자·앞뒤 공백 정리). 문자열이 아니면 null.
+ * SDK 스키마 변환이 enum·min/max를 설명으로만 넘겨 API가 강제하지 않으므로, 표에 없는 값("self-harm" 등)도 온다
+ */
+function rawSafetyFlag(raw: unknown): string | null {
+  if (!isRecord(raw) || !isRecord(raw.safety) || typeof raw.safety.flag !== "string") return null;
+  return raw.safety.flag.trim().toLowerCase();
+}
+
+/**
+ * 구조 검사 전 손질. truncated면 빠진 뒤쪽 필드에 기본값을 넣는다. safety는 정리한 "none"으로 맞춘다.
+ * declined_topics는 참고용이고 API가 enum을 강제하지 않으므로, 모르는 값은 버린다
  */
 function prepare(raw: unknown, truncated: boolean): unknown {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+  if (!isRecord(raw)) return raw;
   const obj: Record<string, unknown> = truncated ? { ...TRUNCATED_DEFAULTS, ...raw } : { ...raw };
+  if (rawSafetyFlag(raw) === "none") obj.safety = { flag: "none" };
   if (Array.isArray(obj.declined_topics)) {
     obj.declined_topics = obj.declined_topics.filter((t) => (DECLINED_TOPICS as readonly unknown[]).includes(t));
   }
@@ -61,10 +74,13 @@ export function validateEpisode(
   opts: { truncated: boolean },
 ): ValidateResult {
   const none = { paragraphs: 0, evidence: 0 };
+  // safety가 먼저다: 걸린 응답이 구조 검사에서 failed가 되면 도움 안내 대신 [다시 쓰기]가 보이고,
+  // 같은 위험 대화가 다시 유료 호출로 간다
+  const flag = rawSafetyFlag(raw);
+  if (flag !== null && flag !== "none") return { status: "safety", content: null, dropped: none };
   const parsed = episodeSchema.safeParse(prepare(raw, opts.truncated));
   if (!parsed.success) return { status: "failed", content: null, dropped: none };
   const ep = parsed.data;
-  if (ep.safety.flag !== "none") return { status: "safety", content: null, dropped: none };
 
   const people = Object.keys(stats.byPerson);
   let quotesLeft = MAX_QUOTES_PER_EPISODE;
