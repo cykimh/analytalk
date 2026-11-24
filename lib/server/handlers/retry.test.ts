@@ -89,10 +89,9 @@ describe("POST /api/episodes/retry", () => {
     expect((await statuses(h, id))[0]).toEqual(["failed", "retryable"]);
 
     await h.repo.setPaused(new Date(Date.now() + 3_600_000));
-    const start = vi.spyOn(h.repo, "startEpisode");
     expect(await handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps)).toEqual({ status: 423, body: { error: "paused" } });
     await h.settle();
-    expect(start).not.toHaveBeenCalled();
+    expect(h.queued).toHaveLength(0);
     expect((await statuses(h, id))[0]).toEqual(["failed", "retryable"]);
     expect(h.streams).toHaveLength(2);
 
@@ -100,6 +99,70 @@ describe("POST /api/episodes/retry", () => {
     expect((await handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps)).status).toBe(202);
     await h.settle();
     expect(await statuses(h, id)).toEqual(Array(4).fill(["done", null]));
+  });
+
+  it("한 편의 유료 실행은 3번까지: 늘 partial로 끝나는 편을 계속 다시 쓰면 세 번째 다시 쓰기부터 429 retry_limit", async () => {
+    const h = await harness({ reply: (n) => cut(cutInSecondSection(n)), deadlineMs: 150, internal: accepted });
+    const payload = makePayload();
+    const res = await handleCreateConversation(request("POST", "/api/conversations", h.cookie, payload), h.deps);
+    await h.settle();
+    const { id } = res.body as { id: string };
+    for (let i = 0; i < 2; i++) {
+      expect((await handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps)).status).toBe(202);
+      await h.settle();
+      expect((await statuses(h, id))[0]).toEqual(["partial", null]);
+    }
+    expect(await handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps)).toEqual({ status: 429, body: { reason: "retry_limit" } });
+    await h.settle();
+    expect(h.streams.filter((s) => s.n === 1)).toHaveLength(3);
+    expect((await statuses(h, id))[0]).toEqual(["partial", null]);
+  });
+
+  it("최근 7일 원가 + 이번 몫이 주간 상한을 넘으면 429 global_limit: 편을 시작하지 않는다", async () => {
+    const h = await harness({ internal: async () => new Response(null, { status: 401 }) });
+    const payload = makePayload();
+    const res = await handleCreateConversation(request("POST", "/api/conversations", h.cookie, payload), h.deps);
+    await h.settle();
+    const { id } = res.body as { id: string };
+    expect((await statuses(h, id))[1]).toEqual(["failed", "dispatch"]);
+    // 다른 사용자의 원가로 최근 7일 합이 22.4달러가 됐다
+    await h.repo.finishEpisode({
+      id: "0b6c3f1e-2a4d-4c5b-9e8f-7a6b5c4d3e2f",
+      n: 1,
+      status: "done",
+      content: null,
+      model: "claude-opus-5-5",
+      stopReason: "end_turn",
+      errorCode: null,
+      usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+      cost: 22.4,
+    });
+    const streams = h.streams.length;
+    expect(await handleRetry(retry(h.cookie, { id, n: 2, payload }), h.deps)).toEqual({ status: 429, body: { reason: "global_limit" } });
+    await h.settle();
+    expect(h.streams).toHaveLength(streams);
+    expect((await statuses(h, id))[1]).toEqual(["failed", "dispatch"]);
+  });
+
+  it("partial 편의 다시 쓰기가 응답 전에 실패해도(529 두 번) 앞의 글은 남는다: partial·content 그대로, 오류 코드만 남긴다", async () => {
+    const h = await harness({
+      reply: (n, call) => (call === 1 ? cut(cutInSecondSection(n)) : { status: 529, error: { type: "overloaded_error", message: "busy" } }),
+      deadlineMs: 150,
+      internal: accepted,
+    });
+    const payload = makePayload();
+    const res = await handleCreateConversation(request("POST", "/api/conversations", h.cookie, payload), h.deps);
+    await h.settle();
+    const { id } = res.body as { id: string };
+    const before = (await h.repo.getConversation(id))!.episodes[0];
+    expect(before.status).toBe("partial");
+    expect(before.content).not.toBeNull();
+
+    expect((await handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps)).status).toBe(202);
+    await h.settle();
+    const after = (await h.repo.getConversation(id))!.episodes[0];
+    expect(after).toMatchObject({ status: "partial", errorCode: "retryable" });
+    expect(after.content).toEqual(before.content);
   });
 
   it("본문이 틀리면 400, 쿠키가 없으면 401, client가 없으면 503", async () => {

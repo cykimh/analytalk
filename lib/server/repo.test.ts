@@ -532,7 +532,7 @@ describe("memoryRepo 편 상태 (Task 2 start_episode·save_progress·finish_epi
     expect((await repo.getConversation(id))!.episodes[0].progress).toEqual(notes);
   });
 
-  it("finishEpisode는 지금 상태와 상관없이 덮어쓰고 끝난 시각을 남긴다", async () => {
+  it("finishEpisode는 지금 상태와 상관없이 덮어쓰고 끝난 시각을 남긴다 (앞의 글이 없을 때)", async () => {
     const { repo, many } = await fixture();
     const id = await created(claim(repo, many));
     await finish(repo, id, 3, "failed", { errorCode: "dispatch" });
@@ -548,6 +548,74 @@ describe("memoryRepo 편 상태 (Task 2 start_episode·save_progress·finish_epi
     const id = await created(claim(repo, many));
     await expect(finish(repo, id, 1, "bogus")).rejects.toThrow();
     expect((await repo.getConversation(id))!.episodes[0].status).toBe("queued");
+  });
+});
+
+describe("memoryRepo 다시 쓰기 판정 (retry_episode)", () => {
+  const retry = (repo: AppRepo, id: string, n: number, maxRuns = 3) => repo.retryEpisode({ id, n, estCost: 1.31, maxRuns });
+
+  it("정지 중이면 paused, 시작할 수 없는 편이면 not_startable", async () => {
+    const { repo, many } = await fixture();
+    const id = await created(claim(repo, many));
+    await finish(repo, id, 3, "done");
+    expect(await retry(repo, id, 3)).toBe("not_startable");
+    expect(await retry(repo, randomUUID(), 1)).toBe("not_startable");
+    await repo.setPaused(new Date(Date.now() + 60_000));
+    await finish(repo, id, 2, "failed", { errorCode: "retryable" });
+    expect(await retry(repo, id, 2)).toBe("paused");
+    expect((await repo.getConversation(id))!.episodes[1].status).toBe("failed");
+  });
+
+  it("그 편의 유료 실행이 상한에 닿으면 retry_limit. 원가 없는 실패는 세지 않는다", async () => {
+    const { repo, many } = await fixture();
+    const id = await created(claim(repo, many));
+    // 응답 전 실패 2번(usage 없음) + 유료 실행 3번
+    for (let i = 0; i < 2; i++) await finish(repo, id, 2, "failed", { errorCode: "retryable", usage: null });
+    for (let i = 0; i < 3; i++) await finish(repo, id, 2, "partial", { cost: 0.2, content: { headline: "앞의 글" } });
+    expect(await retry(repo, id, 2)).toBe("retry_limit");
+    expect((await repo.getConversation(id))!.episodes[1].status).toBe("partial");
+    expect(await retry(repo, id, 2, 4)).toBe("started");
+    expect((await repo.getConversation(id))!.episodes[1]).toMatchObject({ status: "running", content: { headline: "앞의 글" } });
+    expect(await retry(repo, id, 2, 4)).toBe("not_startable");
+  });
+
+  it("주간 상한: 최근 7일 원가 + 이번 실행 몫(1편이면 따라 도는 queued 편까지)이 22.5달러를 넘으면 global_limit", async () => {
+    const { repo, many } = await fixture();
+    const id = await created(claim(repo, many));
+    const other = await created(claim(repo, many));
+    await finish(repo, id, 1, "failed", { errorCode: "retryable", usage: null });
+    await finish(repo, id, 2, "failed", { errorCode: "retryable", usage: null });
+    // 다른 대화의 원가로 최근 7일 합을 21.6달러로 만든다
+    await finish(repo, other, 4, "done", { cost: 21.6 });
+    expect(await retry(repo, id, 1)).toBe("global_limit"); // 21.6 + 1.31 × 3/4 (1편 + queued 3·4편) = 22.58
+    expect((await repo.getConversation(id))!.episodes[0].status).toBe("failed");
+    expect(await retry(repo, id, 2)).toBe("started"); // 21.6 + 1.31/4 = 21.93
+  });
+});
+
+describe("memoryRepo partial 다시 쓰기가 실패해도 앞의 글을 남긴다", () => {
+  it("content가 있는 편이 failed로 끝나면 partial·content 그대로·error_code만 바뀐다. 원가는 남긴다", async () => {
+    const { repo, many } = await fixture();
+    const id = await created(claim(repo, many));
+    await finish(repo, id, 2, "partial", { content: { headline: "앞의 글" } });
+    await repo.startEpisode(id, 2);
+    await finish(repo, id, 2, "failed", { errorCode: "invalid_output", cost: 0.4 });
+    expect((await repo.getConversation(id))!.episodes[1]).toMatchObject({
+      status: "partial",
+      content: { headline: "앞의 글" },
+      errorCode: "invalid_output",
+    });
+    expect(await repo.retryEpisode({ id, n: 2, estCost: 1.31, maxRuns: 1 })).toBe("retry_limit");
+  });
+
+  it("content가 없으면 failed 그대로, safety·refused는 덮어쓴다", async () => {
+    const { repo, many } = await fixture();
+    const id = await created(claim(repo, many));
+    await finish(repo, id, 3, "failed", { errorCode: "dispatch" });
+    expect((await repo.getConversation(id))!.episodes[2]).toMatchObject({ status: "failed", content: null });
+    await finish(repo, id, 2, "partial", { content: { headline: "앞의 글" } });
+    await finish(repo, id, 2, "safety");
+    expect((await repo.getConversation(id))!.episodes[1]).toMatchObject({ status: "safety", content: null });
   });
 });
 
@@ -624,10 +692,10 @@ describe("memoryRepo 삭제·공유·피드백", () => {
 });
 
 describe("getRepo", () => {
-  const g = globalThis as { analytalkRepoV2?: AppRepo; analytalkDevRepoV2?: AppRepo };
+  const g = globalThis as { analytalkRepoV3?: AppRepo; analytalkDevRepoV3?: AppRepo };
   afterEach(() => {
-    delete g.analytalkRepoV2;
-    delete g.analytalkDevRepoV2;
+    delete g.analytalkRepoV3;
+    delete g.analytalkDevRepoV3;
   });
 
   it("E2E 모드는 키가 있어도 고정 초대 코드(월 99건)가 든 memoryRepo를 전역에 하나 둔다", async () => {
@@ -637,7 +705,7 @@ describe("getRepo", () => {
     vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_test");
     const repo = getRepo();
     expect(getRepo()).toBe(repo);
-    expect(g.analytalkRepoV2).toBe(repo);
+    expect(g.analytalkRepoV3).toBe(repo);
     const invite = await repo.findInvite(hashCode(E2E_INVITE_CODE));
     expect(await repo.getInvite(invite!.id)).toMatchObject({ revoked: false, monthlyLimit: 99 });
   });

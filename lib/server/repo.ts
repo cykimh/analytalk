@@ -38,6 +38,8 @@ export interface ConversationRow {
 }
 
 export type ClaimOutcome = "created" | "duplicate" | "paused" | "revoked" | "invite_limit" | "global_limit" | "daily_limit";
+/** retry_episode 결과. started면 그 편이 running이 됐다 */
+export type RetryOutcome = "started" | "paused" | "not_startable" | "retry_limit" | "global_limit";
 /** claim_conversation 결과. SQL과 같이 created·duplicate가 아니면 id가 null이다 */
 export type ClaimResult =
   | { id: string; outcome: "created" | "duplicate" }
@@ -54,9 +56,17 @@ export interface AppRepo {
   getConversation(id: string): Promise<ConversationRow | null>;
   /** queued·failed·partial 편을 running으로 바꾸면 true */
   startEpisode(id: string, n: number): Promise<boolean>;
+  /**
+   * [다시 쓰기] 판정(retry_episode): paused → not_startable → retry_limit(그 편의 유료 실행 ≥ maxRuns) →
+   * global_limit(최근 7일 원가 + 평균 원가 ÷ 4 × 이번에 도는 편 수 > 주간 상한) → started(startEpisode)
+   */
+  retryEpisode(a: { id: string; n: number; estCost: number; maxRuns: number }): Promise<RetryOutcome>;
   /** running 편에만 쓴다 */
   saveProgress(id: string, n: number, notes: unknown): Promise<void>;
-  /** 상태와 상관없이 덮어쓴다. usage가 있으면 사용량 원장에 원가를 남긴다(대화가 지워졌어도) */
+  /**
+   * 상태와 상관없이 덮어쓴다. 단 failed인데 앞서 저장한 content가 있으면(partial 다시 쓰기 실패) partial·앞의 content로 두고 errorCode만 바꾼다.
+   * usage가 있으면 사용량 원장에 원가를 남긴다(대화가 지워졌어도)
+   */
   finishEpisode(a: {
     id: string;
     n: number;
@@ -207,7 +217,7 @@ export function memoryRepo(seed: { invites?: { code: string; monthlyLimit: numbe
   /** analytalk.claims. 대화가 지워지면 conversationId만 null이 되고 excluded는 마지막 값으로 굳는다 */
   const claims: { inviteId: string; conversationId: string | null; createdAt: number; excluded: boolean }[] = [];
   /** analytalk.usage_events 중 규칙이 읽는 열 */
-  const usage: { conversationId: string | null; at: number; costUnits: number }[] = [];
+  const usage: { conversationId: string | null; n: number; at: number; costUnits: number }[] = [];
   let pausedUntil: number | null = null;
 
   const live = (c: MemConversation, now: number) => c.expiresAt > now;
@@ -250,7 +260,7 @@ export function memoryRepo(seed: { invites?: { code: string; monthlyLimit: numbe
     return count;
   }
 
-  /** 최근 30일에 만든 대화 중 4편이 모두 끝난 대화의 대화당 원가 평균(1만분의 1달러). 표본 3건 미만이거나 0 이하면 추정값 */
+  /** avg_conversation_cost: 최근 30일에 만든 대화 중 4편이 모두 끝난 대화의 대화당 원가 평균(1만분의 1달러). 표본 3건 미만이거나 0 이하면 추정값 */
   function averageUnits(now: number, estCost: number): number {
     const samples = [...conversations.values()].filter(
       (c) => c.createdAt >= now - 30 * DAY_MS && c.episodes.filter((e) => FINISHED.has(e.status)).length === 4,
@@ -355,6 +365,23 @@ export function memoryRepo(seed: { invites?: { code: string; monthlyLimit: numbe
       return true;
     },
 
+    // retry_episode: claim과 같이 await 없이 한 번에 판정하고 시작한다
+    async retryEpisode(a) {
+      if (!(a.estCost > 0) || !(a.maxRuns >= 1)) throw new Error("[memoryRepo] invalid retry args");
+      const now = Date.now();
+      if (pausedUntil !== null && pausedUntil > now) return "paused";
+      const c = conversations.get(a.id);
+      const e = episodeOf(a.id, a.n);
+      if (!c || !live(c, now) || !e || !STARTABLE.has(e.status)) return "not_startable";
+      if (usage.filter((u) => u.conversationId === a.id && u.n === a.n).length >= a.maxRuns) return "retry_limit";
+      const follow = a.n === 1 ? c.episodes.filter((x) => x.n > 1 && x.status === "queued").length : 0;
+      const weekUnits = sumUnits(usage.filter((u) => u.at > now - 7 * DAY_MS));
+      if (weekUnits + (averageUnits(now, a.estCost) / 4) * (1 + follow) > toUnits(WEEKLY_CAP_USD)) return "global_limit";
+      Object.assign(e, { status: "running", errorCode: null, finishedAt: null, progress: null });
+      syncExcluded(a.id);
+      return "started";
+    },
+
     async saveProgress(id, n, notes) {
       const e = episodeOf(id, n);
       if (e?.status === "running") e.progress = clone(notes);
@@ -366,11 +393,18 @@ export function memoryRepo(seed: { invites?: { code: string; monthlyLimit: numbe
       const c = conversations.get(a.id);
       const e = episodeOf(a.id, a.n);
       if (e) {
-        Object.assign(e, { status: a.status, content: clone(a.content), errorCode: a.errorCode, finishedAt: now });
+        // partial 다시 쓰기가 실패하면 앞의 글을 남긴다(finish_episode와 같다)
+        const keep = a.status === "failed" && e.content != null;
+        Object.assign(e, {
+          status: keep ? "partial" : a.status,
+          content: keep ? e.content : clone(a.content),
+          errorCode: a.errorCode,
+          finishedAt: now,
+        });
         syncExcluded(a.id);
       }
       if (a.usage !== null && typeof a.usage === "object") {
-        usage.push({ conversationId: c ? c.id : null, at: now, costUnits: toUnits(a.cost) });
+        usage.push({ conversationId: c ? c.id : null, n: a.n, at: now, costUnits: toUnits(a.cost) });
       }
     },
 
@@ -537,6 +571,14 @@ function supabaseRepo(db: PrivilegedDb): AppRepo {
       return check("startEpisode", await db.rpc("start_episode", { p_id: id, p_n: n })) === true;
     },
 
+    async retryEpisode(a) {
+      if (!UUID.test(a.id)) return "not_startable";
+      return check(
+        "retryEpisode",
+        await db.rpc("retry_episode", { p_id: a.id, p_n: a.n, p_est_cost: a.estCost, p_max_runs: a.maxRuns }),
+      ) as RetryOutcome;
+    },
+
     async saveProgress(id, n, notes) {
       check("saveProgress", await db.rpc("save_progress", { p_id: id, p_n: n, p_notes: notes }));
     },
@@ -609,14 +651,14 @@ function supabaseRepo(db: PrivilegedDb): AppRepo {
 // ===== 선택 =====
 
 // 개발 서버가 다시 컴파일돼도 memoryRepo가 유지되게 전역에 둔다. 저장소 모양이 바뀌면 키 버전을 올린다
-// V2: getPausedUntil 추가
-const memory = globalThis as unknown as { analytalkRepoV2?: AppRepo; analytalkDevRepoV2?: AppRepo };
+// V2: getPausedUntil 추가, V3: retryEpisode 추가
+const memory = globalThis as unknown as { analytalkRepoV3?: AppRepo; analytalkDevRepoV3?: AppRepo };
 
 /** E2E → 고정 코드 memoryRepo, secret 키 있음 → Supabase, 개발에서 키 없음 → memoryRepo, 프로덕션에서 키 없음 → NotReadyError(503) */
 export function getRepo(): AppRepo {
-  if (isE2E()) return (memory.analytalkRepoV2 ??= memoryRepo({ invites: [{ code: E2E_INVITE_CODE, monthlyLimit: 99 }] }));
+  if (isE2E()) return (memory.analytalkRepoV3 ??= memoryRepo({ invites: [{ code: E2E_INVITE_CODE, monthlyLimit: 99 }] }));
   const db = privilegedDb();
   if (db) return supabaseRepo(db);
   if (process.env.NODE_ENV === "production") throw new NotReadyError("Supabase secret 키가 없다");
-  return (memory.analytalkDevRepoV2 ??= memoryRepo());
+  return (memory.analytalkDevRepoV3 ??= memoryRepo());
 }
