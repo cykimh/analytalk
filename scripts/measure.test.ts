@@ -1,8 +1,20 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
-import { buildPayload } from "@/lib/payload/build";
+import { INPUT_TOKEN_BUDGET, PROMPT_RESERVE_TOKENS, TOKENS_PER_CHAR } from "@/lib/config";
+import { buildPayload, payloadTokens } from "@/lib/payload/build";
 import type { ChatMessage } from "@/lib/parse/parse";
-import { autoNames, judge, measureRun, measureTokens, parseArgs, percentile, summarize, type RunMeasure } from "./measure";
+import { syntheticGroupChat } from "@/test/syntheticChat";
+import {
+  autoNames,
+  judge,
+  measurePayload,
+  measureRun,
+  measureTokens,
+  parseArgs,
+  percentile,
+  summarize,
+  type RunMeasure,
+} from "./measure";
 
 describe("parseArgs", () => {
   it("파일만 주면 기본값: group, 1회, 실제 실행", () => {
@@ -34,6 +46,21 @@ describe("autoNames", () => {
     const r = autoNames({ participants: ["철수", "영희"], systemNames: ["영희", "민수"], messages: msgs });
     expect(r.map).toEqual({ 철수: "P1", 영희: "P2", 민수: "P3" });
     expect(r.me).toBe("P1");
+  });
+});
+
+describe("measurePayload", () => {
+  const messages = syntheticGroupChat(40, 60);
+
+  it("통계 요약과 프롬프트 몫까지 입력 예산 안에 들고, transcript가 있다", () => {
+    const p = measurePayload(messages, "멤버01", "group");
+    expect(payloadTokens(p, TOKENS_PER_CHAR).total + PROMPT_RESERVE_TOKENS).toBeLessThanOrEqual(INPUT_TOKEN_BUDGET);
+    expect(p.msgSent).toBeGreaterThan(0);
+    expect(p).toMatchObject({ me: "멤버01", concept: "group", kind: "group" });
+  });
+
+  it("couple 컨셉은 kind pair", () => {
+    expect(measurePayload(messages, "멤버01", "couple")).toMatchObject({ concept: "couple", kind: "pair" });
   });
 });
 

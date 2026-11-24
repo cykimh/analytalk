@@ -5,6 +5,12 @@ export const EPISODE_DEADLINE_MS = 270_000; // 편당 마감 (maxDuration = 300)
 export const MAX_PAYLOAD_BYTES = 1_500_000; // 페이로드 상한 1.5MB
 export const INPUT_TOKEN_BUDGET = 128_000; // 입력 예산 (M0 실측 전 기본값)
 export const TOKENS_PER_CHAR = 1.0;
+export const PROMPT_RESERVE_TOKENS = 6000; // system 프롬프트·편별 지시 몫(토큰 어림). 정확한 값은 countTokens로 확인한다
+
+// 모델에게 보여 주는 통계 요약(statsForPrompt). 서버의 자리표시자 해석은 전체 stats를 쓴다
+export const PROMPT_STATS_MAX_PEOPLE = 12;
+export const PROMPT_STATS_MAX_MONTHS = 12;
+export const PROMPT_STATS_MAX_CROSSED = 20;
 
 // 보관·한도·예산
 export const RETENTION_DAYS = 30;

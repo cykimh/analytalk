@@ -1,8 +1,9 @@
 // AI용 페이로드를 만들고 읽는다. 이름 정리(applyDisplayNames)를 거친 메시지만 받는다. DOM 없이 브라우저(Worker)·node 공용.
 // 줄 형식(KST): 날짜가 바뀌면 `# YYYY-MM-DD`, 메시지는 `m<id>|MM-DD HH:mm|<표시이름>|<본문>`
-import { ANCHOR_BUDGET_SHARE, ANCHOR_BUSY_DAYS, ANCHOR_FIRST_N } from "@/lib/config";
+import { ANCHOR_BUDGET_SHARE, ANCHOR_BUSY_DAYS, ANCHOR_FIRST_N, PROMPT_RESERVE_TOKENS } from "@/lib/config";
 import type { ChatMessage, MsgKind } from "@/lib/parse/parse";
 import { type ChatStats, computeStats } from "@/lib/stats/compute";
+import { statsForPrompt } from "@/lib/stats/view";
 import { type MaskCounts, type MaskKind, maskPII } from "./mask";
 import { isSensitive } from "./sensitive";
 
@@ -16,19 +17,20 @@ export interface Payload {
   members: string[];
   /** 첫·마지막 메시지의 KST 날짜 YYYY-MM-DD */
   period: { start: string; end: string };
-  /** transcript 첫 메시지 시각(ISO +09:00). transcript가 비면 마지막 메시지 시각 */
+  /** transcript 첫 메시지 시각(ISO +09:00) */
   cutoffAt: string;
   /** 시스템 메시지를 뺀 전체 메시지 수 */
   msgTotal: number;
   /** transcript에 담은 메시지 수(anchors 제외) */
   msgSent: number;
+  /** 전체 통계. 서버의 자리표시자 해석이 쓴다. 모델에게는 statsForPrompt로 줄여 보낸다 */
   stats: ChatStats;
   /**
    * transcript 앞의 메시지 중 첫 ANCHOR_FIRST_N개와 메시지 수 상위 ANCHOR_BUSY_DAYS일. tokenBudget × anchorShare 안에서
    * 묶음마다 앞에서부터 담는다. 대화 전체가 tokenBudget에 들어가면 빈 문자열이다
    */
   anchors: string;
-  /** 마지막 메시지까지 이어지는 최근 구간 */
+  /** 마지막 메시지까지 이어지는 최근 구간. 1건 이상이고, 가장 최근 메시지가 예산보다 길면 그 본문을 자른(끝에 …) 한 줄이다 */
   transcript: string;
   /** anchors·transcript에서 가린 개수. 키: phone·email·account·rrn·url·sensitive */
   maskCounts: Record<string, number>;
@@ -73,17 +75,21 @@ export function payloadIndex(p: Payload): Map<string, { sender: string; at: stri
 /** 덩어리 하나의 추정 토큰. 줄마다 (글자 수 + 1) × tokensPerChar이므로 (전체 글자 수 + 1) × tokensPerChar, 빈 덩어리는 0 */
 const blockTokens = (block: string, tokensPerChar: number) => (block === "" ? 0 : (block.length + 1) * tokensPerChar);
 
+/** 모델에게 보이는 stats(statsForPrompt)의 추정 토큰. JSON 글자 수로 어림한다 */
+const promptStatsTokens = (stats: ChatStats, tokensPerChar: number) =>
+  JSON.stringify(statsForPrompt(stats)).length * tokensPerChar;
+
 /**
  * 페이로드의 추정 토큰(글자 수 × tokensPerChar).
  * - text: anchors + transcript. buildPayload가 tokenBudget 안으로 맞추는 몫이다
- * - total: text + stats(JSON 글자 수로 어림). system 프롬프트와 편별 지시는 들어 있지 않다
+ * - total: text + 모델에게 보이는 stats(statsForPrompt). system 프롬프트와 편별 지시는 들어 있지 않다
  */
 export function payloadTokens(
   p: Pick<Payload, "stats" | "anchors" | "transcript">,
   tokensPerChar: number,
 ): { text: number; total: number } {
   const text = blockTokens(p.anchors, tokensPerChar) + blockTokens(p.transcript, tokensPerChar);
-  return { text, total: text + JSON.stringify(p.stats).length * tokensPerChar };
+  return { text, total: text + promptStatsTokens(p.stats, tokensPerChar) };
 }
 
 const MEDIA: Record<Exclude<MsgKind, "text">, string> = {
@@ -112,6 +118,8 @@ function kst(ts: number): { day: string; time: string; iso: string } {
 type ChatLine = ChatMessage & { sender: string };
 interface Rendered {
   day: string;
+  /** 줄 머리 `m<id>|MM-DD HH:mm|<표시이름>|`. line = head + 본문 */
+  head: string;
   line: string;
   masked: MaskCounts | null;
   sensitive: boolean;
@@ -132,7 +140,22 @@ function render(m: ChatLine): Rendered {
     body = r.text;
     masked = r.counts;
   }
-  return { day, line: `m${m.id}|${day.slice(5)} ${time}|${m.sender}|${body}`, masked, sensitive };
+  const head = `m${m.id}|${day.slice(5)} ${time}|${m.sender}|`;
+  return { day, head, line: head + body, masked, sensitive };
+}
+
+// 자른 본문 끝에서 뗄 글자. 가리기 규칙(링크·이메일·숫자 묶음)의 머리와 끝이 이 글자들이라, 이것들을 떼면
+// 잘린 앞부분은 가리기를 다시 해도 바뀌지 않고 뒤에 …를 붙여도 새로 가릴 것이 생기지 않는다(validatePayload의 가리기 누락 검사)
+const CUT_TAIL = /[\w.+\-@:/]+$/;
+
+/**
+ * 가린 뒤의 본문 앞 n글자(UTF-16)에서 CUT_TAIL을 떼고 …를 붙인 줄. 서로게이트 쌍은 가르지 않는다.
+ * 가린 개수(masked)는 자르기 전 그대로 둔다
+ */
+function cutLine(r: Rendered, n: number): Rendered {
+  let body = r.line.slice(r.head.length, r.head.length + n);
+  if (/[\uD800-\uDBFF]$/.test(body)) body = body.slice(0, -1);
+  return { ...r, line: `${r.head}${body.replace(CUT_TAIL, "")}…` };
 }
 
 /** 날짜가 바뀔 때마다 헤더를 넣어 줄을 잇는다 */
@@ -146,16 +169,7 @@ function joinBlock(items: Rendered[]): string {
   return out.join("\n");
 }
 
-/**
- * 표시 이름으로 바뀐 메시지로 페이로드를 만든다. stats는 시스템 메시지를 뺀 전체 메시지로 계산한다.
- * tokenBudget은 anchors + transcript 몫이다(payloadTokens(p).text ≤ tokenBudget, 줄바꿈과 날짜 헤더 포함).
- * stats·system 프롬프트 몫은 호출하는 쪽이 빼고 넘긴다. 예산을 줄여 다시 만들면 이 몫도 그만큼 줄어든다.
- * - 대화 전체가 tokenBudget에 들어가면 모두 transcript이고 anchors는 비어 있다
- * - 아니면 anchors 몫(tokenBudget × anchorShare)을 떼어 두고, transcript를 마지막 메시지부터 거꾸로 채운다.
- *   anchors는 첫 N개와 상위 날짜를 묶음마다 공평하게 나눠 담고, anchors가 남긴 몫은 transcript가 마저 쓴다
- * 시스템 메시지를 뺀 메시지가 없으면 던진다.
- */
-export function buildPayload(input: {
+type BuildInput = {
   messages: ChatMessage[];
   me: string;
   concept: Payload["concept"];
@@ -164,13 +178,48 @@ export function buildPayload(input: {
   tokensPerChar: number;
   /** anchors가 tokenBudget에서 쓸 수 있는 비율. 기본 ANCHOR_BUDGET_SHARE */
   anchorShare?: number;
-}): Payload {
-  const { me, concept, kind, tokenBudget, tokensPerChar, anchorShare = ANCHOR_BUDGET_SHARE } = input;
-  const chat = input.messages
-    .filter((m): m is ChatLine => m.sender !== null && m.kind !== "system")
-    .sort((a, b) => a.id - b.id);
+};
+
+/** buildPayloadForBudget이 anchors + transcript에 남겨야 하는 최소 몫 */
+const MIN_TEXT_BUDGET = 1000;
+
+/** 시스템 메시지를 뺀 메시지(id 순서). 없으면 던진다 */
+function chatLines(messages: ChatMessage[]): ChatLine[] {
+  const chat = messages.filter((m): m is ChatLine => m.sender !== null && m.kind !== "system").sort((a, b) => a.id - b.id);
   if (chat.length === 0) throw new Error("보낼 메시지가 없다");
+  return chat;
+}
+
+/**
+ * 표시 이름으로 바뀐 메시지로 페이로드를 만든다. stats는 시스템 메시지를 뺀 전체 메시지로 계산한다.
+ * tokenBudget은 anchors + transcript 몫이다(payloadTokens(p).text ≤ tokenBudget, 줄바꿈과 날짜 헤더 포함).
+ * stats·system 프롬프트 몫은 호출하는 쪽이 빼고 넘긴다(buildPayloadForBudget). 예산을 줄여 다시 만들면 이 몫도 그만큼 줄어든다.
+ * - 대화 전체가 tokenBudget에 들어가면 모두 transcript이고 anchors는 비어 있다
+ * - 아니면 anchors 몫(tokenBudget × anchorShare)을 떼어 두고, transcript를 마지막 메시지부터 거꾸로 채운다.
+ *   anchors는 첫 N개와 상위 날짜를 묶음마다 공평하게 나눠 담고, anchors가 남긴 몫은 transcript가 마저 쓴다
+ * - 가장 최근 메시지 한 줄조차 tokenBudget보다 길면 그 본문을 잘라(끝에 …) 넣는다. transcript는 늘 1건 이상이다
+ * 시스템 메시지를 뺀 메시지가 없거나, 잘라도 날짜 헤더와 줄 머리조차 안 들어가는 tokenBudget이면 던진다.
+ */
+export function buildPayload(input: BuildInput): Payload {
+  const chat = chatLines(input.messages);
+  return assemble(chat, computeStats(chat), input);
+}
+
+/**
+ * 입력 예산 전체(inputBudget)에서 PROMPT_RESERVE_TOKENS와 모델에게 보이는 stats(statsForPrompt) 몫을 빼고,
+ * 남은 몫을 tokenBudget으로 buildPayload와 같이 만든다(stats는 한 번만 센다). 남은 몫이 1,000 미만이면 던진다
+ */
+export function buildPayloadForBudget(input: Omit<BuildInput, "tokenBudget"> & { inputBudget: number }): Payload {
+  const { inputBudget, ...rest } = input;
+  const chat = chatLines(rest.messages);
   const stats = computeStats(chat);
+  const tokenBudget = inputBudget - PROMPT_RESERVE_TOKENS - promptStatsTokens(stats, rest.tokensPerChar);
+  if (tokenBudget < MIN_TEXT_BUDGET) throw new Error("입력 예산이 모자라다: 통계·프롬프트 몫을 빼면 대화에 쓸 몫이 1,000 미만이다");
+  return assemble(chat, stats, { ...rest, tokenBudget });
+}
+
+function assemble(chat: ChatLine[], stats: ChatStats, input: BuildInput): Payload {
+  const { me, concept, kind, tokenBudget, tokensPerChar, anchorShare = ANCHOR_BUDGET_SHARE } = input;
 
   const cache = new Map<number, Rendered>();
   const rendered = (i: number): Rendered => {
@@ -180,6 +229,18 @@ export function buildPayload(input: {
   };
   const lineCost = (r: Rendered) => (r.line.length + 1) * tokensPerChar;
   const HEADER_COST = ("# YYYY-MM-DD".length + 1) * tokensPerChar;
+
+  // 가장 최근 메시지 한 줄(과 날짜 헤더)조차 예산보다 길면 본문을 잘라 둔다. 아래 채우기는 잘린 줄을 쓴다.
+  // 본문 글자 수 n은 예산에서 헤더·줄 머리·…·줄바꿈을 뺀 값이고, 소수점 오차로 넘치면 한 글자씩 줄인다
+  const lastIdx = chat.length - 1;
+  const fitsAlone = (r: Rendered) => lineCost(r) + HEADER_COST <= tokenBudget;
+  const newest = rendered(lastIdx);
+  if (!fitsAlone(newest)) {
+    let n = Math.floor((tokenBudget - HEADER_COST) / tokensPerChar) - 1 - newest.head.length - "…".length;
+    while (n >= 0 && !fitsAlone(cutLine(newest, n))) n--;
+    if (n < 0) throw new Error("예산이 모자라다: 날짜 헤더와 줄 머리조차 들어가지 않는다");
+    cache.set(lastIdx, cutLine(newest, n));
+  }
 
   // transcript = chat[start..]. 거꾸로 늘리며, 날짜가 바뀌면 헤더 줄 몫도 센다(used는 transcript의 blockTokens와 같다)
   let start = chat.length;
@@ -276,7 +337,7 @@ export function buildPayload(input: {
     me,
     members: [...new Set(chat.map((m) => m.sender))],
     period: { start: kst(first).day, end: kst(last).day },
-    cutoffAt: kst(start < chat.length ? chat[start].ts : last).iso,
+    cutoffAt: kst(chat[start].ts).iso,
     msgTotal: stats.total,
     msgSent: sentIdx.length,
     stats,

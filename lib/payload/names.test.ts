@@ -38,6 +38,19 @@ describe("applyDisplayNames: 이름 정리 (Review Focus 5)", () => {
     expect(apply(msgs, { 김민지: bad, 민지폰: "P2", 이철수: "P3" })).toBe("invalid");
   });
 
+  it.each(["constructor", "__proto__", "toString", "hasOwnProperty", " valueOf "])(
+    "Object.prototype에 있는 이름 %j → invalid (통계 맵의 키가 된다)",
+    (name) => {
+      expect(checkDisplayName(name)).toBe("invalid");
+      expect(apply(msgs, { 김민지: name, 민지폰: "P2", 이철수: "P3" })).toBe("invalid");
+    },
+  );
+
+  it("Object.prototype 이름이 들어 있기만 한 이름은 받는다", () => {
+    expect(checkDisplayName("constructor2")).toBeNull();
+    expect(checkDisplayName("Constructor")).toBeNull();
+  });
+
   it("20자와 이모지 20개는 받는다", () => {
     expect(checkDisplayName("가".repeat(20))).toBeNull();
     expect(checkDisplayName("😀".repeat(20))).toBeNull();

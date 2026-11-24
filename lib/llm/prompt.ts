@@ -7,6 +7,7 @@ import type { BetaJSONOutputFormat, BetaMessageStreamParams } from "@anthropic-a
 import { DEFAULT_MODEL, MAX_QUOTES_PER_EPISODE, NOTE_MAX_CHARS } from "@/lib/config";
 import type { Payload } from "@/lib/payload/build";
 import { STAT_PATHS } from "@/lib/stats/paths";
+import { type PromptStats, statsForPrompt } from "@/lib/stats/view";
 import { CONCEPTS } from "./concepts";
 import { episodeSchema } from "./schema";
 
@@ -84,7 +85,15 @@ const KIND_LABEL: Record<Payload["kind"], string> = { pair: "1:1", group: "단�
 
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
 
-function episodeInstruction(p: Payload, n: 1 | 2 | 3 | 4, prevHeadlines: string[]): string {
+/** 통계 요약에서 뺀 것이 있으면 그 안내 줄 */
+function omittedLines(stats: PromptStats): string[] {
+  const lines: string[] = [];
+  if (stats.omitted.people > 0) lines.push(`통계에는 메시지가 많은 ${Object.keys(stats.byPerson).length}명만 있다.`);
+  if (stats.omitted.months > 0) lines.push(`stats.monthly에는 최근 ${Object.keys(stats.monthly).length}개월만 있다.`);
+  return lines;
+}
+
+function episodeInstruction(p: Payload, stats: PromptStats, n: 1 | 2 | 3 | 4, prevHeadlines: string[]): string {
   const concept = CONCEPTS[p.concept];
   const guides = EPISODE_GUIDES[p.concept];
   const plan = concept.episodes.map((title, i) => `${i + 1}편 「${title}」: ${guides[i]}`);
@@ -94,6 +103,7 @@ function episodeInstruction(p: Payload, n: 1 | 2 | 3 | 4, prevHeadlines: string[
     `컨셉: ${concept.title}`,
     `방: ${KIND_LABEL[p.kind]} · 업로더(나): ${p.me} · 참여자 ${p.members.length}명: ${p.members.join(", ")}`,
     `기간: ${p.period.start}~${p.period.end}, 전체 ${p.msgTotal}개 중 최근 ${p.msgSent}개와 발췌를 보냈다.`,
+    ...omittedLines(stats),
     "",
     "연재 계획:",
     ...plan,
@@ -111,9 +121,13 @@ function episodeMaxTokens(): number {
   return Number.isInteger(v) && v > 0 ? v : DEFAULT_EPISODE_MAX_TOKENS;
 }
 
-/** n편 요청. prevHeadlines는 앞 편(1..n-1)의 검증된 헤드라인 */
+/**
+ * n편 요청. prevHeadlines는 앞 편(1..n-1)의 검증된 헤드라인.
+ * <stats>에는 모델용 요약(statsForPrompt)을 넣는다. 자리표시자 해석(validateEpisode)은 전체 p.stats를 쓴다
+ */
 export function buildRequest(p: Payload, n: 1 | 2 | 3 | 4, prevHeadlines: string[]): BetaMessageStreamParams {
-  const data = `<stats>${JSON.stringify(p.stats)}</stats><anchors>${p.anchors}</anchors><conversation>${p.transcript}</conversation>`;
+  const stats = statsForPrompt(p.stats);
+  const data = `<stats>${JSON.stringify(stats)}</stats><anchors>${p.anchors}</anchors><conversation>${p.transcript}</conversation>`;
   return {
     model: process.env.ANTHROPIC_MODEL || DEFAULT_MODEL,
     max_tokens: episodeMaxTokens(),
@@ -124,7 +138,7 @@ export function buildRequest(p: Payload, n: 1 | 2 | 3 | 4, prevHeadlines: string
     system: SYSTEM_PROMPT,
     messages: [
       { role: "user", content: [{ type: "text", text: data, cache_control: { type: "ephemeral" } }] },
-      { role: "system", content: episodeInstruction(p, n, prevHeadlines) },
+      { role: "system", content: episodeInstruction(p, stats, n, prevHeadlines) },
     ],
   };
 }

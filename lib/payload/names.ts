@@ -9,6 +9,8 @@ export type NameError = "empty" | "invalid" | "collision" | "unmapped";
 const NAME_MAX = 20;
 // 줄 형식(|), 통계 경로(.), 자리표시자({ }), 프롬프트 태그(< >)를 깨는 글자와 줄바꿈
 const FORBIDDEN = /[|.{}<>\r\n\u2028\u2029]/;
+// 통계 맵(Record<이름, …>)의 키가 되면 Object.prototype 속성과 겹치는 이름(constructor·__proto__·toString 등)
+const PROTOTYPE_NAMES = new Set(Object.getOwnPropertyNames(Object.prototype));
 
 // 한글 이름 뒤에 붙어도 이름으로 보는 말(이 말로 시작하면 뒤에 한글이 더 붙어도 된다).
 // '수'로 시작하는 말은 넣지 않는다("민지수"는 다른 단어로 본다). 앞 글자가 같은 말(이었→이, 야말로→야, 아빠→아)은 앞 글자로 잡힌다
@@ -60,11 +62,11 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const fold = (s: string) => s.toLowerCase();
 const byLengthDesc = (a: string, b: string) => [...b].length - [...a].length;
 
-/** 표시 이름 하나의 문제. 앞뒤 공백을 뗀 1~20자(코드 포인트)이고 금지 문자가 없으면 null */
+/** 표시 이름 하나의 문제. 앞뒤 공백을 뗀 1~20자(코드 포인트)이고 금지 문자가 없고 Object.prototype 속성 이름이 아니면 null */
 export function checkDisplayName(name: string): "empty" | "invalid" | null {
   const t = name.trim();
   if (t === "") return "empty";
-  if ([...t].length > NAME_MAX || FORBIDDEN.test(t)) return "invalid";
+  if ([...t].length > NAME_MAX || FORBIDDEN.test(t) || PROTOTYPE_NAMES.has(t)) return "invalid";
   return null;
 }
 

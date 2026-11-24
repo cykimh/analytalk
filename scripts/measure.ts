@@ -2,7 +2,7 @@
 //
 //   pnpm measure <샘플파일> [--concept group|couple] [--runs 2] [--dry-run]
 //
-// 파싱 → 표시 이름 자동 부여(P1…) → buildPayload → countTokens → 1편 실행, 그 스트림 시작에서 2~4편 병렬 실행.
+// 파싱 → 표시 이름 자동 부여(P1…) → buildPayloadForBudget → countTokens → 1편 실행, 그 스트림 시작에서 2~4편 병렬 실행.
 // --dry-run은 페이로드를 만들고 토큰 추정치를 찍은 뒤 멈춘다(API 호출·파일 쓰기 없음, 키 불필요).
 // 출력은 숫자뿐이다: 대화 내용·이름·파일 이름·모델 원문은 찍지도 저장하지도 않는다.
 // 결과 JSON은 ~/Developer/analytalk-samples/measure-<ts>.json (저장소 밖)에 쓴다.
@@ -12,14 +12,14 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { INPUT_TOKEN_BUDGET, TOKENS_PER_CHAR } from "../lib/config";
+import { INPUT_TOKEN_BUDGET, PROMPT_RESERVE_TOKENS, TOKENS_PER_CHAR } from "../lib/config";
 import { estimateCostUsd } from "../lib/llm/cost";
 import { buildRequest } from "../lib/llm/prompt";
 import { runEpisode } from "../lib/llm/stream";
 import { validateEpisode } from "../lib/llm/validate";
 import { applyDisplayNames, type NameMap } from "../lib/payload/names";
-import { buildPayload, type Payload, payloadIndex, payloadTokens } from "../lib/payload/build";
-import { parseExport } from "../lib/parse/parse";
+import { buildPayloadForBudget, type Payload, payloadIndex, payloadTokens } from "../lib/payload/build";
+import { type ChatMessage, parseExport } from "../lib/parse/parse";
 import { readUploads } from "../lib/parse/uploads";
 
 // ── 인자 ──
@@ -190,11 +190,16 @@ const skipped = (n: number): EpisodeMeasure => ({
 
 // ── 진입점 ──
 
-/** system 프롬프트와 편 지시 몫(토큰 어림). 정확한 값은 countTokens로 확인한다 */
-const PROMPT_RESERVE_TOKENS = 6000;
-
-function build(messages: Parameters<typeof buildPayload>[0]["messages"], me: string, a: Args, budget: number): Payload {
-  return buildPayload({ messages, me, concept: a.concept, kind: a.concept === "couple" ? "pair" : "group", tokenBudget: budget, tokensPerChar: TOKENS_PER_CHAR });
+/** 입력 예산(INPUT_TOKEN_BUDGET)에서 통계 요약·프롬프트 몫(PROMPT_RESERVE_TOKENS)을 빼고 맞춘 페이로드 */
+export function measurePayload(messages: ChatMessage[], me: string, concept: Args["concept"]): Payload {
+  return buildPayloadForBudget({
+    messages,
+    me,
+    concept,
+    kind: concept === "couple" ? "pair" : "group",
+    inputBudget: INPUT_TOKEN_BUDGET,
+    tokensPerChar: TOKENS_PER_CHAR,
+  });
 }
 
 async function main(): Promise<void> {
@@ -206,13 +211,11 @@ async function main(): Promise<void> {
   const named = applyDisplayNames(parsed.messages, map, parsed.systemNames);
   if (!named.ok) throw new Error(`이름 부여 실패: ${named.reason}`);
 
-  // stats·system 프롬프트 몫을 빼고 입력 예산에 맞춘다
-  let payload = build(named.messages, me, args, INPUT_TOKEN_BUDGET);
-  const t = payloadTokens(payload, TOKENS_PER_CHAR);
-  const overhead = t.total - t.text + PROMPT_RESERVE_TOKENS;
-  payload = build(named.messages, me, args, INPUT_TOKEN_BUDGET - overhead);
+  const payload = measurePayload(named.messages, me, args.concept);
   const est = payloadTokens(payload, TOKENS_PER_CHAR);
-  console.log(`메시지 ${payload.msgTotal}건, 보낸 ${payload.msgSent}건, 추정 토큰 ${est.total}(본문 ${est.text}), 예산 ${INPUT_TOKEN_BUDGET}`);
+  console.log(
+    `메시지 ${payload.msgTotal}건, 보낸 ${payload.msgSent}건, 추정 토큰 ${est.total}(본문 ${est.text}) + 프롬프트 몫 ${PROMPT_RESERVE_TOKENS}, 예산 ${INPUT_TOKEN_BUDGET}`,
+  );
   if (args.dryRun) return;
 
   const key = process.env.ANTHROPIC_API_KEY;

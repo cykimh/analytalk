@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/lib/parse/parse";
-import { ANCHOR_BUDGET_SHARE } from "@/lib/config";
-import { buildPayload, payloadIndex, payloadTokens } from "./build";
+import { ANCHOR_BUDGET_SHARE, PROMPT_RESERVE_TOKENS } from "@/lib/config";
+import { computeStats } from "@/lib/stats/compute";
+import { statsForPrompt } from "@/lib/stats/view";
+import { syntheticGroupChat } from "@/test/syntheticChat";
+import { buildPayload, buildPayloadForBudget, payloadIndex, payloadTokens } from "./build";
 import { applyDisplayNames, type NameMap } from "./names";
+import { validatePayload } from "./validate";
 
 const MIN = 60_000;
 /** KST 벽시계 → UTC epoch ms */
@@ -178,7 +182,7 @@ describe("buildPayload", () => {
       expect(text).toBeLessThanOrEqual(budget);
       expect(text).toBeGreaterThan(budget * 0.95);
       expect(tokens(p.anchors)).toBeLessThanOrEqual(budget * ANCHOR_BUDGET_SHARE);
-      expect(total).toBe(text + JSON.stringify(p.stats).length);
+      expect(total).toBe(text + JSON.stringify(statsForPrompt(p.stats)).length);
       expect(text).toBeLessThan(prevText);
       // 첫 대화와 상위 3일이 모두 조금씩 들어 있다
       const anchored = ids(p.anchors);
@@ -193,6 +197,102 @@ describe("buildPayload", () => {
 
   it("시스템 메시지뿐이면 던진다", () => {
     expect(() => build(chat([[null, kst(2026, 10, 1, 8), "P1님이 들어왔습니다."]]))).toThrow("보낼 메시지가 없다");
+  });
+});
+
+describe("buildPayload: 마지막 메시지 한 줄이 예산보다 길 때", () => {
+  const MSG = /^m(\d+)\|\d{2}-\d{2} \d{2}:\d{2}\|[^|]+\|(.*)$/;
+  /** transcript의 메시지 줄 본문들 */
+  const bodies = (block: string) => lines(block).flatMap((l) => MSG.exec(l)?.slice(2) ?? []);
+  const group = (messages: ChatMessage[], tokenBudget: number) =>
+    buildPayload({ messages, me: "P1", concept: "group", kind: "group", tokenBudget, tokensPerChar: 1 });
+
+  it("5000자 메시지 1건, 예산 1,000: 본문을 잘라 …로 끝내고 transcript에 1건 넣는다", () => {
+    const text = "오늘 있었던 일을 길게 적어 볼게 ".repeat(300).slice(0, 5000);
+    const p = group(chat([["P1", kst(2026, 10, 1, 9), text]]), 1000);
+    expect(p.msgSent).toBe(1);
+    expect(validatePayload(p).ok).toBe(true);
+    expect(lines(p.transcript).at(-1)).toMatch(/…$/);
+    expect(text.startsWith(bodies(p.transcript)[0].slice(0, -1))).toBe(true);
+    expect(payloadTokens(p, 1).text).toBeLessThanOrEqual(1000);
+    expect(payloadTokens(p, 1).text).toBeGreaterThan(950);
+  });
+
+  it("앞에 메시지가 있어도 가장 최근 메시지를 잘라 넣는다", () => {
+    const rows: Raw[] = Array.from({ length: 50 }, (_, i) => [i % 2 ? "P2" : "P1", kst(2026, 10, 1, 9, i), "짧은 말"]);
+    rows.push(["P2", kst(2026, 10, 1, 10), "가".repeat(5000)]);
+    const p = group(chat(rows), 1000);
+    expect(ids(p.transcript)).toEqual([50]);
+    expect(validatePayload(p).ok).toBe(true);
+    expect(payloadTokens(p, 1).text).toBeLessThanOrEqual(1000);
+  });
+
+  it("자른 끝이 가릴 모양(숫자 10~16자리, www., ://)이 되지 않게 그 꼬리를 뗀다", () => {
+    // 17자리 넘는 숫자, 뒤가 띄어진 www.·https:// 는 원문에서는 가리지 않는다. 자른 위치를 조금씩 옮겨 본다
+    const tails = ["1".repeat(40), "12-34-56-78-90-12-34-56", " www. 다음 말", " https:// 다음 말"];
+    for (const tail of tails) {
+      for (let k = 0; k < 30; k++) {
+        const p = group(chat([["P1", kst(2026, 10, 1, 9), "가".repeat(940 + k) + tail + "나".repeat(200)]]), 1000);
+        const r = validatePayload(p);
+        expect([tail, k, r.ok ? "ok" : r.error]).toEqual([tail, k, "ok"]);
+        expect(bodies(p.transcript)[0]).toMatch(/…$/);
+      }
+    }
+  });
+
+  it("잘라도 날짜 헤더와 줄 머리조차 안 들어가는 예산이면 던진다", () => {
+    expect(() => group(chat([["P1", kst(2026, 10, 1, 9), "가".repeat(100)]]), 20)).toThrow();
+  });
+});
+
+describe("payloadTokens", () => {
+  it("total = text + 모델에게 보이는 stats(statsForPrompt) JSON 글자 수 × tokensPerChar", () => {
+    const messages = syntheticGroupChat(20, 18);
+    const p = buildPayload({ messages, me: "멤버01", concept: "group", kind: "group", tokenBudget: 5000, tokensPerChar: 1 });
+    const view = JSON.stringify(statsForPrompt(p.stats)).length;
+    const text = tokens(p.anchors) + tokens(p.transcript);
+    expect(view).toBeLessThan(JSON.stringify(p.stats).length);
+    expect(payloadTokens(p, 1)).toEqual({ text, total: text + view });
+    expect(payloadTokens(p, 0.5).total).toBe((text + view) * 0.5);
+  });
+});
+
+describe("buildPayloadForBudget", () => {
+  const messages = syntheticGroupChat(40, 60);
+  const statsChars = JSON.stringify(statsForPrompt(computeStats(messages))).length;
+  const forBudget = (inputBudget: number, tokensPerChar = 1) =>
+    buildPayloadForBudget({ messages, me: "멤버01", concept: "group", kind: "group", inputBudget, tokensPerChar });
+
+  it("40명 × 60개월, 입력 예산 128,000: 통계 요약·프롬프트 몫까지 예산 안이고 transcript가 있다", () => {
+    const p = forBudget(128_000);
+    const { text, total } = payloadTokens(p, 1);
+    expect(total + PROMPT_RESERVE_TOKENS).toBeLessThanOrEqual(128_000);
+    expect(total + PROMPT_RESERVE_TOKENS).toBeGreaterThan(128_000 * 0.97);
+    expect(text).toBeLessThanOrEqual(128_000 - PROMPT_RESERVE_TOKENS - statsChars);
+    expect(p.msgSent).toBeGreaterThan(0);
+    expect(validatePayload(p).ok).toBe(true);
+    // 서버의 자리표시자 해석용으로 페이로드에는 전체 stats가 그대로 있다
+    expect(p.stats).toStrictEqual(computeStats(messages));
+    expect(Object.keys(p.stats.byPerson)).toHaveLength(40);
+  });
+
+  it("tokensPerChar가 1이 아니어도 예산 안이다", () => {
+    const p = forBudget(128_000, 0.8);
+    expect(payloadTokens(p, 0.8).total + PROMPT_RESERVE_TOKENS).toBeLessThanOrEqual(128_000);
+    expect(payloadTokens(p, 0.8).total + PROMPT_RESERVE_TOKENS).toBeGreaterThan(128_000 * 0.97);
+  });
+
+  it("anchors+transcript 몫이 1,000 미만이면 던진다", () => {
+    const edge = PROMPT_RESERVE_TOKENS + statsChars + 1000;
+    expect(payloadTokens(forBudget(edge), 1).text).toBeLessThanOrEqual(1000);
+    expect(() => forBudget(edge - 1)).toThrow();
+  });
+
+  it("시스템 메시지뿐이면 buildPayload와 같이 던진다", () => {
+    const only = chat([[null, kst(2026, 10, 1, 8), "P1님이 들어왔습니다."]]);
+    expect(() =>
+      buildPayloadForBudget({ messages: only, me: "P1", concept: "group", kind: "group", inputBudget: 128_000, tokensPerChar: 1 }),
+    ).toThrow("보낼 메시지가 없다");
   });
 });
 

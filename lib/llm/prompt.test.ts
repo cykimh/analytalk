@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
-import { DEFAULT_MODEL } from "@/lib/config";
+import { DEFAULT_MODEL, PROMPT_STATS_MAX_PEOPLE } from "@/lib/config";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { buildPayload, type Payload } from "@/lib/payload/build";
 import { STAT_PATHS } from "@/lib/stats/paths";
+import { statsForPrompt } from "@/lib/stats/view";
+import { syntheticGroupChat } from "@/test/syntheticChat";
 import { CONCEPTS } from "./concepts";
 import { buildRequest, DEFAULT_EPISODE_MAX_TOKENS, PROMPT_VERSION } from "./prompt";
 
@@ -102,10 +104,37 @@ describe("buildRequest", () => {
     expect(first.content).toEqual([
       {
         type: "text",
-        text: `<stats>${JSON.stringify(p.stats)}</stats><anchors>${p.anchors}</anchors><conversation>${p.transcript}</conversation>`,
+        text: `<stats>${JSON.stringify(statsForPrompt(p.stats))}</stats><anchors>${p.anchors}</anchors><conversation>${p.transcript}</conversation>`,
         cache_control: { type: "ephemeral" },
       },
     ]);
+  });
+
+  it("40명 × 60개월: 데이터 블록의 stats는 요약(dailyCounts 없음, 사람 12명 이하)이고 편 지시가 그 사실을 알린다", () => {
+    const messages = syntheticGroupChat(40, 60);
+    const p = buildPayload({ messages, me: "멤버01", concept: "group", kind: "group", tokenBudget: 20_000, tokensPerChar: 1 });
+    const req = buildRequest(p, 2, []);
+    const data = text(req.messages[0].content);
+    const stats = JSON.parse(/^<stats>(.*?)<\/stats>/.exec(data)![1]);
+    expect(stats).not.toHaveProperty("dailyCounts");
+    expect(Object.keys(stats.byPerson).length).toBeLessThanOrEqual(PROMPT_STATS_MAX_PEOPLE);
+    expect(Object.keys(stats.monthly)).toHaveLength(12);
+    expect(stats.omitted).toEqual({ people: 28, months: 48 });
+    // 페이로드에는 전체 stats가 그대로 남는다(서버의 자리표시자 해석용)
+    expect(Object.keys(p.stats.byPerson)).toHaveLength(40);
+    expect(p.stats).toHaveProperty("dailyCounts");
+
+    const instruction = text(req.messages[1].content);
+    expect(instruction).toContain("통계에는 메시지가 많은 12명만 있다");
+    expect(instruction).toContain("stats.monthly에는 최근 12개월만 있다");
+    // 다른 편도 같은 데이터 블록이다
+    expect(buildRequest(p, 3, []).messages[0]).toStrictEqual(req.messages[0]);
+  });
+
+  it("사람·달을 뺀 것이 없으면 편 지시에 요약 안내가 없다", () => {
+    const instruction = text(buildRequest(payload(), 1, []).messages[1].content);
+    expect(instruction).not.toContain("명만 있다");
+    expect(instruction).not.toContain("개월만 있다");
   });
 
   it("messages[1]: system 메시지에 컨셉, 4편 계획, 이번 편 번호와 주제, 앞 편 헤드라인", () => {
