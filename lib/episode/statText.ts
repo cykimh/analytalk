@@ -15,7 +15,19 @@ const FORMAT: Record<StatUnit, (value: number) => string> = {
   ms: formatDuration,
   ratio: formatPercent,
   days: (n) => `${formatCount(n)}일`,
-  count: formatCount,
+  // avgLen(평균 글자 수)처럼 소수인 값은 한 자리까지
+  count: (n) => formatCount(Math.round(n * 10) / 10),
+};
+
+/**
+ * 화면이 붙인 단위를 모델이 자리표시자 바로 뒤에 한 번 더 쓴 것("{{stat:share.x}}%" → "67%%").
+ * 띄어 쓰지 않고 붙은 것만 지운다. 셀 단위가 없는 count("{{stat:total}}개")는 건드리지 않는다
+ */
+const REPEATED_UNIT: Record<StatUnit, RegExp | null> = {
+  ms: /^(?:밀리초|ms|시간|분|초)/,
+  ratio: /^(?:%|퍼센트|프로)/,
+  days: /^일/,
+  count: null,
 };
 
 /**
@@ -32,13 +44,17 @@ export function renderStatText(text: string, stats: ChatStats): (string | StatTo
   };
   let at = 0;
   for (const m of text.matchAll(PLACEHOLDER)) {
-    pushText(text.slice(at, m.index));
-    at = m.index + m[0].length;
+    // 앞 자리표시자 뒤에서 단위를 지우느라 at이 이 자리표시자를 넘었으면 그만큼만 건너뛴다
+    pushText(text.slice(at, Math.max(at, m.index)));
+    at = Math.max(at, m.index + m[0].length);
     const inner = m[1];
     if (!inner.startsWith(STAT_PREFIX)) continue;
     const path = inner.slice(STAT_PREFIX.length);
     const stat = resolveStat(path, stats);
-    if (stat) out.push({ path, display: FORMAT[stat.unit](stat.value) });
+    if (!stat) continue;
+    out.push({ path, display: FORMAT[stat.unit](stat.value) });
+    const repeated = REPEATED_UNIT[stat.unit]?.exec(text.slice(at));
+    if (repeated) at += repeated[0].length;
   }
   pushText(text.slice(at));
   return out;

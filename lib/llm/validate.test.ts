@@ -221,6 +221,71 @@ describe("validateEpisode", () => {
     expect(r.status).toBe("done");
   });
 
+  it("모델 글의 개인정보(전화·링크·계좌·이메일)를 다시 검사한다: 문단은 지우고 headline·dek·제목·예고·메모는 비운다 (PRD 5장 6)", () => {
+    const r = run(
+      episode(
+        [
+          sec("010-1234-5678로 연락", [
+            para("p1", "저녁 대화가 이어져요"),
+            para("p2", "번호는 010-9999-8888이에요"),
+            para("p3", "minji@example.com으로 보냈어요"),
+          ]),
+        ],
+        {
+          headline: "010-1234-5678의 비밀",
+          dek: "https://example.com/x 에서 시작",
+          next_teaser: "다음 편: 110-123-456789 계좌",
+          reading_notes: [
+            { range: "10-01", note: "instagram.com/minji 링크" },
+            { range: "10-02", note: "저녁 대화" },
+          ],
+        },
+      ),
+    );
+    expect(r.content?.headline).toBe("");
+    expect(r.content?.dek).toBe("");
+    expect(r.content?.next_teaser).toBe("");
+    expect(r.content?.sections[0].title).toBe("");
+    expect(r.content?.sections[0].paragraphs.map((p) => p.key)).toEqual(["p1"]);
+    expect(r.content?.reading_notes).toEqual([{ range: "10-02", note: "저녁 대화" }]);
+    expect(r.dropped.paragraphs).toBe(2);
+  });
+
+  it("가린 표시([가림:…])가 든 인용·문단은 개인정보로 보지 않는다", () => {
+    const r = run(episode([sec("가린 것", [para("p1", "[가림:전화]를 주고받았어요")])]));
+    expect(r.content?.sections[0].paragraphs).toHaveLength(1);
+  });
+
+  it("글자 수를 맞춘다: 너무 긴 headline·dek·제목·예고는 비우고, 너무 긴 문단은 지운다 (PRD 5장 1)", () => {
+    const r = run(
+      episode([sec("가".repeat(61), [para("p1", "저녁 대화가 이어져요"), para("p2", "나".repeat(801))])], {
+        headline: "다".repeat(81),
+        dek: "라".repeat(201),
+        next_teaser: "마".repeat(121),
+      }),
+    );
+    expect(r.content?.headline).toBe("");
+    expect(r.content?.dek).toBe("");
+    expect(r.content?.next_teaser).toBe("");
+    expect(r.content?.sections[0].title).toBe("");
+    expect(r.content?.sections[0].paragraphs.map((p) => p.key)).toEqual(["p1"]);
+  });
+
+  it("icon은 이모지 몇 글자만(글자·숫자가 들면 비운다), about은 me·pair·group·참여자 이름만(아니면 group)", () => {
+    const r = run(
+      episode([
+        { ...sec("하나", [para("p1", "저녁 대화가 이어져요")]), icon: "철수는 분명 좋아해요", about: "아무 말" },
+        { ...sec("둘", [para("p1", "메시지 {{stat:byPerson.민지}}개")]), icon: "👨‍👩‍👧", about: "민지" },
+        { ...sec("셋", [para("p1", "메시지 {{stat:byPerson.민지}}개")]), icon: "🌙", about: "me" },
+      ]),
+    );
+    expect(r.content?.sections.map((x) => [x.icon, x.about])).toEqual([
+      ["", "group"],
+      ["👨‍👩‍👧", "민지"],
+      ["🌙", "me"],
+    ]);
+  });
+
   it("모르는 declined_topics 값은 버리고 편은 살린다(SDK 스키마 변환이 enum을 강제하지 않는다)", () => {
     const raw = { ...episode([sec("s", [para("p1", "저녁 대화가 이어져요")])]), declined_topics: ["health", "money", 3] };
     const r = run(raw);

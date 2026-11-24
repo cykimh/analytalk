@@ -1,11 +1,13 @@
 // 저장 전 검증(PRD 5장). 서버 전용. 검증을 거치지 않은 문장은 저장하지도 보여 주지도 않는다.
 // safety: 구조 검사보다 먼저 원본에서 본다. flag가 none이 아닌 문자열이면 다른 필드가 틀려도 도움 안내로 간다.
 // 근거: msg_id가 보낸 줄에 있고 quote가 그 본문의 부분 문자열이어야 남는다(편 전체 8개, 앞 섹션부터).
-// 문단: 근거를 잃은 사람 문단, 풀리지 않는 자리표시자, 금지 표현이 든 문단을 지운다.
+// 문단: 근거를 잃은 사람 문단, 풀리지 않는 자리표시자, 금지 표현·개인정보가 든 문단, 너무 긴 문단을 지운다.
+// 나머지 모델 글(headline·dek·제목·예고)도 같은 검사(금지 표현·개인정보·글자 수)에 걸리면 비운다. icon·about은 허용 모양만 남긴다.
 import "server-only";
 import { MAX_QUOTES_PER_EPISODE, PARTIAL_DROP_RATIO } from "@/lib/config";
 import { isBanned } from "@/lib/payload/banned";
 import type { payloadIndex } from "@/lib/payload/build";
+import { hasPII } from "@/lib/payload/mask";
 import type { ChatStats } from "@/lib/stats/compute";
 import { resolveStat } from "@/lib/stats/paths";
 import { sanitizeNotes } from "./notes";
@@ -29,7 +31,19 @@ const PLACEHOLDER = /\{\{([^{}]*)\}\}/g;
 /** 잘린 응답에서 빠졌을 수 있는 뒤쪽 필드의 기본값. episode·safety는 기본값이 없다(없으면 failed) */
 const TRUNCATED_DEFAULTS = { declined_topics: [], reading_notes: [], headline: "", dek: "", sections: [], next_teaser: null };
 
-const clean = (text: string) => (isBanned(text) ? "" : text);
+/** 모델 글의 글자 수 상한(코드 포인트). 넘으면 자르지 않고 비운다(자르면 자리표시자가 반쪽이 될 수 있다) */
+const MAX_CHARS = { headline: 80, dek: 200, title: 60, paragraph: 800, teaser: 120, icon: 8 } as const;
+const length = (text: string) => Array.from(text).length;
+
+/** 저장해도 되는 모델 글인가: 금지 표현·개인정보(PRD 5장 6)가 없고 글자 수 상한 이하(PRD 5장 1) */
+const storable = (text: string, max: number) => length(text) <= max && !isBanned(text) && !hasPII(text);
+const clean = (text: string, max: number) => (storable(text, max) ? text : "");
+/** 이모지 몇 글자만. 글자·숫자가 들었으면(문장을 넣었으면) 비운다 */
+const cleanIcon = (icon: string) => {
+  const t = icon.trim();
+  return length(t) <= MAX_CHARS.icon && !/[\p{L}\p{N}]/u.test(t) ? t : "";
+};
+const ABOUT_FIXED = new Set(["me", "pair", "group"]);
 const toNewlines = (text: string) => text.replaceAll(LINE_BREAK_MARK, "\n");
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -110,7 +124,7 @@ export function validateEpisode(
     const aboutPerson = section.about === "me" || people.includes(section.about);
     const paragraphs = section.paragraphs.flatMap((p): Paragraph[] => {
       const placeholders = placeholderCount(p.text, stats);
-      if (p.text.trim() === "" || placeholders === null || isBanned(p.text)) return [];
+      if (p.text.trim() === "" || placeholders === null || !storable(p.text, MAX_CHARS.paragraph)) return [];
       const ids = p.evidence_ids.filter((id) => kept.has(id));
       // 사람 문단은 남은 근거가 있거나, 처음부터 근거 없이 자리표시자로만 쓴 것만 남긴다
       const person = aboutPerson || people.some((name) => p.text.includes(name));
@@ -123,7 +137,14 @@ export function validateEpisode(
     quotesLeft -= evidence.length;
     paragraphsOut += paragraphs.length;
     evidenceOut += evidence.length;
-    sections.push({ ...section, title: clean(section.title), paragraphs, evidence });
+    sections.push({
+      ...section,
+      icon: cleanIcon(section.icon),
+      title: clean(section.title, MAX_CHARS.title),
+      about: ABOUT_FIXED.has(section.about) || people.includes(section.about) ? section.about : "group",
+      paragraphs,
+      evidence,
+    });
   }
 
   const dropped = { paragraphs: paragraphsIn - paragraphsOut, evidence: evidenceIn - evidenceOut };
@@ -131,10 +152,10 @@ export function validateEpisode(
   const content: StoredEpisode = {
     ...ep,
     reading_notes: sanitizeNotes(ep.reading_notes),
-    headline: clean(ep.headline),
-    dek: clean(ep.dek),
+    headline: clean(ep.headline, MAX_CHARS.headline),
+    dek: clean(ep.dek, MAX_CHARS.dek),
     sections,
-    next_teaser: ep.next_teaser === null ? null : clean(ep.next_teaser),
+    next_teaser: ep.next_teaser === null ? null : clean(ep.next_teaser, MAX_CHARS.teaser),
   };
   const partial = opts.truncated || dropped.paragraphs / paragraphsIn >= PARTIAL_DROP_RATIO;
   return { status: partial ? "partial" : "done", content, dropped };

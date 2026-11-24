@@ -58,15 +58,31 @@ describe("sanitizeNotes", () => {
 
   it("코드 포인트로 센다(이모지 60개는 그대로)", () => {
     const emoji = "😀".repeat(60);
-    expect(sanitizeNotes([{ range: "r", note: emoji }])[0].note).toBe(emoji);
+    expect(sanitizeNotes([{ range: "10-01", note: emoji }])[0].note).toBe(emoji);
   });
 
   it("배열이 아니거나 모양이 틀리거나 빈 메모는 뺀다", () => {
     expect(sanitizeNotes(null)).toEqual([]);
     expect(sanitizeNotes("메모")).toEqual([]);
-    expect(sanitizeNotes([null, { range: 1, note: "가" }, { range: "r", note: "  " }, { range: " r ", note: " 나 " }])).toEqual([
-      { range: "r", note: "나" },
+    expect(sanitizeNotes([null, { range: 1, note: "가" }, { range: "10-01", note: "  " }, { range: " 10-01 ", note: " 나 " }])).toEqual([
+      { range: "10-01", note: "나" },
     ]);
+  });
+
+  it("range는 MM-DD 또는 MM-DD~MM-DD만 받는다(앞의 연도·띄어쓰기는 정리, 그 밖은 비운다)", () => {
+    const notes = [
+      { range: "10-01 ~ 10-03", note: "가" },
+      { range: "2026-10-01~2026-10-03", note: "나" },
+      { range: "x".repeat(299), note: "다" },
+      { range: "10월 초", note: "라" },
+    ];
+    expect(sanitizeNotes(notes).map((n) => n.range)).toEqual(["10-01~10-03", "10-01~10-03", "", ""]);
+  });
+
+  it("개인정보가 든 메모는 빼고, 메모는 20개까지", () => {
+    expect(sanitizeNotes([{ range: "10-01", note: "010-1234-5678로 연락" }])).toEqual([]);
+    const many = Array.from({ length: 25 }, (_, i) => ({ range: "10-01", note: `메모 ${i}` }));
+    expect(sanitizeNotes(many)).toHaveLength(20);
   });
 });
 

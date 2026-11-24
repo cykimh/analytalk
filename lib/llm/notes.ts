@@ -2,8 +2,9 @@
 // 스키마 속성 순서(safety → … → reading_notes → … → sections → next_teaser)를 그대로 따라 생성되므로
 // 맨 위 객체를 앞에서부터 훑으며, 닫는 글자까지 온 값만 완결로 본다. 끝나지 않은 배열은 완결된 원소만 쓴다.
 import "server-only";
-import { NOTE_MAX_CHARS } from "@/lib/config";
+import { MAX_READING_NOTES, NOTE_MAX_CHARS } from "@/lib/config";
 import { isBanned } from "@/lib/payload/banned";
+import { hasPII } from "@/lib/payload/mask";
 import type { Episode } from "./schema";
 
 type Note = { range: string; note: string };
@@ -124,16 +125,32 @@ export function extractReadingNotes(partialJson: string): Note[] {
   return [];
 }
 
-/** 화면·DB에 내보낼 메모만 남긴다: 모양 확인, 앞뒤 공백 제거, 금지 표현이 든 메모 제거, 메모를 60자(코드 포인트)로 자르기 */
+/** "MM-DD" 또는 "MM-DD~MM-DD"(앞에 연도가 붙어도 된다) */
+const DAY = String.raw`(?:\d{4}-)?(\d{2}-\d{2})`;
+const RANGE = new RegExp(String.raw`^${DAY}(?:\s*~\s*${DAY})?$`);
+
+/** range를 MM-DD~MM-DD 모양으로 정리한다. 모양이 아니면 빈 글자(메모는 남긴다) */
+function normalizeRange(range: string): string {
+  const m = RANGE.exec(range.trim());
+  if (!m) return "";
+  return m[2] ? `${m[1]}~${m[2]}` : m[1];
+}
+
+/**
+ * 화면·DB에 내보낼 메모만 남긴다: 모양 확인, 앞뒤 공백 제거, range 모양 정리, 금지 표현·개인정보가 든 메모 제거,
+ * 메모를 60자(코드 포인트)로 자르기, 20개까지
+ */
 export function sanitizeNotes(notes: unknown): Note[] {
   if (!Array.isArray(notes)) return [];
-  return notes.flatMap((n) => {
-    if (!isNote(n)) return [];
-    const range = n.range.trim();
-    const note = n.note.trim();
-    if (note === "" || isBanned(range) || isBanned(note)) return [];
-    return [{ range, note: Array.from(note).slice(0, NOTE_MAX_CHARS).join("") }];
-  });
+  return notes
+    .flatMap((n) => {
+      if (!isNote(n)) return [];
+      const range = normalizeRange(n.range);
+      const note = n.note.trim();
+      if (note === "" || isBanned(note) || hasPII(note)) return [];
+      return [{ range, note: Array.from(note).slice(0, NOTE_MAX_CHARS).join("") }];
+    })
+    .slice(0, MAX_READING_NOTES);
 }
 
 /**

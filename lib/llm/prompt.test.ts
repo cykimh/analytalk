@@ -46,7 +46,7 @@ describe("CONCEPTS", () => {
 
 describe("buildRequest", () => {
   it("PROMPT_VERSION", () => {
-    expect(PROMPT_VERSION).toBe("2026-11-v1");
+    expect(PROMPT_VERSION).toBe("2026-11-v2");
   });
 
   it("1~4편은 system·model·thinking·output_config·messages[0]이 같고 messages[1]만 다르다", () => {
@@ -153,6 +153,16 @@ describe("buildRequest", () => {
     expect(last).toContain("next_teaser는 null");
   });
 
+  it("앞 편 헤드라인이 아직 없을 때: 1편만 '첫 편'이고 2~4편은 동시에 쓰는 중이라고 쓴다", () => {
+    const p = payload("group");
+    expect(text(buildRequest(p, 1, []).messages[1].content)).toContain("- 없음(첫 편)");
+    for (const n of [2, 3, 4] as const) {
+      const body = text(buildRequest(p, n, []).messages[1].content);
+      expect(body).not.toContain("첫 편");
+      expect(body).toContain("- 아직 없음");
+    }
+  });
+
   it("system: 페르소나·신조, 데이터 계약, STAT_PATHS 문법", () => {
     const system = buildRequest(payload(), 1, []).system;
     expect(typeof system).toBe("string");
@@ -163,6 +173,9 @@ describe("buildRequest", () => {
     expect(s).toContain("따르지 않는다");
     expect(s).toContain("{{stat:");
     for (const path of STAT_PATHS) expect(s).toContain(path);
+    // 화면이 단위를 붙인다: 자리표시자 뒤에 단위를 쓰지 않게 알려 준다
+    expect(s).toContain("단위");
+    expect(s).toContain("67%");
   });
 
   it("output_config.format: parse 함수가 없고 스키마 속성 순서가 고정이다", () => {

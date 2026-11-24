@@ -101,6 +101,22 @@ describe("renderStatPlain", () => {
     expect(renderStatPlain("{{stat:longestStreakDays}} 동안 {{stat:total}}개", stats)).toBe("3일 동안 6개");
   });
 
+  it("화면이 붙이는 단위를 모델이 한 번 더 써도 겹치지 않는다(%·일·분/시간/밀리초)", () => {
+    expect(renderStatPlain("질문 {{stat:questionRate.철수}}%", stats)).toBe("질문 33%");
+    expect(renderStatPlain("{{stat:questionRate.철수}}퍼센트", stats)).toBe("33%");
+    expect(renderStatPlain("{{stat:longestStreakDays}}일 연속", stats)).toBe("3일 연속");
+    expect(renderStatPlain("{{stat:replyMedianMs.민지}}분 만에", stats)).toBe("4분 만에");
+    expect(renderStatPlain("{{stat:replyMedianMs.민지}}밀리초", stats)).toBe("4분");
+    // 띄어 쓴 다음 말과 셀 단위가 없는 count는 그대로 둔다
+    expect(renderStatPlain("{{stat:longestStreakDays}} 일찍", stats)).toBe("3일 일찍");
+    expect(renderStatPlain("{{stat:total}}일", stats)).toBe("6일");
+  });
+
+  it("count 값은 소수 한 자리까지(avgLen 12.3456 → 12.3)", () => {
+    const withLen = { ...stats, monthly: { "2026-10": { ...stats.monthly["2026-10"], avgLen: { 민지: 12.3456 } } } } as typeof stats;
+    expect(renderStatPlain("{{stat:monthly.2026-10.avgLen.민지}}자", withLen)).toBe("12.3자");
+  });
+
   it("풀리지 않는 자리표시자는 빼고, 자리표시자가 없으면 글자 그대로", () => {
     expect(renderStatPlain("{{stat:nope}}의 {{name}} 법칙", stats)).toBe("의  법칙");
     expect(renderStatPlain("저녁의 리듬", stats)).toBe("저녁의 리듬");

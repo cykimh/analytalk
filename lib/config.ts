@@ -26,6 +26,7 @@ export const MAX_QUOTES_PER_EPISODE = 8;
 export const PARTIAL_DROP_RATIO = 0.3; // 문단 30% 이상 삭제되면 partial
 export const RECOGNITION_WARN = 0.98; // 줄 인식률 경고 기준
 export const NOTE_MAX_CHARS = 60;
+export const MAX_READING_NOTES = 20; // 저장·표시하는 reading_notes 개수 상한
 
 // 통계·앵커
 export const ANCHOR_FIRST_N = 100;
