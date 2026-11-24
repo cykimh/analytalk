@@ -8,18 +8,31 @@ const digitCount = (s: string) => s.replace(/\D/g, "").length;
 /** 숫자 묶음 중 가장 긴 것의 자리 수("10 20 30 40 50"처럼 두 자리씩 늘어놓은 것은 계좌로 보지 않는다) */
 const longestGroup = (s: string) => Math.max(...s.split(/\D+/).map((g) => g.length));
 
-/** 머리(https://·www.) 없이 쓰는 링크의 흔한 끝(도메인). instagram.com/x, open.kakao.com/o/x 같은 것 */
-const BARE_TLD = "com|net|org|app|link|page";
 /**
- * 영어 낱말이기도 한 2글자 끝(naver.me/x, youtu.be/x, notion.so/x, minji.github.io).
+ * 머리(https://·www.) 없이 쓰는 링크의 끝(도메인). 이름 하나만 붙어도 링크로 본다:
+ * instagram.com/x, open.kakao.com/o/x, minji.kr, minji.io, t.co/x, bit.ly/x, goo.gl/x, op.gg, is.gd/x, amazon.co.jp/x.
+ * 영어 낱말과 겹치는 2글자 끝(it·is·in·my·no …)과 파일 확장자로 흔한 끝(md·py·sh·ai …)은 넣지 않는다
+ */
+const BARE_TLD = "com|net|org|app|link|page|kr|io|co|ly|gl|tv|gg|jp|cn|tw|hk|uk|de|fr|gd";
+/**
+ * 영어 낱말이기도 한 2글자 끝(naver.me/x, youtu.be/x, notion.so/x, kko.to/x, me2.do/x, shorturl.at/x, vo.la/x).
  * 경로(/…)가 붙거나 하위 도메인이 있을 때만 링크로 본다("I love you.So much"처럼 마침표 뒤에 이어 쓴 말은 둔다)
  */
-const SHORT_TLD = "kr|io|me|ly|gl|be|co|so|tv|gg|to";
+const WORD_TLD = "so|to|be|me|do|at|la";
 /** 링크의 호스트: min개 이상의 이름 + 끝(뒤에 글자·숫자·@·-가 이어지면 아니다) */
 const host = (tld: string, min: number) => String.raw`(?:[a-z0-9-]+\.){${min},}(?:${tld})(?![a-z0-9@-])`;
 const URL_PATH = String.raw`\/[^\s<>"'＜＞]*`;
-/** 빈칸·하이픈으로 나눈 날짜·시각: 4자리 연도 + 1~2자리 묶음들("2026 10 01 12 30"). 계좌로 보지 않는다 */
-const DATE_TIME = /^(?:19|20)\d{2}(?:[- ]\d{1,2})+$/;
+/**
+ * 빈칸·하이픈으로 나눈 날짜·시각: 4자리 연도 + 월(1~12) [+ 일(1~31) [+ 시(0~23) [+ 분(0~59) [+ 초(0~59)]]]]
+ * ("2026 10 01 12 30"). 계좌로 보지 않는다. 범위를 벗어난 묶음("2012-34-56-78-90")은 날짜가 아니다
+ */
+const MONTH = String.raw`(?:0?[1-9]|1[0-2])`;
+const DAY = String.raw`(?:0?[1-9]|[12]\d|3[01])`;
+const HOUR = String.raw`(?:[01]?\d|2[0-3])`;
+const MINUTE = String.raw`[0-5]?\d`;
+const DATE_TIME = new RegExp(
+  String.raw`^(?:19|20)\d{2}[- ]${MONTH}(?:[- ]${DAY}(?:[- ]${HOUR}(?:[- ]${MINUTE}(?:[- ]${MINUTE})?)?)?)?$`,
+);
 
 /** 앞의 규칙이 먼저 가린다: 링크 속 이메일·숫자, 주민번호 속 전화번호 모양을 먼저 처리하려는 순서다 */
 const RULES: { kind: MaskKind; re: RegExp; mark: string; accept?: (hit: string) => boolean }[] = [
@@ -29,7 +42,7 @@ const RULES: { kind: MaskKind; re: RegExp; mark: string; accept?: (hit: string) 
   {
     kind: "url",
     re: new RegExp(
-      String.raw`(?<![\w@.\/-])(?:${host(BARE_TLD, 1)}(?:${URL_PATH})?|${host(SHORT_TLD, 2)}(?:${URL_PATH})?|${host(SHORT_TLD, 1)}${URL_PATH})`,
+      String.raw`(?<![\w@.\/-])(?:${host(BARE_TLD, 1)}(?:${URL_PATH})?|${host(WORD_TLD, 2)}(?:${URL_PATH})?|${host(WORD_TLD, 1)}${URL_PATH})`,
       "gi",
     ),
     mark: "[가림:링크]",
@@ -47,10 +60,11 @@ const RULES: { kind: MaskKind; re: RegExp; mark: string; accept?: (hit: string) 
     mark: "[가림:전화]",
   },
   // 하이픈·빈칸으로 나뉜 숫자 묶음이나 이어진 숫자 중 숫자가 10~16자리인 것(정산 메시지의 "110 123 456789", 카드 번호).
+  // 마지막 묶음은 한 자리여도 된다(새마을금고 "9002-1234-5678-9", 3-4-4-2-1). 전화번호는 앞 규칙이 먼저 가린다.
   // 빈칸으로 나뉜 것은 세 자리 이상인 묶음이 하나는 있어야 한다. 연도로 시작하는 날짜·시각(DATE_TIME)은 둔다
   {
     kind: "account",
-    re: /(?<![\d-])\d{2,6}(?:-\d{2,8}){1,4}(?![\d-])|(?<![\d-])\d{2,6}(?: \d{2,8}){1,4}(?![\d-])|(?<!\d)\d{10,16}(?!\d)/g,
+    re: /(?<![\d-])\d{2,6}(?:-\d{2,8}){0,3}-\d{1,8}(?![\d-])|(?<![\d-])\d{2,6}(?: \d{2,8}){0,3} \d{1,8}(?![\d-])|(?<!\d)\d{10,16}(?!\d)/g,
     mark: "[가림:계좌]",
     accept: (hit) =>
       digitCount(hit) >= 10 &&

@@ -33,6 +33,31 @@ describe("maskPII", () => {
     ["minji.github.io 블로그", "[가림:링크] 블로그", "url"],
     ["블로그 minji.tistory.com", "블로그 [가림:링크]", "url"],
     ["토스 1000 1234 5678", "토스 [가림:계좌]", "account"],
+    // 영어 낱말이 아닌 2글자 끝(kr·io·co …)은 이름 하나만 붙어도 링크다. 여러 단계 끝(co.jp·co.uk)도 통째로 (M1)
+    ["내 블로그 minji.kr 놀러와", "내 블로그 [가림:링크] 놀러와", "url"],
+    ["minji.co에 올렸어", "[가림:링크]에 올렸어", "url"],
+    ["amazon.co.jp/x 에서 샀어", "[가림:링크] 에서 샀어", "url"],
+    ["bbc.co.uk/news 봐", "[가림:링크] 봐", "url"],
+    ["is.gd/abc 눌러", "[가림:링크] 눌러", "url"],
+    ["op.gg 전적", "[가림:링크] 전적", "url"],
+    // 영어 낱말이기도 한 끝(do·at·la)은 경로가 있으면 링크다: 짧은 주소 me2.do·shorturl.at·vo.la (M1)
+    ["me2.do/abc 들어와", "[가림:링크] 들어와", "url"],
+    ["shorturl.at/abc 들어와", "[가림:링크] 들어와", "url"],
+    ["vo.la/abc 들어와", "[가림:링크] 들어와", "url"],
+    // 날짜·시각 범위(월 1~12, 일 1~31, 시 0~23, 분 0~59)를 벗어난 연도 모양 숫자 묶음은 계좌로 본다 (M2)
+    ["2012-34-56-78-90", "[가림:계좌]", "account"],
+    ["1990 12 34 56 78", "[가림:계좌]", "account"],
+    ["2024 12 34 56 78 90", "[가림:계좌] 90", "account"],
+    ["2026 13 01 12 30", "[가림:계좌]", "account"],
+    ["2026 10 00 12 30", "[가림:계좌]", "account"],
+    ["2026-10-01-24-30", "[가림:계좌]", "account"],
+    ["2026 10 01 12 60", "[가림:계좌]", "account"],
+    // 마지막 묶음이 한 자리인 계좌(새마을금고 4-4-4-1, 3-4-4-2-1) (M3)
+    ["새마을 9002-1234-5678-9 로 보내줘", "새마을 [가림:계좌] 로 보내줘", "account"],
+    ["새마을 9002 1234 5678 9 로 보내줘", "새마을 [가림:계좌] 로 보내줘", "account"],
+    ["신협 132-1234-5678-12-3", "신협 [가림:계좌]", "account"],
+    // 뒤에 한 자리 숫자가 붙어도 전화번호는 전화번호다 (M3)
+    ["010 1234 5678 9시에 전화해", "[가림:전화] 9시에 전화해", "phone"],
   ])("%s → %s", (input, expected, kind) => {
     const r = maskPII(input);
     expect(r.text).toBe(expected);
@@ -54,13 +79,46 @@ describe("maskPII", () => {
     "2026 10 01 12 30",
     "출발 2026 10 01 12 30 이야",
     "2026-10-01-12-30 기록",
+    // 영어 낱말이기도 한 끝(so·to·be·me·do)은 경로도 하위 도메인도 없으면 그대로, 낱말·파일 이름과 겹치는 끝은 넣지 않는다 (M1)
+    "Let's go.To the park",
+    "It may.Be true",
+    "Just do it.Do it now",
+    "Ok.No problem",
+    "Thank you.It was fun",
+    "README.md 고쳤어",
+    "main.py 돌려봐",
+    // 범위 안의 날짜·시각은 그대로 (M2)
+    "1999-12-31-23-59",
+    "2026 1 15 23 59 기록",
+    "2026 10 01 00 00",
+    "2026 10 01 12 30 45 기록",
+    // 짧은 숫자, 한 자리 분으로 끝나는 날짜·시각 (M3)
+    "1-2-3",
+    "12-34-5 순서",
+    "2026-10-01-12-5",
+    "10 20 30 40 5 순서로",
   ])("개인정보가 아니면 그대로: %s", (s) => {
     expect(maskPII(s)).toEqual({ text: s, counts: ZERO });
   });
 
+  it.each(["minji.kr", "minji.io", "minji.co", "minji.ly", "minji.gl", "minji.tv", "minji.gg", "minji.jp"])(
+    "이름 하나만 붙은 2글자 끝 링크도 가린다: %s (M1)",
+    (link) => {
+      const r = maskPII(`${link} 블로그`);
+      expect(r.text).toBe("[가림:링크] 블로그");
+      expect(r.counts).toEqual({ ...ZERO, url: 1 });
+    },
+  );
+
   it("한 번 가린 결과를 다시 가려도 바뀌지 않는다", () => {
     const once = maskPII("010-1234-56789 a@b.com https://x.kr 900101-1234567 1002-123-456789 youtu.be/abc 1234 5678 9012 3456");
     expect(once.text).not.toMatch(/\d{3}/);
+    expect(maskPII(once.text)).toEqual({ text: once.text, counts: ZERO });
+  });
+
+  it("새로 가리는 모양(2글자 끝 링크·범위 밖 날짜 모양·한 자리 끝 계좌)도 다시 가려도 바뀌지 않는다", () => {
+    const once = maskPII("minji.kr amazon.co.jp/x me2.do/abc 2012-34-56-78-90 2024 12 34 56 78 90 9002-1234-5678-9 9002 1234 5678 9");
+    expect(once.text).not.toMatch(/\d{3}|\.(?:kr|jp|do)/);
     expect(maskPII(once.text)).toEqual({ text: once.text, counts: ZERO });
   });
 });
