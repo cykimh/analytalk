@@ -76,6 +76,7 @@ describe("applyDisplayNames: 본문 속 이름", () => {
   it("앞이 한글 음절이면 그대로(우리·울·내는 예외), 조사·공백·기호 앞뒤면 바꾼다", () => {
     expect(body("가민지 왔어")).toBe("가민지 왔어");
     expect(body("우리민지 울민지 내민지")).toBe("우리P1 울P1 내P1");
+    expect(body("애기민지 아기민지 내사랑민지")).toBe("애기P1 아기P1 내사랑P1");
     expect(body("@김민지님 민지한테 줘 (민지)")).toBe("@P1님 P1한테 줘 (P1)");
     expect(body("ㅋㅋ민지는 민지씨 민지도")).toBe("ㅋㅋP1는 P1씨 P1도");
   });
@@ -104,6 +105,24 @@ describe("applyDisplayNames: 본문 속 이름", () => {
     expect(body("공주님 오셨다", nick)).toBe("공주님 오셨다");
     expect(body("민지야 김민지 왔어", { 김민지님: "P1" })).toBe("P1야 P1 왔어");
     expect(body("민지랑 지니", { 민지짱: "P1" })).toBe("P1랑 지니");
+  });
+
+  it.each(["우리민지", "애기민지", "내사랑민지", "울애기민지", "이쁜민지", "귀요미민지", "최고민지"])(
+    "앞에 별명이 붙은 4글자 이상 이름 %s: 끝 2글자(실제 이름)도 바꾼다",
+    (name) => {
+      expect(body("민지야 어디야", { [name]: "P1" })).toBe("P1야 어디야");
+    },
+  );
+
+  it("머리말을 뗀 말도 이름으로 보고, 꼬리가 섞인 끝 2글자·흔한 별명 말은 두지 않는다", () => {
+    expect(body("김민지야 민지는", { 우리김민지: "P1" })).toBe("P1야 P1는");
+    expect(body("민지야 김민지 왔어", { 애기김민지공주: "P1" })).toBe("P1야 P1 왔어");
+    // 꼬리(맘)를 뗀 김민지가 따로 후보가 되므로, 꼬리가 섞인 '지맘'은 대상이 아니다
+    expect(body("민지야 지맘대로 해", { 김민지맘: "P1" })).toBe("P1야 지맘대로 해");
+    // 별명 말 꼬리를 떼고, 그 말 자체나 관계 말(끝 2글자)은 둔다
+    expect(body("민지야 바보야 사랑해", { 민지바보: "P1" })).toBe("P1야 바보야 사랑해");
+    expect(body("하은아 사랑해", { 하은사랑: "P1" })).toBe("P1아 사랑해");
+    expect(body("동료들이 민지랑", { "회사동료 민지": "P1" })).toBe("동료들이 P1랑");
   });
 
   it("흔한 성으로 시작하는 3글자 이름은 앞 2글자를 이름으로 보지 않는다", () => {
@@ -169,6 +188,13 @@ describe("findNameLeftovers", () => {
     expect(findNameLeftovers(renamed(["민지수"], { 김민지: "민지" }), { 김민지: "민지" })).toEqual([]);
     const media = renamed(["민지수"], { 김민지: "P1" }, ["photo"]);
     expect(findNameLeftovers([...media, { ...msg(null, "민지수님이 나갔습니다.") }], { 김민지: "P1" })).toEqual([]);
+  });
+
+  it.each(["우리민지", "애기민지"])("앞에 별명이 붙은 이름 %s의 끝 조각(민지)도 안다", (name) => {
+    const map = { [name]: "P1" };
+    const msgs = renamed(["민지야", "가민지"], map);
+    expect(msgs.map((m) => m.text)).toEqual(["P1야", "가민지"]);
+    expect(findNameLeftovers(msgs, map)).toEqual([{ piece: "민지", count: 1, ids: [msgs[1].id] }]);
   });
 
   it("한글이 아닌 조각은 대소문자를 무시하고 단어 속도 찾는다", () => {

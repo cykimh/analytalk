@@ -23,12 +23,21 @@ const PARTICLES = [
   // 호칭·별명 꼬리
   ...["언니", "오빠", "누나", "형", "선배", "쌤", "짱", "쨩", "양", "군", "엄마", "맘", "공주", "왕자"],
 ];
-// 한글 이름 앞에 붙어도 이름으로 보는 말: 우리민지·울민지·내민지
-const PREFIXES = ["우리", "울", "내"];
+// 본문에서 한글 이름 앞에 붙어도 이름으로 보는 말: 우리민지·울민지·내민지·애기민지·내사랑민지.
+// 사랑·최고 같은 말은 넣지 않는다("사랑해원래"의 "해원"처럼 다른 말을 이름으로 바꾼다)
+const PREFIXES = ["우리", "울", "내", "애기", "아기", "내사랑"];
 
-// 별명형 이름의 꼬리. "민지공주"·"민지짱"·"김민지님"은 꼬리를 뗀 "민지"·"김민지"도 이름으로 본다.
+// 별명형 이름의 꼬리. "민지공주"·"민지짱"·"김민지님"·"하은사랑"은 꼬리를 뗀 "민지"·"김민지"·"하은"도 이름으로 본다.
 // 이·아·야는 넣지 않는다("박수아"의 "아"는 이름의 일부다)
-const NICK_SUFFIXES = ["공주", "왕자", "언니", "오빠", "누나", "엄마", "아빠", "이모", "삼촌", "선배", "님", "씨", "짱", "쨩", "맘", "쌤"];
+const NICK_SUFFIXES = [
+  ...["공주", "왕자", "언니", "오빠", "누나", "엄마", "아빠", "이모", "삼촌", "선배", "님", "씨", "짱", "쨩", "맘", "쌤"],
+  ...["사랑", "바보", "최고", "천사", "돼지", "토끼", "폰"],
+];
+// 별명형 이름의 머리말. "우리민지"·"애기김민지"·"울애기민지"는 머리말을 뗀 "민지"·"김민지"도 이름으로 본다
+const NICK_PREFIXES = [...PREFIXES, "사랑", "이쁜", "예쁜", "귀요미", "최고", "나의"];
+// 긴 말부터 뗀다(내사랑 → 내)
+const SUFFIXES_DESC = [...NICK_SUFFIXES].sort((a, b) => b.length - a.length);
+const PREFIXES_DESC = [...NICK_PREFIXES].sort((a, b) => b.length - a.length);
 // 흔한 1글자 성(인구 상위 약 40개). 이 성으로 시작하는 이름은 앞 2글자("정도"윤·"고민"지·"나도"윤)를 이름으로 보지 않는다.
 // 민·지처럼 별명 첫 글자로 흔한 성은 넣지 않는다("민지짱"의 "민지")
 const COMMON_SURNAMES = new Set([..."김이박최정강조윤장임한오서신권황안송전홍유류고문양손배백허남노심하곽성차주우구나"]);
@@ -36,9 +45,11 @@ const TWO_CHAR_SURNAMES = new Set(["남궁", "제갈", "선우", "독고", "황�
 // 이름 조각이나 짧은 이름이 되면 본문의 흔한 말까지 바뀌는 말(호칭·관계·직함). 전체 이름이면 그래도 바꾼다
 const STOP_PIECES = new Set([
   ...NICK_SUFFIXES,
-  ...["자기", "자기야", "여보", "애기", "아가", "아기", "형님", "오라버니", "동생", "친구", "가족", "우리", "본인"],
+  ...NICK_PREFIXES,
+  ...["자기", "자기야", "여보", "아가", "형님", "오라버니", "동생", "친구", "가족", "본인"],
   ...["남편", "아내", "와이프", "회사", "팀장", "과장", "대리", "부장", "사장", "실장", "차장", "선생", "선생님", "교수", "교수님"],
-  ...["후배", "사랑", "최고"],
+  // "회사동료"처럼 4글자 덩어리의 끝 2글자가 되는 관계 말. 실제 이름일 수 있는 말(동기 등)은 넣지 않는다
+  ...["후배", "동료", "상사", "고모", "사촌", "조카"],
 ]);
 
 const HANGUL_RUN = /^[가-힣]+$/;
@@ -57,18 +68,49 @@ export function checkDisplayName(name: string): "empty" | "invalid" | null {
   return null;
 }
 
-/** 성을 뺀 2글자 후보. 3글자 이상 한글 덩어리에만 */
+/** 별명 꼬리. 뗀 뒤 2글자 이상 남을 때만 */
+const nickSuffix = (w: string) => SUFFIXES_DESC.find((s) => w.endsWith(s) && w.length - s.length >= 2);
+/** 별명 머리말. 뗀 뒤 2글자 이상 남을 때만 */
+const nickPrefix = (w: string) => PREFIXES_DESC.find((p) => w.startsWith(p) && w.length - p.length >= 2);
+
+/**
+ * 짧은 이름(2글자) 후보. 3글자 이상 한글 덩어리에만
+ * - 2자 성이면 3~4번째 글자, 아니면 2~3번째 글자. 흔한 성으로 시작하지 않으면 별명일 수 있어 앞 2글자도 본다("민지짱"·"민지최고")
+ * - 4글자 이상이면 끝 2글자도 본다. 앞에 별명이 붙은 이름("우리민지"·"이쁜민지"·"최고민지")은 실제 이름이 끝에 온다.
+ *   별명 꼬리로 끝나면 끝 2글자에 꼬리가 섞이므로("김민지맘"의 "지맘") 보지 않는다(꼬리를 뗀 말이 따로 후보가 된다)
+ */
 function shortForms(w: string): string[] {
   if (w.length < 3) return [];
-  if (w.length >= 4 && TWO_CHAR_SURNAMES.has(w.slice(0, 2))) return [w.slice(2, 4)];
-  if (COMMON_SURNAMES.has(w[0])) return [w.slice(1, 3)];
-  // 흔한 성으로 시작하지 않으면 별명일 수 있어 앞 2글자도 본다("민지짱"·"민지최고")
-  return [w.slice(1, 3), w.slice(0, 2)];
+  const out: string[] = [];
+  if (w.length >= 4 && TWO_CHAR_SURNAMES.has(w.slice(0, 2))) out.push(w.slice(2, 4));
+  else {
+    out.push(w.slice(1, 3));
+    if (!COMMON_SURNAMES.has(w[0])) out.push(w.slice(0, 2));
+  }
+  if (w.length >= 4 && !nickSuffix(w)) out.push(w.slice(-2));
+  return out;
+}
+
+/**
+ * 한글 덩어리와, 별명 꼬리·머리말을 거듭 떼어 나온 말들(덩어리가 맨 앞).
+ * 예: "애기김민지공주" → 애기김민지공주, 애기김민지, 김민지공주, 김민지
+ */
+function nickBases(piece: string): string[] {
+  const out = [piece];
+  for (let i = 0; i < out.length; i++) {
+    const w = out[i];
+    const tail = nickSuffix(w);
+    const head = nickPrefix(w);
+    for (const next of [tail && w.slice(0, -tail.length), head && w.slice(head.length)]) {
+      if (next && !out.includes(next)) out.push(next);
+    }
+  }
+  return out;
 }
 
 /**
  * 원래 이름 하나에서 본문에서 찾을 말들. 전체 이름이 맨 앞이다.
- * - 한글 덩어리: 덩어리 자체, 별명 꼬리를 뗀 말, 그 둘의 성을 뺀 2글자
+ * - 한글 덩어리: 덩어리 자체, 별명 꼬리·머리말을 뗀 말, 그 말들의 짧은 이름(shortForms)
  * - 한글이 아닌 덩어리("Minji Kim"의 Minji·Kim): 2글자 이상이고 글자가 들어 있으면
  * - 조각·짧은 이름이 STOP_PIECES이면 뺀다
  */
@@ -79,9 +121,8 @@ function nameKeys(name: string): string[] {
   };
   for (const piece of name.match(PIECE) ?? []) {
     if (HANGUL_RUN.test(piece)) {
-      if (STOP_PIECES.has(piece)) continue;
-      const tail = NICK_SUFFIXES.find((s) => piece.endsWith(s) && piece.length - s.length >= 2);
-      for (const base of tail ? [piece, piece.slice(0, -tail.length)] : [piece]) {
+      for (const base of nickBases(piece)) {
+        if (STOP_PIECES.has(base)) continue;
         add(base);
         shortForms(base).forEach(add);
       }
@@ -144,10 +185,10 @@ function lookup<T>(table: Map<string, T>, hit: string): T | undefined {
  * 발신자와 본문 속 이름을 표시 이름으로 바꾼 새 메시지 배열을 돌려준다(입력은 바꾸지 않는다).
  * - map은 모든 발신자와 systemNames(초대·나감 알림 속 이름)를 덮어야 한다. 하나라도 없으면 unmapped
  * - 서로 다른 원래 이름 둘이 같은 표시 이름이면 collision. 예외는 merged의 같은 그룹([같은 사람])뿐이다
- * - 본문 치환 대상(nameKeys): 전체 이름, 이름 조각, 별명 꼬리를 뗀 말, 3글자 이상 한글이면 성을 뺀 2글자.
- *   긴 말부터 한 번에 바꾸고, 한글이 아닌 말은 대소문자를 무시한다
+ * - 본문 치환 대상(nameKeys): 전체 이름, 이름 조각, 별명 꼬리·머리말을 뗀 말, 3글자 이상 한글이면 성을 뺀 2글자,
+ *   4글자 이상 한글이면 끝 2글자. 긴 말부터 한 번에 바꾸고, 한글이 아닌 말은 대소문자를 무시한다
  * - 한글 말은 앞뒤가 한글 음절이면 다른 단어로 보고 둔다. 다만 뒤에 조사·어미·호칭(PARTICLES)이 붙거나
- *   앞에 우리·울·내가 붙으면 바꾼다. 그래도 남는 조각은 findNameLeftovers로 확인 화면에 보여 준다
+ *   앞에 우리·울·내·애기·아기·내사랑(PREFIXES)이 붙으면 바꾼다. 그래도 남는 조각은 findNameLeftovers로 확인 화면에 보여 준다
  */
 export function applyDisplayNames(
   msgs: ChatMessage[],
