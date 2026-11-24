@@ -8,3 +8,5 @@ next-env.d.ts
 !.env.example
 .DS_Store
 .env.production.local
+test-results/
+playwright-report/

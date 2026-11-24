@@ -5,6 +5,10 @@ const browsers = [
   { name: "webkit", use: { ...devices["Desktop Safari"] } },
 ];
 
+// prod 빌드(3200)는 빌드에 몇 분이 걸려서 PW_PROD=1일 때만 띄운다(CSP·헤더 검증용, Task 15).
+// 예: PW_PROD=1 pnpm test:e2e --project=prod-chromium --project=prod-webkit
+const withProd = process.env.PW_PROD === "1";
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
@@ -17,11 +21,13 @@ export default defineConfig({
       testIgnore: /security\.spec\.ts/,
     })),
     // prod 빌드(3200): CSP·헤더 검증 전용
-    ...browsers.map((b) => ({
-      name: `prod-${b.name}`,
-      use: { ...b.use, baseURL: "http://localhost:3200" },
-      testMatch: /security\.spec\.ts/,
-    })),
+    ...(withProd
+      ? browsers.map((b) => ({
+          name: `prod-${b.name}`,
+          use: { ...b.use, baseURL: "http://localhost:3200" },
+          testMatch: /security\.spec\.ts/,
+        }))
+      : []),
   ],
   webServer: [
     {
@@ -30,11 +36,15 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 120_000,
     },
-    {
-      command: "pnpm build && ANALYTALK_E2E=1 pnpm start --port 3200",
-      url: "http://localhost:3200",
-      reuseExistingServer: false,
-      timeout: 300_000,
-    },
+    ...(withProd
+      ? [
+          {
+            command: "pnpm build && ANALYTALK_E2E=1 pnpm start --port 3200",
+            url: "http://localhost:3200",
+            reuseExistingServer: false,
+            timeout: 300_000,
+          },
+        ]
+      : []),
   ],
 });
