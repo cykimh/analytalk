@@ -42,7 +42,7 @@ export function PageState({ error, onReload }: { error: LoadError | null; onRelo
   if (!error) {
     return (
       <PageFrame>
-        <p aria-busy className="font-hand text-xl text-ink-soft">
+        <p aria-busy className="text-base text-ink-soft">
           불러오는 중…
         </p>
       </PageFrame>

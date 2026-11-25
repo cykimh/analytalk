@@ -33,7 +33,7 @@ function Tile({ label, value, sub, look, index = 0 }: { label: string; value: Re
   if (look === "scrap") {
     return (
       <Paper tone="kraft" tilt={alternate(index + 1)} className="grid gap-0.5 p-3">
-        <span className="font-hand text-lg leading-tight font-bold">{label}</span>
+        <span className="text-base leading-tight font-bold">{label}</span>
         <span className="truncate text-xl font-bold tabular-nums">{value}</span>
         {sub && <span className="truncate text-sm text-ink-soft">{sub}</span>}
       </Paper>
@@ -197,7 +197,7 @@ function Crossed({ stats, me, look }: { stats: ChatStats; me: string; look: Char
           ))}
         </ul>
       )}
-      <p className={look === "scrap" ? "font-hand text-xl font-bold" : "text-base font-medium"}>어떻게 느꼈나요?</p>
+      <p className={look === "scrap" ? "text-base font-bold" : "text-base font-medium"}>어떻게 느꼈나요?</p>
     </ChartCard>
   );
 }

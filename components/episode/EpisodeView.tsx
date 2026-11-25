@@ -37,7 +37,7 @@ export function EpisodeView({
         <p className="text-[0.8125rem] text-ink-soft">
           {n}편 · {AI_NOTICE}
         </p>
-        <h1 className="font-hand text-[2.125rem] leading-[1.2] font-bold wrap-anywhere">
+        <h1 className="text-[1.75rem] leading-[1.2] font-bold wrap-anywhere tracking-tight">
           <Highlight color={highlightAt(0)}>
             {hasStatText(content.headline, stats) ? <StatText text={content.headline} stats={stats} /> : `${n}편`}
           </Highlight>
@@ -61,7 +61,7 @@ export function EpisodeView({
           tape={tapeAt(si + 1)}
           className="grid grid-cols-1 gap-4 px-5 pt-7 pb-6"
         >
-          <h2 className="flex min-w-0 items-start gap-2 font-hand text-[1.625rem] leading-tight font-bold wrap-anywhere">
+          <h2 className="flex min-w-0 items-start gap-2 text-[1.25rem] leading-tight font-bold wrap-anywhere tracking-tight">
             <Sticker aria-hidden index={si} className="mt-0.5 shrink-0 px-1.5 font-sans text-lg leading-none">
               {section.icon}
             </Sticker>
@@ -94,7 +94,7 @@ export function EpisodeView({
           tape={tapeAt(content.sections.length + 1)}
           className="grid grid-cols-1 gap-1 px-5 pt-6"
         >
-          <span className="font-hand text-xl font-bold">다음 편 예고</span>
+          <span className="text-base font-bold">다음 편 예고</span>
           <p className="text-base leading-relaxed wrap-anywhere">
             <StatText text={content.next_teaser} stats={stats} />
           </p>

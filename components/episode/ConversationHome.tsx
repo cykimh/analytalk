@@ -71,11 +71,11 @@ function EpisodeCard({
 
   return (
     <Paper as="section" aria-label={`${n}편`} tilt={alternate(n)} tape={tapeAt(n)} className="grid grid-cols-1 content-start gap-2 pt-6">
-      <p className="font-hand text-lg leading-tight text-ink-soft">
+      <p className="text-base leading-tight text-ink-soft">
         {n}편 · {STATUS_TEXT[status] ?? status}
       </p>
       {content && (
-        <h3 className="font-hand text-[1.5rem] leading-snug font-bold wrap-anywhere">
+        <h3 className="text-[1.25rem] leading-snug font-bold wrap-anywhere tracking-tight">
           {hasStatText(content.headline, stats) ? <StatText text={content.headline} stats={stats} /> : `${n}편`}
         </h3>
       )}
@@ -133,7 +133,7 @@ function DeleteBox({ id }: { id: string }) {
 
   return (
     <section aria-labelledby="delete-title" className="grid gap-2 rounded-[3px] border border-dashed border-ink/25 bg-sheet/70 p-4">
-      <h2 id="delete-title" className="font-hand text-xl font-bold">
+      <h2 id="delete-title" className="text-base font-bold">
         대화 지우기
       </h2>
       <p className="text-base text-muted-foreground">4편과 통계, 이 대화로 남긴 피드백이 모두 지워지고 되돌릴 수 없어요.</p>
@@ -181,7 +181,7 @@ export function ConversationHomeView({
       <ReportCapture>
         <Paper as="header" tilt="left" tape={tapeAt(0)} className="grid gap-3 px-5 pt-7 pb-5">
           <p className="text-[0.8125rem] text-ink-soft">{AI_NOTICE}</p>
-          <h1 className="font-hand text-[2.25rem] leading-tight font-bold">
+          <h1 className="text-[1.75rem] leading-tight font-bold tracking-tight">
             <Highlight>{SERIES_TITLE[c.concept]}</Highlight>
           </h1>
           <CoverStickers concept={c.concept} names={c.displayNames} dailyCounts={c.stats.dailyCounts} />
@@ -196,7 +196,7 @@ export function ConversationHomeView({
       </ReportCapture>
 
       <section aria-labelledby="episodes-title" className="grid gap-5">
-        <h2 id="episodes-title" className="font-hand text-[1.75rem] leading-tight font-bold">
+        <h2 id="episodes-title" className="text-[1.375rem] leading-tight font-bold tracking-tight">
           <Highlight color="mint">연재 4편</Highlight>
         </h2>
         <div className="grid gap-6">
@@ -222,7 +222,7 @@ export function ConversationHomeView({
       <SharePanel id={id} conversation={c} onChanged={reload} />
 
       <section aria-labelledby="stats-title" className="grid gap-5">
-        <h2 id="stats-title" className="font-hand text-[1.75rem] leading-tight font-bold">
+        <h2 id="stats-title" className="text-[1.375rem] leading-tight font-bold tracking-tight">
           <Highlight>대화 통계</Highlight>
         </h2>
         <StatsDashboard stats={c.stats} kind={c.kind} me="" look="scrap" />

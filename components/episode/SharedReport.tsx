@@ -27,7 +27,7 @@ export function SharedReport({ view }: { view: SharedReportData }) {
       <ReportCapture>
         <Paper as="header" tilt="left" tape={tapeAt(0)} className="grid gap-3 px-5 pt-7 pb-5">
           <p className="text-[0.8125rem] text-ink-soft">{AI_NOTICE}</p>
-          <h1 className="font-hand text-[2.25rem] leading-tight font-bold">
+          <h1 className="text-[1.75rem] leading-tight font-bold tracking-tight">
             <Highlight>{SERIES_TITLE[view.concept]}</Highlight>
           </h1>
           <CoverStickers concept={view.concept} names={view.displayNames} dailyCounts={view.stats.dailyCounts} />

@@ -39,7 +39,7 @@ function StatTicker({ stats }: { stats: ChatStats }) {
       tape={tapeAt(1)}
       className="grid gap-1 justify-self-center px-6 pt-6 pb-5 text-center"
     >
-      <p className="font-hand text-xl leading-tight font-bold">{card.label}</p>
+      <p className="text-base leading-tight font-bold">{card.label}</p>
       <p className="truncate text-3xl font-bold tabular-nums">{card.value}</p>
     </Paper>
   );
@@ -67,7 +67,7 @@ export function StepsFeedView({
       <ReportCapture>
         <Paper as="header" tilt="left" tape={tapeAt(0)} className="grid gap-2 px-5 pt-7 pb-5">
           <p className="text-[0.8125rem] text-ink-soft">{AI_NOTICE}</p>
-          <h1 className="font-hand text-[2rem] leading-tight font-bold">
+          <h1 className="text-[1.625rem] leading-tight font-bold tracking-tight">
             <Highlight>{active ? "AI가 대화를 읽고 있어요" : "AI 연재 진행 상황"}</Highlight>
           </h1>
           <p className="text-base text-ink-soft">창을 닫아도 서버에서 계속 써요. 끝난 편부터 대화 홈에서 읽을 수 있어요.</p>
@@ -87,7 +87,7 @@ export function StepsFeedView({
             const shown = stats ? (notes[e.n] ?? []).filter((note) => hasStatText(note.note, stats)) : [];
             return (
               <Paper as="li" key={e.n} tilt={alternate(e.n)} calm tape={tapeAt(e.n + 1)} className="grid grid-cols-1 gap-2 pt-6">
-                <h2 className="font-hand text-[1.375rem] leading-tight font-bold">
+                <h2 className="text-[1.125rem] leading-tight font-bold">
                   {e.n}편 <span className="font-normal text-ink-soft">· {STATUS_TEXT[e.status] ?? e.status}</span>
                 </h2>
                 {stats && shown.length > 0 && (

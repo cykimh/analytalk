@@ -34,16 +34,20 @@ UI 작업 전에 이 문서를 읽고 따른다. 값의 원본은 코드다: 토
 
 ## 글꼴 (`app/fonts.ts`)
 
-| 글꼴 | 클래스 | 쓰임 |
-| --- | --- | --- |
-| 개구체 Gaegu 400·700 (OFL, `next/font/google`) | `font-hand` | 제목(h1·h2·카드 제목), 스티커, 폴라로이드 캡션, 손글씨 메모(“다음 편 예고”, “← 대화 홈”) |
-| Pretendard 400·700 (OFL, `next/font/local`, npm `pretendard`의 KS X 1001 서브셋) | `font-sans`(기본) | 본문·버튼·숫자 |
+**Pretendard 하나만 쓴다** (400·700, OFL, `next/font/local`, npm `pretendard`의 KS X 1001 서브셋, 클래스 `font-sans` 기본). 제목·본문·스티커·캡션·숫자 모두. 손글씨체는 쓰지 않는다(2026-11-25 사용자: "리포트인데 너무 장난스럽다, 글씨는 잘 보이게")
 
-- 둘 다 빌드 때 받아 `/_next/static/media`에서 낸다. CSP `font-src`는 `default-src 'self'`라 외부 글꼴 주소를 쓰면 막힌다
-- 미리 받는(preload) 글꼴은 Pretendard Regular 한 파일뿐이다. 개구체는 `preload: false`라 화면에 나온 글자의 조각만 받고, Pretendard Bold도 굵은 글자가 나올 때 받는다. 글꼴을 더하면 빌드 후 `.next/server/next-font-manifest.json`에서 라우트마다 preload가 1개인지 본다
+| 쓰임 | 크기·굵기 |
+| --- | --- |
+| 표지·편 제목 h1 | 28px(`text-[1.75rem]`) 700, `tracking-tight` (홈 로고 32px) |
+| 섹션 제목 h2 | 20~22px(`text-[1.25rem]`~`text-[1.375rem]`) 700, `tracking-tight` |
+| 카드·차트 제목 h3 | 18px(`text-[1.125rem]`) 700 |
+| 작은 제목·메모(“다음 편 예고”, “← 대화 홈”, 폴라로이드 캡션) | 16px(`text-base`) |
+| 스티커 | 부모 크기, 700, 자간 -0.01em |
+
+- 빌드 때 받아 `/_next/static/media`에서 낸다. CSP `font-src`는 `default-src 'self'`라 외부 글꼴 주소를 쓰면 막힌다
+- 미리 받는(preload) 글꼴은 Pretendard Regular 한 파일뿐이다. Pretendard Bold는 굵은 글자가 나올 때 받는다. 글꼴을 더하면 빌드 후 `.next/server/next-font-manifest.json`에서 라우트마다 preload가 1개인지 본다
 - 리포트 본문은 Pretendard **17px**(`text-[1.0625rem]`), 줄 간격 1.8. **문장으로 읽는 글(설명·안내·목록·공유 패널 안내·라디오 설명·차트 설명)은 모든 화면에서 16px(`text-base`) 이상.** 12~14px은 날짜·단위·축·고지 같은 짧은 라벨에만 쓴다
-- 개구체는 같은 px에서 Pretendard보다 작아 보인다. 한 단계 크게 쓴다(`text-sm` 자리 → `text-lg`~`text-xl`, h1은 34~40px)
-- 숫자(통계·시각·날짜)는 `tabular-nums`. 리포트 화면은 `PageFrame` 전체에 걸어 둔다. 개구체 숫자는 폭이 고르지 않아, 큰 숫자는 Pretendard 굵게 쓴다
+- 숫자(통계·시각·날짜)는 `tabular-nums`. 리포트 화면은 `PageFrame` 전체에 걸어 둔다. 큰 숫자는 굵게
 - 모델이 쓴 글의 통계 값은 바로 뒤에 붙은 조사·문장부호(6자까지)와 한 덩어리로 줄을 바꾼다(`glueTails`, “23%로,”가 “23%” / “로,”로 갈리지 않게)
 - 서브셋에 없는 드문 음절은 시스템 고딕으로 떨어진다
 
@@ -64,14 +68,14 @@ UI 작업 전에 이 문서를 읽고 따른다. 값의 원본은 코드다: 토
 | `Paper` | 붙인 종이 한 장. 모서리 거의 각짐(2~4px), 옅은 그림자. `tilt`는 `alternate(i)`로 −1.2° / +1° 번갈아. **긴 본문이 든 카드(편 섹션·공유 패널·진행 기록)는 `calm`으로 ±0.5° 이하**. `tone`: `sheet`(흰 종이)·`butter`(노란 메모지: 다음 편 예고·진행 통계)·`kraft`(크라프트지: 작은 숫자 칸) |
 | `MaskingTape` | `Paper`의 `tape={tapeAt(i)}`로 붙인다. 색 다섯 가지와 자리(가운데·왼쪽 모서리·오른쪽 모서리)를 서로 다른 주기로 돌려, 이웃한 카드의 테이프는 색도 자리도 다르다. 반투명(`mix-blend-mode: multiply`), 양 끝이 들쭉날쭉, 살짝 기움. 모서리 테이프는 가늘고 짧게 모서리에 비껴 붙여 첫 줄 글자를 덮지 않고, 카드 바깥으로 8px만 나가 375px 화면 끝에서 잘리지 않는다 |
 | `Highlight` | 제목 글자 뒤 아래쪽 절반의 단색 띠(하드 스톱). `highlightAt(i)`로 노랑부터 민트와 번갈아. h1·h2 제목에만 긋고, 차트 카드 제목(h3)에는 긋지 않는다 |
-| `Polaroid` / `PolaroidStrip` | 흰 테두리, 아래 여백이 두꺼운 사진. 사진 칸에 큰 숫자(Pretendard 굵게, tabular, 칸 폭에 맞춰 크기), 아래 여백에 개구체 캡션. `<dl>` 안에서 읽는 순서는 캡션 → 숫자, 화면은 숫자가 위 |
-| `Sticker` | 다이컷 종이 스티커: 둥근 모서리 + 흰 테두리 3px, 개구체 굵게, ±2° 안에서 기움(`stickerTiltAt`). 긴 글자는 한 줄 말줄임 |
-| `TornNote` | 근거 인용 메모지: 위아래가 찢긴 종이, 옅은 줄(28px), 왼쪽 위 손글씨 따옴표. 캡션(보낸 사람 · 시각) → 인용 순서. 짧은 글이라 ±0.8° 안에서 기움 |
+| `Polaroid` / `PolaroidStrip` | 흰 테두리, 아래 여백이 두꺼운 사진. 사진 칸에 큰 숫자(Pretendard 굵게, tabular, 칸 폭에 맞춰 크기), 아래 여백에 캡션(16px). `<dl>` 안에서 읽는 순서는 캡션 → 숫자, 화면은 숫자가 위 |
+| `Sticker` | 다이컷 종이 스티커: 둥근 모서리 + 흰 테두리 3px, 굵게, ±2° 안에서 기움(`stickerTiltAt`). 긴 글자는 한 줄 말줄임 |
+| `TornNote` | 근거 인용 메모지: 위아래가 찢긴 종이, 옅은 줄(28px), 왼쪽 위 큰 따옴표. 캡션(보낸 사람 · 시각) → 인용 순서. 짧은 글이라 ±0.8° 안에서 기움 |
 | `.crayon` | 크레파스 단색 막대: 한 색 위에 밀랍 같은 흰 결(SVG 노이즈, `data:` 이미지)과 고르지 않은 모서리. 그라데이션을 쓰지 않는다 |
 
 리포트 화면이 쓰는 조합:
 
-- 표지 제목(`SERIES_TITLE`: “단톡방 연재”·“둘의 대화 연재”)은 개구체 + 노랑 형광펜. 대화 홈과 공유 화면이 같은 제목을 쓴다
+- 표지 제목(`SERIES_TITLE`: “단톡방 연재”·“둘의 대화 연재”)은 굵은 제목 + 노랑 형광펜. 대화 홈과 공유 화면이 같은 제목을 쓴다
 - `CoverStickers`(`components/episode`): 컨셉 → 기간(첫 메시지 ~ 마지막 메시지) → 멤버 이름(6명까지, 넘으면 “외 N명”)
 - `KpiPolaroids`(`components/stats`): 주고받은 메시지 · 함께한 날(기간 날수, 양 끝 포함) · 가장 뜨거웠던 날(busiestDay 개수와 날짜)
 - 섹션 아이콘은 h2 앞의 스티커(`aria-hidden`)

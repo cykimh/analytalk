@@ -1,4 +1,4 @@
-// 찢은 메모지(근거 인용). 위아래가 들쭉날쭉한 종이에 옅은 줄, 왼쪽 위에 손글씨 따옴표.
+// 찢은 메모지(근거 인용). 위아래가 들쭉날쭉한 종이에 옅은 줄, 왼쪽 위에 큰 따옴표.
 // children은 figcaption·blockquote다(figcaption은 figure의 첫 자식이어야 해서 그림자는 바깥 div가 그린다).
 // figure는 grid-cols-1(minmax(0,1fr)): 긴 인용 한 단어가 칸을 넓혀 w-fit 메모지가 카드 밖으로 커지지 않게 한다
 import type { ReactNode } from "react";

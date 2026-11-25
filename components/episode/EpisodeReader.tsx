@@ -23,7 +23,7 @@ export function EpisodeReaderView({ id, n, conversation: c }: { id: string; n: n
   return (
     <PageFrame>
       <nav>
-        <Link href={`/c/${id}`} className="inline-flex min-h-11 items-center font-hand text-xl text-ink-soft underline-offset-4 hover:underline">
+        <Link href={`/c/${id}`} className="inline-flex min-h-11 items-center text-base text-ink-soft underline-offset-4 hover:underline">
           ← 대화 홈
         </Link>
       </nav>
@@ -48,7 +48,7 @@ export function EpisodeReaderView({ id, n, conversation: c }: { id: string; n: n
         </>
       ) : (
         <Paper tilt="left" tape={tapeAt(0)} className="grid gap-3 pt-6 text-base">
-          <p className="font-hand text-xl font-bold">
+          <p className="text-base font-bold">
             {n}편 · {STATUS_TEXT[status ?? ""] ?? "아직 없어요"}
           </p>
           {status === "safety" && <p>{SAFETY_HELP}</p>}

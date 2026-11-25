@@ -1,4 +1,4 @@
-// 폴라로이드 한 장: 흰 테두리, 두꺼운 아래 여백에 손글씨 캡션, 사진 칸에 숫자(tabular).
+// 폴라로이드 한 장: 흰 테두리, 두꺼운 아래 여백에 캡션, 사진 칸에 숫자(tabular).
 // <dl> 안에 둔다(PolaroidStrip). 읽는 순서는 캡션(dt) → 숫자(dd)이고, 화면에는 숫자가 위·캡션이 아래다
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
@@ -34,7 +34,7 @@ export function Polaroid({
 }) {
   return (
     <div className={cn("polaroid flex min-w-0 flex-col", polaroidTiltAt(index))}>
-      <dt className="order-2 grid min-h-11 place-items-center px-0.5 py-1.5 text-center font-hand text-[1.0625rem] leading-tight font-bold text-balance">
+      <dt className="order-2 grid min-h-11 place-items-center px-0.5 py-1.5 text-center text-base leading-tight font-bold text-balance">
         {caption}
       </dt>
       <dd className={cn("polaroid-photo @container order-1 grid aspect-square min-w-0 content-center justify-items-center gap-1 px-1", PHOTO[tone])}>

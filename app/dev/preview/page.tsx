@@ -15,7 +15,7 @@ import { PreviewNav } from "./PreviewNav";
 export const metadata: Metadata = { title: "미리보기 · analytalk", robots: { index: false, follow: false } };
 
 function Label({ children }: { children: string }) {
-  return <h2 className="font-hand text-2xl font-bold">{children}</h2>;
+  return <h2 className="text-xl font-bold tracking-tight">{children}</h2>;
 }
 
 export default function PreviewSheetPage() {
@@ -54,10 +54,10 @@ export default function PreviewSheetPage() {
 
         <Label>형광펜</Label>
         <Paper className="grid gap-2">
-          <p className="font-hand text-3xl font-bold">
+          <p className="text-2xl font-bold tracking-tight">
             <Highlight>노랑 형광펜 #FFF3A3</Highlight>
           </p>
-          <p className="font-hand text-3xl font-bold">
+          <p className="text-2xl font-bold tracking-tight">
             <Highlight color="mint">민트 형광펜 #CDEFE3, 줄이 바뀌어도 줄마다 칠해요</Highlight>
           </p>
         </Paper>

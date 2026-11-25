@@ -131,7 +131,7 @@ export function SharePanel({ id, conversation: c, onChanged }: { id: string; con
 
   return (
     <Paper as="section" aria-labelledby="share-title" tilt="right" calm tape={tapeAt(4)} className="grid gap-3 pt-6">
-      <h2 id="share-title" className="font-hand text-[1.75rem] leading-tight font-bold">
+      <h2 id="share-title" className="text-[1.375rem] leading-tight font-bold tracking-tight">
         <Highlight color="mint">공유</Highlight>
       </h2>
       <p className="text-base text-muted-foreground">{SHARE_TEXT.notice(c.expiresAt)}</p>

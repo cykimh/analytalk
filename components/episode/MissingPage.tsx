@@ -20,11 +20,11 @@ export function MissingPage({ title, children }: { title: string; children: Reac
       >
         <MaskingTape color="pink" at="left" />
         <MaskingTape color="sky" at="right" />
-        <span className="font-hand text-xl text-ink-soft">빈자리</span>
+        <span className="text-base text-ink-soft">빈자리</span>
       </div>
 
       <Paper as="header" tilt="right" tape={tapeAt(2)} className="grid gap-3 px-5 pt-7 pb-6">
-        <h1 className="font-hand text-[2.25rem] leading-tight font-bold">
+        <h1 className="text-[1.75rem] leading-tight font-bold tracking-tight">
           <Highlight>{title}</Highlight>
         </h1>
         <div className="grid gap-2 text-base leading-relaxed">{children}</div>

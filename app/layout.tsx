@@ -5,7 +5,7 @@ import { connection } from "next/server";
 import { NonceProvider } from "@/components/NonceProvider";
 import { APP_SCHEMA } from "@/lib/app";
 import { cn } from "@/lib/utils";
-import { gaegu, pretendard, pretendardBold } from "./fonts";
+import { pretendard, pretendardBold } from "./fonts";
 import "./globals.css";
 
 export const metadata: Metadata = { title: APP_SCHEMA };
@@ -16,7 +16,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   await connection();
   const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
-    <html lang="ko" className={cn("font-sans", pretendard.variable, pretendardBold.variable, gaegu.variable)}>
+    <html lang="ko" className={cn("font-sans", pretendard.variable, pretendardBold.variable)}>
       <body>
         <NonceProvider nonce={nonce}>{children}</NonceProvider>
       </body>

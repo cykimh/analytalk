@@ -12,7 +12,7 @@ export function ParagraphFeedback({ id, n, content, stats }: { id: string; n: nu
   if (rows.length === 0) return null;
   return (
     <Paper as="section" aria-labelledby="feedback-title" className="grid grid-cols-1 gap-3">
-      <p id="feedback-title" className="font-hand text-xl font-bold">
+      <p id="feedback-title" className="text-base font-bold">
         틀린 문단이 있으면 알려 주세요
       </p>
       <ol className="grid grid-cols-1">

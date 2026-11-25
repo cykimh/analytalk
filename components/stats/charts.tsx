@@ -47,7 +47,7 @@ export function ChartCard({
     return (
       <Paper as="section" tilt={alternate(index)} tape={tapeAt(index + 1)} className={cn("grid content-start gap-3 pt-5", className)}>
         <header className="grid gap-1">
-          <h3 className="font-hand text-[1.375rem] leading-tight font-bold">{title}</h3>
+          <h3 className="text-[1.125rem] leading-tight font-bold">{title}</h3>
           {note && <p className="text-base leading-snug text-ink-soft">{note}</p>}
         </header>
         {children}
