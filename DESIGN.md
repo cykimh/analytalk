@@ -40,6 +40,7 @@ UI 작업 전에 이 문서를 읽고 따른다. 값의 원본은 코드다: 토
 | Pretendard 400·700 (OFL, `next/font/local`, npm `pretendard`의 KS X 1001 서브셋) | `font-sans`(기본) | 본문·버튼·숫자 |
 
 - 둘 다 빌드 때 받아 `/_next/static/media`에서 낸다. CSP `font-src`는 `default-src 'self'`라 외부 글꼴 주소를 쓰면 막힌다
+- 미리 받는(preload) 글꼴은 Pretendard Regular 한 파일뿐이다. 개구체는 `preload: false`라 화면에 나온 글자의 조각만 받고, Pretendard Bold도 굵은 글자가 나올 때 받는다. 글꼴을 더하면 빌드 후 `.next/server/next-font-manifest.json`에서 라우트마다 preload가 1개인지 본다
 - 리포트 본문은 Pretendard **17px**(`text-[1.0625rem]`), 줄 간격 1.8. **문장으로 읽는 글(설명·안내·목록·공유 패널 안내·라디오 설명·차트 설명)은 모든 화면에서 16px(`text-base`) 이상.** 12~14px은 날짜·단위·축·고지 같은 짧은 라벨에만 쓴다
 - 개구체는 같은 px에서 Pretendard보다 작아 보인다. 한 단계 크게 쓴다(`text-sm` 자리 → `text-lg`~`text-xl`, h1은 34~40px)
 - 숫자(통계·시각·날짜)는 `tabular-nums`. 리포트 화면은 `PageFrame` 전체에 걸어 둔다. 개구체 숫자는 폭이 고르지 않아, 큰 숫자는 Pretendard 굵게 쓴다
