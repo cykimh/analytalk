@@ -29,6 +29,7 @@ import {
   readRange,
   retryKept,
   SAFETY_HELP,
+  SERIES_TITLE,
   STATUS_TEXT,
   type StatusView,
 } from "./model";
@@ -78,25 +79,25 @@ function EpisodeCard({
           {hasStatText(content.headline, stats) ? <StatText text={content.headline} stats={stats} /> : `${n}편`}
         </h3>
       )}
-      {status === "safety" && <p className="text-sm">{SAFETY_HELP}</p>}
-      {retryKept(status, errorCode) && <p className="text-xs text-muted-foreground">{RETRY_KEPT_TEXT}</p>}
+      {status === "safety" && <p className="text-base">{SAFETY_HELP}</p>}
+      {retryKept(status, errorCode) && <p className="text-base text-muted-foreground">{RETRY_KEPT_TEXT}</p>}
       {(action.read || action.retry) && (
         <div className="flex flex-wrap items-center gap-2 pt-1">
           {action.read && (
-            <Link href={`/c/${id}/e/${n}`} className={buttonVariants({ size: "sm" })}>
+            <Link href={`/c/${id}/e/${n}`} className={buttonVariants()}>
               {n}편 읽기
             </Link>
           )}
           {action.retry === "button" && (
-            <Button size="sm" variant="outline" disabled={busy} onClick={retry}>
+            <Button variant="outline" disabled={busy} onClick={retry}>
               다시 쓰기
             </Button>
           )}
-          {action.retry === "paused" && <span className="text-xs text-muted-foreground">{PAUSED_TEXT}</span>}
+          {action.retry === "paused" && <span className="text-base text-muted-foreground">{PAUSED_TEXT}</span>}
         </div>
       )}
       {message && (
-        <p role="alert" className="text-xs text-destructive">
+        <p role="alert" className="text-base text-destructive">
           {message}
         </p>
       )}
@@ -135,7 +136,7 @@ function DeleteBox({ id }: { id: string }) {
       <h2 id="delete-title" className="font-hand text-xl font-bold">
         대화 지우기
       </h2>
-      <p className="text-sm text-muted-foreground">4편과 통계, 이 대화로 남긴 피드백이 모두 지워지고 되돌릴 수 없어요.</p>
+      <p className="text-base text-muted-foreground">4편과 통계, 이 대화로 남긴 피드백이 모두 지워지고 되돌릴 수 없어요.</p>
       {asking ? (
         <div className="flex flex-wrap gap-2">
           <Button variant="destructive" disabled={busy} onClick={remove}>
@@ -151,7 +152,7 @@ function DeleteBox({ id }: { id: string }) {
         </Button>
       )}
       {error && (
-        <p role="alert" className="text-xs text-destructive">
+        <p role="alert" className="text-base text-destructive">
           {error}
         </p>
       )}
@@ -181,10 +182,10 @@ export function ConversationHomeView({
         <Paper as="header" tilt="left" tape={tapeAt(0)} className="grid gap-3 px-5 pt-7 pb-5">
           <p className="text-[0.8125rem] text-ink-soft">{AI_NOTICE}</p>
           <h1 className="font-hand text-[2.25rem] leading-tight font-bold">
-            <Highlight>{c.concept === "couple" ? "둘의 대화 연재" : "단톡방 연재"}</Highlight>
+            <Highlight>{SERIES_TITLE[c.concept]}</Highlight>
           </h1>
           <CoverStickers concept={c.concept} names={c.displayNames} dailyCounts={c.stats.dailyCounts} />
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 pt-1 text-sm">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 pt-1 text-base">
             <dt className="text-ink-soft">읽은 범위</dt>
             <dd className="tabular-nums">{readRange(c.cutoffAt, c.msgSent)}</dd>
             <dt className="text-ink-soft">삭제 예정일</dt>

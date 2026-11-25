@@ -1,5 +1,4 @@
-// 리포트 표지의 종이 스티커 줄: 컨셉 → 기간 → 멤버 이름(많으면 앞의 몇 명과 '외 N명') → (있으면) 손글씨 꼬리말.
-// 꼬리말은 공유 화면의 "…의 대화"처럼 이름 스티커 뒤에 이어 쓰는 말이다
+// 리포트 표지의 종이 스티커 줄: 컨셉 → 기간 → 멤버 이름(많으면 앞의 몇 명과 '외 N명')
 import { Sticker } from "@/components/scrap/Sticker";
 import { periodOf } from "@/components/stats/format";
 import { CONCEPTS } from "@/lib/llm/concepts";
@@ -10,12 +9,10 @@ export function CoverStickers({
   concept,
   names,
   dailyCounts,
-  suffix,
 }: {
   concept: keyof typeof CONCEPTS;
   names: string[];
   dailyCounts: Record<string, number>;
-  suffix?: string;
 }) {
   const period = periodOf(dailyCounts);
   const shown = names.slice(0, MAX_NAME_STICKERS);
@@ -49,7 +46,6 @@ export function CoverStickers({
           </Sticker>
         </li>
       )}
-      {suffix && <li className="font-hand text-xl leading-none font-bold">{suffix}</li>}
     </ul>
   );
 }

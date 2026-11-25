@@ -46,6 +46,8 @@ export const STATUS_TEXT: Record<string, string> = {
 export const SAFETY_HELP =
   "걱정되는 이야기가 보여서 이 편은 쓰지 않았어요. 힘들 때는 109(자살예방상담전화, 24시간), 위험할 때는 112·1366(여성긴급전화, 24시간)에서 도와줘요.";
 export const AI_NOTICE = "AI 생성, 재미·참고용";
+/** 리포트 표지 제목(대화 홈·공유 화면·처음 화면의 내 연재) */
+export const SERIES_TITLE: Record<ConversationView["concept"], string> = { couple: "둘의 대화 연재", group: "단톡방 연재" };
 export const PAUSED_TEXT = "이번 달 AI 마감";
 export const RETRY_KEPT_TEXT = "다시 쓰지 못해서 앞의 글을 그대로 뒀어요.";
 

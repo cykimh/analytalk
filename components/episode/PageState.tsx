@@ -1,7 +1,8 @@
 "use client";
 
 // 리포트 화면(대화 홈·편·진행·공유)의 틀과, 아직 내용을 못 그릴 때: 불러오는 중·없음·세션 끝남·네트워크 오류.
-// 틀은 430px 다이어리 한 장이다(DESIGN.md). 기운 카드·테이프가 옆으로 삐져나와도 가로 스크롤이 생기지 않게 가로만 자른다
+// 틀은 430px 다이어리 한 장이다(DESIGN.md). 기운 카드·테이프가 옆으로 삐져나와도 가로 스크롤이 생기지 않게 가로만 자른다.
+// 숫자(통계·날짜·시각)가 많은 화면이라 틀 전체에 tabular-nums를 준다
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Paper } from "@/components/scrap/Paper";
@@ -16,7 +17,7 @@ const TEXT: Record<LoadError, string> = {
 };
 
 export function PageFrame({ children }: { children: ReactNode }) {
-  return <main className="mx-auto grid w-full max-w-[430px] min-w-0 gap-7 overflow-x-clip px-4 pt-8 pb-16">{children}</main>;
+  return <main className="mx-auto grid w-full max-w-[430px] min-w-0 gap-7 overflow-x-clip px-4 pt-8 pb-16 tabular-nums">{children}</main>;
 }
 
 /** 이미지로 저장할 리포트 영역의 id(저장 기능은 아직 없다). 한 화면에 하나 */
@@ -51,11 +52,11 @@ export function PageState({ error, onReload }: { error: LoadError | null; onRelo
         <p>{TEXT[error]}</p>
         <div className="flex flex-wrap gap-2">
           {error === "network" && (
-            <Button size="sm" onClick={onReload}>
+            <Button onClick={onReload}>
               다시 불러오기
             </Button>
           )}
-          <Link href={error === "not_found" ? "/new" : "/"} className={buttonVariants({ size: "sm", variant: "outline" })}>
+          <Link href={error === "not_found" ? "/new" : "/"} className={buttonVariants({ variant: "outline" })}>
             {error === "not_found" ? "대화 올리기" : "처음 화면"}
           </Link>
         </div>

@@ -18,7 +18,7 @@ export function ParagraphFeedback({ id, n, content, stats }: { id: string; n: nu
       <ol className="grid">
         {rows.map((r) => (
           <li key={r.ref} className="grid gap-1 border-t border-dashed border-ink/15 py-3 first:border-t-0 first:pt-0 last:pb-0">
-            <p id={`feedback-${r.ref}`} className="line-clamp-2 text-sm text-ink-soft break-words">
+            <p id={`feedback-${r.ref}`} className="line-clamp-2 text-base text-ink-soft break-words">
               <StatText text={r.text} stats={stats} />
             </p>
             <FeedbackButton id={id} n={n} paragraphKey={r.ref} describedBy={`feedback-${r.ref}`} />

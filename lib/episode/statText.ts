@@ -60,6 +60,39 @@ export function renderStatText(text: string, stats: ChatStats): (string | StatTo
   return out;
 }
 
+/** 숫자 바로 뒤에 띄어 쓰지 않고 붙은 말(조사·문장부호)을 숫자와 묶는 길이 상한 */
+export const MAX_STAT_TAIL = 6;
+
+/** 화면에 그릴 조각: 글자, 또는 통계 값 + 바로 뒤에 붙은 짧은 말(tail, 없으면 "") */
+export type StatChunk = string | (StatToken & { tail: string });
+
+/**
+ * 통계 값과 바로 뒤에 붙은 짧은 말("23%로,", "6번의")을 한 조각으로 묶는다. 화면은 이 조각을 줄바꿈 없이 그린다.
+ * "%"와 한글 사이는 keep-all이어도 줄이 바뀔 수 있어, 묶지 않으면 "…비율은 23%" / "로, 궁금한…"처럼 조사가 줄 맨 앞에 온다.
+ * 띄어 쓰지 않은 긴 말(MAX_STAT_TAIL 초과)까지 묶으면 375px에서 넘칠 수 있어 그때는 묶지 않는다
+ */
+export function glueTails(parts: (string | StatToken)[]): StatChunk[] {
+  const out: StatChunk[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const t = parts[i];
+    if (typeof t === "string") {
+      out.push(t);
+      continue;
+    }
+    const next = parts[i + 1];
+    const tail = typeof next === "string" ? (/^\S+/.exec(next)?.[0] ?? "") : "";
+    if (tail === "" || tail.length > MAX_STAT_TAIL) {
+      out.push({ ...t, tail: "" });
+      continue;
+    }
+    out.push({ ...t, tail });
+    const rest = (next as string).slice(tail.length);
+    if (rest !== "") out.push(rest);
+    i++;
+  }
+  return out;
+}
+
 /** 채운 글을 문자열 하나로(<title>·OG·공유 카드처럼 조각을 그릴 수 없는 곳) */
 export function renderStatPlain(text: string, stats: ChatStats): string {
   return renderStatText(text, stats)

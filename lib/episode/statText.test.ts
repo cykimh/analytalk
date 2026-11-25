@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { validateEpisode } from "@/lib/llm/validate";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { buildPayload, payloadIndex } from "@/lib/payload/build";
-import { hasStatText, renderStatPlain, renderStatText } from "./statText";
+import { glueTails, hasStatText, MAX_STAT_TAIL, renderStatPlain, renderStatText } from "./statText";
 
 /** KST 벽시계 → UTC epoch ms */
 const kst = (d: number, h: number, mi: number) => Date.UTC(2026, 9, d, h, mi) - 9 * 3_600_000;
@@ -131,5 +131,41 @@ describe("hasStatText", () => {
     expect(hasStatText("{{stat:nope}} {{stat:replyMedianMs.철수}}", stats)).toBe(false);
     expect(hasStatText("  ", stats)).toBe(false);
     expect(hasStatText(null, stats)).toBe(false);
+  });
+});
+
+describe("glueTails", () => {
+  const pct = { path: "questionRate.철수", display: "23%" };
+  const min = { path: "replyMedianMs.민지", display: "4분" };
+
+  it("값 바로 뒤에 붙은 조사·문장부호를 값과 한 조각으로 묶고, 나머지 글은 그대로 둔다", () => {
+    expect(glueTails(["물음표 비율은 ", pct, "로, 궁금한 건 바로"])).toEqual([
+      "물음표 비율은 ",
+      { ...pct, tail: "로," },
+      " 궁금한 건 바로",
+    ]);
+    // 뒤 글이 통째로 붙은 말이면 남는 글 조각이 없다
+    expect(glueTails([pct, "예요."])).toEqual([{ ...pct, tail: "예요." }]);
+  });
+
+  it("띄어 쓴 뒤 글·글이 없는 끝·이어지는 값은 묶지 않는다", () => {
+    expect(glueTails(["답장 ", min, " 안에"])).toEqual(["답장 ", { ...min, tail: "" }, " 안에"]);
+    expect(glueTails(["답장 ", min])).toEqual(["답장 ", { ...min, tail: "" }]);
+    expect(glueTails([min, "~", pct])).toEqual([{ ...min, tail: "~" }, { ...pct, tail: "" }]);
+  });
+
+  it("붙은 말이 길면(띄어 쓰지 않은 긴 글) 375px에서 넘치지 않게 묶지 않는다", () => {
+    const long = "가".repeat(MAX_STAT_TAIL + 1);
+    expect(glueTails([pct, long])).toEqual([{ ...pct, tail: "" }, long]);
+    const edge = "가".repeat(MAX_STAT_TAIL);
+    expect(glueTails([pct, edge])).toEqual([{ ...pct, tail: edge }]);
+  });
+
+  it("묶어도 이어 붙인 글자는 renderStatPlain과 같다", () => {
+    const text = "질문 {{stat:questionRate.철수}}%로, 답장은 {{stat:replyMedianMs.민지}} 만에";
+    const joined = glueTails(renderStatText(text, stats))
+      .map((t) => (typeof t === "string" ? t : t.display + t.tail))
+      .join("");
+    expect(joined).toBe(renderStatPlain(text, stats));
   });
 });

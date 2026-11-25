@@ -24,7 +24,7 @@ export function FeedbackButton({ id, n, paragraphKey, describedBy }: { id: strin
 
   if (state === "sent") {
     return (
-      <p role="status" className="text-xs text-muted-foreground">
+      <p role="status" className="py-2.5 text-base text-muted-foreground">
         알려 줘서 고마워요
       </p>
     );
@@ -33,8 +33,7 @@ export function FeedbackButton({ id, n, paragraphKey, describedBy }: { id: strin
     return (
       <Button
         variant="ghost"
-        size="xs"
-        className="justify-self-start text-muted-foreground"
+        className="-ml-2 justify-self-start px-2 text-muted-foreground"
         aria-describedby={describedBy}
         onClick={() => setState("choosing")}
       >
@@ -43,17 +42,17 @@ export function FeedbackButton({ id, n, paragraphKey, describedBy }: { id: strin
     );
   }
   return (
-    <div role="group" aria-label="무엇이 틀렸나요?" className="flex flex-wrap items-center gap-1">
+    <div role="group" aria-label="무엇이 틀렸나요?" className="flex flex-wrap items-center gap-2">
       {FEEDBACK_REASONS.map((reason) => (
-        <Button key={reason} variant="outline" size="xs" disabled={state === "sending"} onClick={() => choose(reason)}>
+        <Button key={reason} variant="outline" disabled={state === "sending"} onClick={() => choose(reason)}>
           {FEEDBACK_LABEL[reason]}
         </Button>
       ))}
-      <Button variant="ghost" size="xs" disabled={state === "sending"} onClick={() => setState("idle")}>
+      <Button variant="ghost" disabled={state === "sending"} onClick={() => setState("idle")}>
         취소
       </Button>
       {state === "error" && (
-        <p role="alert" className="w-full text-xs text-destructive">
+        <p role="alert" className="w-full text-base text-destructive">
           보내지 못했어요. 다시 눌러 주세요.
         </p>
       )}

@@ -70,11 +70,11 @@ export function StepsFeedView({
           <h1 className="font-hand text-[2rem] leading-tight font-bold">
             <Highlight>{active ? "AI가 대화를 읽고 있어요" : "AI 연재 진행 상황"}</Highlight>
           </h1>
-          <p className="text-[0.9375rem] text-ink-soft">창을 닫아도 서버에서 계속 써요. 끝난 편부터 대화 홈에서 읽을 수 있어요.</p>
+          <p className="text-base text-ink-soft">창을 닫아도 서버에서 계속 써요. 끝난 편부터 대화 홈에서 읽을 수 있어요.</p>
         </Paper>
 
         {status.paused && (
-          <p role="note" className="rounded-lg border border-dashed border-ink/25 bg-sheet/80 p-3 text-sm">
+          <p role="note" className="rounded-lg border border-dashed border-ink/25 bg-sheet/80 p-3 text-base">
             {PAUSED_TEXT}이에요. 다시 쓰기는 마감이 풀린 뒤에 할 수 있어요.
           </p>
         )}
@@ -91,10 +91,10 @@ export function StepsFeedView({
                   {e.n}편 <span className="font-normal text-ink-soft">· {STATUS_TEXT[e.status] ?? e.status}</span>
                 </h2>
                 {stats && shown.length > 0 && (
-                  <ul className="grid gap-1.5 text-[0.9375rem]">
+                  <ul className="grid gap-2 text-base leading-relaxed">
                     {shown.map((note) => (
                       <li key={`${note.range}|${note.note}`} className="flex min-w-0 gap-2">
-                        <span className="shrink-0 pt-0.5 text-xs text-ink-soft tabular-nums">
+                        <span className="shrink-0 pt-0.5 text-sm text-ink-soft tabular-nums">
                           <StatText text={note.range} stats={stats} />
                         </span>
                         <span className="min-w-0 break-words">

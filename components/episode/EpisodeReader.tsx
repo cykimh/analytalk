@@ -23,7 +23,7 @@ export function EpisodeReaderView({ id, n, conversation: c }: { id: string; n: n
   return (
     <PageFrame>
       <nav>
-        <Link href={`/c/${id}`} className="font-hand text-lg text-ink-soft underline-offset-4 hover:underline">
+        <Link href={`/c/${id}`} className="inline-flex min-h-11 items-center font-hand text-xl text-ink-soft underline-offset-4 hover:underline">
           ← 대화 홈
         </Link>
       </nav>
@@ -31,7 +31,7 @@ export function EpisodeReaderView({ id, n, conversation: c }: { id: string; n: n
       {episode?.content ? (
         <>
           {status === "partial" && (
-            <p role="note" className="rounded-lg border border-dashed border-ink/25 bg-sheet/80 p-3 text-sm">
+            <p role="note" className="rounded-lg border border-dashed border-ink/25 bg-sheet/80 p-3 text-base">
               일부 문단만 남았어요. 대화 홈에서 [다시 쓰기]로 다시 쓸 수 있어요.
             </p>
           )}
@@ -53,7 +53,7 @@ export function EpisodeReaderView({ id, n, conversation: c }: { id: string; n: n
           </p>
           {status === "safety" && <p>{SAFETY_HELP}</p>}
           {(status === "queued" || status === "running") && (
-            <Link href={`/c/${id}/steps`} className={buttonVariants({ size: "sm", variant: "outline", className: "justify-self-start" })}>
+            <Link href={`/c/${id}/steps`} className={buttonVariants({ variant: "outline", className: "justify-self-start" })}>
               진행 상황 보기
             </Link>
           )}

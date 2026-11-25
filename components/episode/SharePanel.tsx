@@ -134,13 +134,13 @@ export function SharePanel({ id, conversation: c, onChanged }: { id: string; con
       <h2 id="share-title" className="font-hand text-[1.75rem] leading-tight font-bold">
         <Highlight color="mint">공유</Highlight>
       </h2>
-      <p className="text-sm text-muted-foreground">{SHARE_TEXT.notice(c.expiresAt)}</p>
+      <p className="text-base text-muted-foreground">{SHARE_TEXT.notice(c.expiresAt)}</p>
 
       <fieldset disabled={busy} className="grid gap-2">
-        <legend className="mb-1 text-sm font-medium">공유 범위</legend>
+        <legend className="mb-1 text-base font-bold">공유 범위</legend>
         <div className="flex flex-wrap gap-2">
           {(Object.keys(SCOPE_LABEL) as ShareScope[]).map((s) => (
-            <label key={s} className="flex items-center gap-2 rounded-lg border bg-sheet px-3 py-2 text-sm has-checked:border-foreground">
+            <label key={s} className="flex min-h-11 items-center gap-2 rounded-lg border bg-sheet px-3.5 py-2 text-base has-checked:border-foreground">
               <input type="radio" name="share-scope" value={s} checked={scope === s} onChange={() => setScope(s)} />
               {SCOPE_LABEL[s]}
             </label>
@@ -149,10 +149,10 @@ export function SharePanel({ id, conversation: c, onChanged }: { id: string; con
       </fieldset>
 
       <fieldset disabled={busy} className="grid gap-2">
-        <legend className="mb-1 text-sm font-medium">숨길 편</legend>
-        <div className="flex flex-wrap gap-x-4 gap-y-2">
+        <legend className="mb-1 text-base font-bold">숨길 편</legend>
+        <div className="flex flex-wrap gap-x-5">
           {readable.map((n) => (
-            <label key={n} className="flex items-center gap-2 text-sm">
+            <label key={n} className="flex items-center gap-2 py-2.5 text-base">
               <input type="checkbox" checked={hidden.includes(n)} onChange={(e) => toggleHidden(n, e.target.checked)} />
               {n}편 숨기기
             </label>
@@ -168,7 +168,7 @@ export function SharePanel({ id, conversation: c, onChanged }: { id: string; con
         <div className="grid gap-3">
           {link ? (
             <div className="grid gap-2">
-              <p className="rounded-lg bg-muted px-3 py-2 font-mono text-xs break-all select-all">{link}</p>
+              <p className="rounded-lg bg-muted px-3 py-2 font-mono text-sm break-all select-all">{link}</p>
               <div className="flex flex-wrap gap-2">
                 {canShare && (
                   <Button disabled={busy} onClick={() => run(send)}>
@@ -181,12 +181,12 @@ export function SharePanel({ id, conversation: c, onChanged }: { id: string; con
               </div>
             </div>
           ) : (
-            <p className="text-sm">{SHARE_TEXT.otherDevice}</p>
+            <p className="text-base">{SHARE_TEXT.otherDevice}</p>
           )}
 
           {asking ? (
             <div className="grid gap-2">
-              <p className="text-sm">{SHARE_TEXT.revokeWarning}</p>
+              <p className="text-base">{SHARE_TEXT.revokeWarning}</p>
               <div className="flex flex-wrap gap-2">
                 <Button variant="destructive" disabled={busy} onClick={() => run(revoke)}>
                   정말 폐기
@@ -212,7 +212,7 @@ export function SharePanel({ id, conversation: c, onChanged }: { id: string; con
       )}
 
       {notice && (
-        <p role={notice.error ? "alert" : "status"} className={notice.error ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
+        <p role={notice.error ? "alert" : "status"} className={notice.error ? "text-base text-destructive" : "text-base text-muted-foreground"}>
           {notice.text}
         </p>
       )}
