@@ -26,7 +26,7 @@ export function StepFrame({
   return (
     <section aria-labelledby="step-title" className="grid min-w-0 gap-5">
       <header className="grid gap-1">
-        <h2 id="step-title" ref={heading} tabIndex={-1} className="text-xl font-semibold outline-none">
+        <h2 id="step-title" ref={heading} tabIndex={-1} className="font-hand text-[1.75rem] leading-tight font-bold outline-none">
           {title}
         </h2>
         {description && <p className="text-sm text-muted-foreground">{description}</p>}

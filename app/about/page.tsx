@@ -10,14 +10,14 @@ export default function AboutPage() {
   return (
     <main className="mx-auto grid w-full max-w-2xl min-w-0 gap-8 px-4 py-10 text-sm leading-relaxed">
       <header className="grid gap-2">
-        <h1 className="text-2xl font-semibold">analytalk 안내</h1>
+        <h1 className="font-hand text-[2.25rem] leading-tight font-bold">analytalk 안내</h1>
         <p className="text-muted-foreground">
           카톡 대화 내보내기 파일을 브라우저 안에서 읽어 통계를 보여 주고, 원하면 AI가 4편짜리 연재로 써 주는 지인용 서비스예요.
         </p>
       </header>
 
       <section aria-labelledby="where-title" className="grid gap-2">
-        <h2 id="where-title" className="text-base font-semibold">
+        <h2 id="where-title" className="font-hand text-[1.375rem] leading-tight font-bold">
           무엇이 어디로 가나요
         </h2>
         <ul className="grid list-disc gap-1.5 pl-5">
@@ -35,7 +35,7 @@ export default function AboutPage() {
       </section>
 
       <section aria-labelledby="keep-title" className="grid gap-2">
-        <h2 id="keep-title" className="text-base font-semibold">
+        <h2 id="keep-title" className="font-hand text-[1.375rem] leading-tight font-bold">
           보관과 삭제
         </h2>
         <ul className="grid list-disc gap-1.5 pl-5">
@@ -48,14 +48,14 @@ export default function AboutPage() {
       </section>
 
       <section aria-labelledby="contact-title" className="grid gap-2">
-        <h2 id="contact-title" className="text-base font-semibold">
+        <h2 id="contact-title" className="font-hand text-[1.375rem] leading-tight font-bold">
           연락
         </h2>
         <p>궁금한 점이나 삭제 요청은 초대 코드를 준 운영자에게 카톡으로 알려 주세요.</p>
       </section>
 
       <section aria-labelledby="note-title" className="grid gap-2">
-        <h2 id="note-title" className="text-base font-semibold">
+        <h2 id="note-title" className="font-hand text-[1.375rem] leading-tight font-bold">
           알아 두세요
         </h2>
         <ul className="grid list-disc gap-1.5 pl-5">
