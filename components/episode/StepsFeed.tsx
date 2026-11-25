@@ -81,23 +81,23 @@ export function StepsFeedView({
 
         {active && stats && <StatTicker stats={stats} />}
 
-        <ol className="grid gap-6">
+        <ol className="grid grid-cols-1 gap-6">
           {episodes.map((e) => {
             // 채운 뒤 빈 메모(모르는 자리표시자뿐)는 그리지 않는다
             const shown = stats ? (notes[e.n] ?? []).filter((note) => hasStatText(note.note, stats)) : [];
             return (
-              <Paper as="li" key={e.n} tilt={alternate(e.n)} calm tape={tapeAt(e.n + 1)} className="grid gap-2 pt-6">
+              <Paper as="li" key={e.n} tilt={alternate(e.n)} calm tape={tapeAt(e.n + 1)} className="grid grid-cols-1 gap-2 pt-6">
                 <h2 className="font-hand text-[1.375rem] leading-tight font-bold">
                   {e.n}편 <span className="font-normal text-ink-soft">· {STATUS_TEXT[e.status] ?? e.status}</span>
                 </h2>
                 {stats && shown.length > 0 && (
-                  <ul className="grid gap-2 text-base leading-relaxed">
+                  <ul className="grid grid-cols-1 gap-2 text-base leading-relaxed">
                     {shown.map((note) => (
                       <li key={`${note.range}|${note.note}`} className="flex min-w-0 gap-2">
                         <span className="shrink-0 pt-0.5 text-sm text-ink-soft tabular-nums">
                           <StatText text={note.range} stats={stats} />
                         </span>
-                        <span className="min-w-0 break-words">
+                        <span className="min-w-0 wrap-anywhere">
                           <StatText text={note.note} stats={stats} />
                         </span>
                       </li>

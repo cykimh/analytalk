@@ -1,7 +1,9 @@
 // 편 한 편: 표지 카드(헤드라인·dek·스티커) → (있으면) 폴라로이드 → 섹션 카드(아이콘 스티커·제목·문단 → 근거 메모지) → 다음 편 예고.
 // 'AI 생성, 재미·참고용'을 단다. 모든 글은 React 텍스트 노드로만 그린다. 모델이 쓴 글은 모두 StatText로 그려
 // {{stat:경로}}를 통계 값으로 채운다. 채운 뒤 빈 헤드라인은 'N편'으로, 빈 dek·예고는 그리지 않는다.
-// 문단 [틀렸어요]는 여기 없다: 편 화면이 리포트 영역(#report-capture) 바깥 아래에 ParagraphFeedback으로 둔다
+// 문단 [틀렸어요]는 여기 없다: 편 화면이 리포트 영역(#report-capture) 바깥 아래에 ParagraphFeedback으로 둔다.
+// 띄어 쓰지 않은 긴 글(ㅋ 줄, 붙여 쓴 문장)은 keep-all에서 끊을 곳이 없는 한 단어다. 글이 든 grid는 grid-cols-1(minmax(0,1fr))로
+// 칸이 그 단어 폭만큼 넓어지지 않게 하고, 모델이 쓴 글은 wrap-anywhere로 카드 폭에서 줄을 바꾼다(DESIGN.md 레이아웃)
 import type { ReactNode } from "react";
 import { Highlight } from "@/components/scrap/Highlight";
 import { Paper } from "@/components/scrap/Paper";
@@ -30,18 +32,18 @@ export function EpisodeView({
   snapshot?: ReactNode;
 }) {
   return (
-    <article className="grid min-w-0 gap-8">
-      <Paper as="header" tilt="left" tape={tapeAt(0)} className="grid gap-3 px-5 pt-7 pb-5">
+    <article className="grid min-w-0 grid-cols-1 gap-8">
+      <Paper as="header" tilt="left" tape={tapeAt(0)} className="grid grid-cols-1 gap-3 px-5 pt-7 pb-5">
         <p className="text-[0.8125rem] text-ink-soft">
           {n}편 · {AI_NOTICE}
         </p>
-        <h1 className="font-hand text-[2.125rem] leading-[1.2] font-bold break-words">
+        <h1 className="font-hand text-[2.125rem] leading-[1.2] font-bold wrap-anywhere">
           <Highlight color={highlightAt(0)}>
             {hasStatText(content.headline, stats) ? <StatText text={content.headline} stats={stats} /> : `${n}편`}
           </Highlight>
         </h1>
         {hasStatText(content.dek, stats) && (
-          <p className="text-[1.0625rem] leading-relaxed text-ink-soft break-words">
+          <p className="text-[1.0625rem] leading-relaxed text-ink-soft wrap-anywhere">
             <StatText text={content.dek} stats={stats} />
           </p>
         )}
@@ -57,9 +59,9 @@ export function EpisodeView({
           tilt={alternate(si + 1)}
           calm
           tape={tapeAt(si + 1)}
-          className="grid gap-4 px-5 pt-7 pb-6"
+          className="grid grid-cols-1 gap-4 px-5 pt-7 pb-6"
         >
-          <h2 className="flex min-w-0 items-start gap-2 font-hand text-[1.625rem] leading-tight font-bold break-words">
+          <h2 className="flex min-w-0 items-start gap-2 font-hand text-[1.625rem] leading-tight font-bold wrap-anywhere">
             <Sticker aria-hidden index={si} className="mt-0.5 shrink-0 px-1.5 font-sans text-lg leading-none">
               {section.icon}
             </Sticker>
@@ -70,12 +72,12 @@ export function EpisodeView({
             </span>
           </h2>
           {section.paragraphs.map((p, pi) => (
-            <p key={`${pi}-${p.key}`} className="text-[1.0625rem] leading-[1.8] break-words">
+            <p key={`${pi}-${p.key}`} className="text-[1.0625rem] leading-[1.8] wrap-anywhere">
               <StatText text={p.text} stats={stats} />
             </p>
           ))}
           {section.evidence.length > 0 && (
-            <div className="grid gap-3 pt-1">
+            <div className="grid grid-cols-1 gap-3 pt-1">
               {section.evidence.map((e, ei) => (
                 <Evidence key={e.id} index={ei} sender={e.sender} at={e.at} quote={e.quote} />
               ))}
@@ -90,10 +92,10 @@ export function EpisodeView({
           tone="butter"
           tilt={alternate(content.sections.length + 1)}
           tape={tapeAt(content.sections.length + 1)}
-          className="grid gap-1 px-5 pt-6"
+          className="grid grid-cols-1 gap-1 px-5 pt-6"
         >
           <span className="font-hand text-xl font-bold">다음 편 예고</span>
-          <p className="text-base leading-relaxed break-words">
+          <p className="text-base leading-relaxed wrap-anywhere">
             <StatText text={content.next_teaser} stats={stats} />
           </p>
         </Paper>

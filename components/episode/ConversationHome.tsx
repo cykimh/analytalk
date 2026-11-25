@@ -70,12 +70,12 @@ function EpisodeCard({
   }
 
   return (
-    <Paper as="section" aria-label={`${n}편`} tilt={alternate(n)} tape={tapeAt(n)} className="grid content-start gap-2 pt-6">
+    <Paper as="section" aria-label={`${n}편`} tilt={alternate(n)} tape={tapeAt(n)} className="grid grid-cols-1 content-start gap-2 pt-6">
       <p className="font-hand text-lg leading-tight text-ink-soft">
         {n}편 · {STATUS_TEXT[status] ?? status}
       </p>
       {content && (
-        <h3 className="font-hand text-[1.5rem] leading-snug font-bold break-words">
+        <h3 className="font-hand text-[1.5rem] leading-snug font-bold wrap-anywhere">
           {hasStatText(content.headline, stats) ? <StatText text={content.headline} stats={stats} /> : `${n}편`}
         </h3>
       )}

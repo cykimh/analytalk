@@ -2,6 +2,8 @@
 
 // 리포트 화면(대화 홈·편·진행·공유)의 틀과, 아직 내용을 못 그릴 때: 불러오는 중·없음·세션 끝남·네트워크 오류.
 // 틀은 430px 다이어리 한 장이다(DESIGN.md). 기운 카드·테이프가 옆으로 삐져나와도 가로 스크롤이 생기지 않게 가로만 자른다.
+// 잘라 내서 안에서 넘친 글은 문서 가로 스크롤로 드러나지 않는다. 그래서 틀과 캡처 영역은 grid-cols-1로 카드 폭을 틀 폭에 묶고,
+// e2e(expectNoHorizontalScroll)는 main의 넘침과 글자 위치까지 본다.
 // 숫자(통계·날짜·시각)가 많은 화면이라 틀 전체에 tabular-nums를 준다
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -17,7 +19,7 @@ const TEXT: Record<LoadError, string> = {
 };
 
 export function PageFrame({ children }: { children: ReactNode }) {
-  return <main className="mx-auto grid w-full max-w-[430px] min-w-0 gap-7 overflow-x-clip px-4 pt-8 pb-16 tabular-nums">{children}</main>;
+  return <main className="mx-auto grid w-full max-w-[430px] min-w-0 grid-cols-1 gap-7 overflow-x-clip px-4 pt-8 pb-16 tabular-nums">{children}</main>;
 }
 
 /** 이미지로 저장할 리포트 영역의 id(저장 기능은 아직 없다). 한 화면에 하나 */
@@ -29,7 +31,7 @@ export const REPORT_CAPTURE_ID = "report-capture";
  */
 export function ReportCapture({ children }: { children: ReactNode }) {
   return (
-    <div id={REPORT_CAPTURE_ID} className="grid min-w-0 gap-7 py-2">
+    <div id={REPORT_CAPTURE_ID} className="grid min-w-0 grid-cols-1 gap-7 py-2">
       {children}
     </div>
   );

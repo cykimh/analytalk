@@ -21,9 +21,9 @@ const stats = computeStats(messages);
 
 /**
  * 저장된 편. statText면 문단 밖 글(헤드라인·dek·섹션 제목·예고·메모)에도 {{stat:…}}을 넣는다.
- * 2편 헤드라인은 모르는 경로뿐이라 채우면 빈 글이 된다
+ * 2편 헤드라인은 모르는 경로뿐이라 채우면 빈 글이 된다. paragraph가 있으면 섹션 둘째 문단으로 넣는다
  */
-function content(n: number, quote: string, statText = false) {
+function content(n: number, quote: string, statText = false, paragraph?: string) {
   return {
     episode: n,
     safety: { flag: "none" },
@@ -36,7 +36,10 @@ function content(n: number, quote: string, statText = false) {
         icon: "🌙",
         title: statText ? "{{stat:total}}번의 저녁{{stat:nope}}" : "저녁의 리듬",
         about: "pair",
-        paragraphs: [{ key: "p1", text: "민지의 답장은 {{stat:replyMedianMs.민지}} 안에 왔어요", evidence_ids: ["e1"] }],
+        paragraphs: [
+          { key: "p1", text: "민지의 답장은 {{stat:replyMedianMs.민지}} 안에 왔어요", evidence_ids: ["e1"] },
+          ...(paragraph ? [{ key: "p2", text: paragraph, evidence_ids: ["e1"] }] : []),
+        ],
         evidence: [{ id: "e1", msg_id: "m1", quote, sender: "민지", at: "2026-10-01T20:04:00+09:00" }],
       },
     ],
@@ -51,7 +54,7 @@ const SHARE_URL = "http://localhost:3100/s/AAAAAAAAAAAAAAAAAAAAAA";
 async function fakeApi(
   context: BrowserContext,
   statuses: string[],
-  o: { paused?: boolean; quote?: string; statText?: boolean; shared?: boolean } = {},
+  o: { paused?: boolean; quote?: string; paragraph?: string; statText?: boolean; shared?: boolean } = {},
 ) {
   const api = {
     statuses: [...statuses],
@@ -87,7 +90,7 @@ async function fakeApi(
         episodes: api.statuses.map((status, i) => ({
           n: i + 1,
           status,
-          content: hasContent(status) ? content(i + 1, o.quote ?? "집에서 쉬는 중", o.statText) : null,
+          content: hasContent(status) ? content(i + 1, o.quote ?? "집에서 쉬는 중", o.statText, o.paragraph) : null,
           errorCode: status === "failed" ? "retryable" : null,
         })),
       },
@@ -105,6 +108,7 @@ async function fakeApi(
               : [
                   { range: "10-01~10-03", note: `${i + 1}편 메모: ${note}` },
                   ...(o.statText ? [{ range: "10-04~10-05", note: "{{stat:nope}}" }] : []),
+                  ...(o.paragraph ? [{ range: "10-06~10-07", note: o.paragraph }] : []),
                 ],
           errorCode: status === "failed" ? "retryable" : null,
         })),
@@ -534,8 +538,12 @@ test.describe("AI 연재", () => {
   test.describe("375px", () => {
     test.use({ viewport: { width: 375, height: 812 } });
 
-    test("진행·대화 홈·편 화면에 가로 스크롤이 없다", async ({ page, context }) => {
-      await fakeApi(context, ["done", "running", "failed", "queued"], { quote: `${"긴인용문".repeat(40)} ${XSS}` });
+    // keep-all이라 띄어 쓰지 않은 긴 글(ㅋ 줄, 붙여 쓴 문장)은 끊을 곳이 없는 한 단어다. 카드 밖으로 잘리지 않고 줄이 바뀌어야 한다
+    test("진행·대화 홈·편 화면에 가로 스크롤이 없고, 띄어 쓰지 않은 긴 글도 잘리지 않는다", async ({ page, context }) => {
+      await fakeApi(context, ["done", "running", "failed", "queued"], {
+        quote: `${"ㅋ".repeat(40)}\n${"긴인용문".repeat(40)} ${XSS}`,
+        paragraph: `웃음은 이렇게 이어졌어요 ${"ㅋ".repeat(30)} 그리고${"아진짜너무웃기다그거어디서봤어".repeat(3)}`,
+      });
       await page.goto(`/c/${ID}/steps`);
       await expect(page.getByRole("link", { name: "1편 읽기" })).toBeVisible();
       await expectNoHorizontalScroll(page);

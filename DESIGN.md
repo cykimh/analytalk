@@ -51,7 +51,10 @@ UI 작업 전에 이 문서를 읽고 따른다. 값의 원본은 코드다: 토
 - 리포트 화면은 `PageFrame`(`components/episode/PageState.tsx`): `max-w-[430px] mx-auto px-4`, 카드 사이 `gap-7`. 기운 카드·테이프가 옆으로 삐져나와도 가로 스크롤이 생기지 않게 `overflow-x-clip`
 - 카드는 한 줄로 쌓는다. 430px 안에서 `sm:grid-cols-2`를 쓰지 않는다(브레이크포인트는 화면 폭 기준이라 다이어리 폭과 어긋난다)
 - 글은 왼쪽 정렬. 가운데 정렬은 폴라로이드 캡션과 진행 화면의 노란 메모지만
-- 한글은 `word-break: keep-all` + `overflow-wrap: break-word`(앱 전체). 긴 인용·링크가 375px에서 가로 스크롤을 만들지 않는지 e2e가 본다
+- 한글은 `word-break: keep-all` + `overflow-wrap: break-word`(앱 전체). keep-all에서는 띄어 쓰지 않은 긴 글(ㅋ 줄, 붙여 쓴 문장)이 끊을 곳 없는 한 단어라서, grid 칸이 그 폭만큼 넓어져 카드 밖으로 잘린다. 그래서
+  - 글이 든 grid는 `grid-cols-1`(`minmax(0,1fr)`)로 칸 폭을 부모에 묶는다(`PageFrame`·`ReportCapture`·편 카드·메모지·피드백 목록)
+  - 모델이 쓴 글과 인용(헤드라인·dek·섹션 제목·문단·예고·진행 메모·인용·보낸 사람)은 `wrap-anywhere`(`overflow-wrap: anywhere`)
+  - `PageFrame`이 가로를 잘라서 안에서 넘친 글은 문서 가로 스크롤로 드러나지 않는다. e2e `expectNoHorizontalScroll`은 문서·`main`의 넘침과, 보이는 글자가 화면과 잘라 내는 조상 안에 있는지까지 본다(375px, ㅋ 줄 인용·붙여 쓴 문단 포함)
 
 ## 콜라주 조각 (`components/scrap/`)
 
