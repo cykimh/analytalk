@@ -1,10 +1,15 @@
 "use client";
 
-// /c/[id] 대화 홈: 읽은 범위·삭제 예정일 → 4편 카드([읽기]·[다시 쓰기]) → [공유] → 통계 → [지금 삭제].
+// /c/[id] 대화 홈: 표지(제목·스티커·읽은 범위·삭제 예정일) + 폴라로이드 → 4편 카드([읽기]·[다시 쓰기]) → [공유] → 통계 → [지금 삭제].
+// 표지와 폴라로이드만 #report-capture 안이다. 버튼이 든 편 카드·공유·삭제는 그 바깥 아래에 둔다(DESIGN.md).
 // 탭을 다시 열어도 API에서 상태를 불러오고, 쓰는 편이 있으면 폴링해 끝난 편부터 연다.
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Highlight } from "@/components/scrap/Highlight";
+import { Paper } from "@/components/scrap/Paper";
+import { alternate, tapeAt } from "@/components/scrap/tilt";
+import { KpiPolaroids } from "@/components/stats/KpiPolaroids";
 import { StatsDashboard } from "@/components/stats/StatsDashboard";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { deletePayload } from "@/lib/client/idb";
@@ -13,8 +18,10 @@ import type { SubmitResult } from "@/lib/client/submit";
 import { hasStatText } from "@/lib/episode/statText";
 import type { StoredEpisode } from "@/lib/llm/schema";
 import type { ChatStats } from "@/lib/stats/compute";
+import { CoverStickers } from "./CoverStickers";
 import {
   AI_NOTICE,
+  type ConversationView,
   episodeAction,
   kstDay,
   PAUSED_TEXT,
@@ -23,8 +30,9 @@ import {
   retryKept,
   SAFETY_HELP,
   STATUS_TEXT,
+  type StatusView,
 } from "./model";
-import { blocking, PageFrame, PageState } from "./PageState";
+import { blocking, PageFrame, PageState, ReportCapture } from "./PageState";
 import { SharePanel } from "./SharePanel";
 import { StatText } from "./StatText";
 import { useConversation } from "./useConversation";
@@ -61,19 +69,19 @@ function EpisodeCard({
   }
 
   return (
-    <section aria-label={`${n}편`} className="grid min-w-0 content-start gap-2 rounded-xl border p-4">
-      <p className="text-xs text-muted-foreground">
+    <Paper as="section" aria-label={`${n}편`} tilt={alternate(n)} tape={tapeAt(n)} className="grid content-start gap-2 pt-6">
+      <p className="font-hand text-lg leading-tight text-ink-soft">
         {n}편 · {STATUS_TEXT[status] ?? status}
       </p>
       {content && (
-        <h3 className="font-semibold break-words">
+        <h3 className="font-hand text-[1.5rem] leading-snug font-bold break-words">
           {hasStatText(content.headline, stats) ? <StatText text={content.headline} stats={stats} /> : `${n}편`}
         </h3>
       )}
       {status === "safety" && <p className="text-sm">{SAFETY_HELP}</p>}
       {retryKept(status, errorCode) && <p className="text-xs text-muted-foreground">{RETRY_KEPT_TEXT}</p>}
       {(action.read || action.retry) && (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 pt-1">
           {action.read && (
             <Link href={`/c/${id}/e/${n}`} className={buttonVariants({ size: "sm" })}>
               {n}편 읽기
@@ -92,7 +100,7 @@ function EpisodeCard({
           {message}
         </p>
       )}
-    </section>
+    </Paper>
   );
 }
 
@@ -123,8 +131,8 @@ function DeleteBox({ id }: { id: string }) {
   }
 
   return (
-    <section aria-labelledby="delete-title" className="grid gap-2 rounded-xl border p-4">
-      <h2 id="delete-title" className="text-sm font-semibold">
+    <section aria-labelledby="delete-title" className="grid gap-2 rounded-[3px] border border-dashed border-ink/25 bg-sheet/70 p-4">
+      <h2 id="delete-title" className="font-hand text-xl font-bold">
         대화 지우기
       </h2>
       <p className="text-sm text-muted-foreground">4편과 통계, 이 대화로 남긴 피드백이 모두 지워지고 되돌릴 수 없어요.</p>
@@ -151,31 +159,46 @@ function DeleteBox({ id }: { id: string }) {
   );
 }
 
-export function ConversationHome({ id }: { id: string }) {
-  const { conversation, status, error, retry, reload } = useConversation(id);
-  if (blocking(error, conversation !== null)) return <PageState error={error} onReload={reload} />;
-  const c = conversation!;
+/** 불러온 대화로 그린 대화 홈(데이터·핸들러는 ConversationHome·dev 미리보기가 넣는다) */
+export function ConversationHomeView({
+  id,
+  conversation: c,
+  status,
+  retry,
+  reload,
+}: {
+  id: string;
+  conversation: ConversationView;
+  status: StatusView | null;
+  retry: (n: number) => Promise<SubmitResult>;
+  reload: () => Promise<void>;
+}) {
   const paused = status?.paused ?? false;
 
   return (
     <PageFrame>
-      <header className="grid gap-2">
-        <p className="text-xs text-muted-foreground">{AI_NOTICE}</p>
-        <h1 className="text-xl font-semibold">{c.concept === "couple" ? "둘의 대화 연재" : "단톡방 연재"}</h1>
-        <p className="truncate text-sm text-muted-foreground">{c.displayNames.join(", ")}</p>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-          <dt className="text-muted-foreground">읽은 범위</dt>
-          <dd>{readRange(c.cutoffAt, c.msgSent)}</dd>
-          <dt className="text-muted-foreground">삭제 예정일</dt>
-          <dd>{kstDay(c.expiresAt)} (30일 보관)</dd>
-        </dl>
-      </header>
+      <ReportCapture>
+        <Paper as="header" tilt="left" tape={tapeAt(0)} className="grid gap-3 px-5 pt-7 pb-5">
+          <p className="text-[0.8125rem] text-ink-soft">{AI_NOTICE}</p>
+          <h1 className="font-hand text-[2.25rem] leading-tight font-bold">
+            <Highlight>{c.concept === "couple" ? "둘의 대화 연재" : "단톡방 연재"}</Highlight>
+          </h1>
+          <CoverStickers concept={c.concept} names={c.displayNames} dailyCounts={c.stats.dailyCounts} />
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 pt-1 text-sm">
+            <dt className="text-ink-soft">읽은 범위</dt>
+            <dd className="tabular-nums">{readRange(c.cutoffAt, c.msgSent)}</dd>
+            <dt className="text-ink-soft">삭제 예정일</dt>
+            <dd className="tabular-nums">{kstDay(c.expiresAt)} (30일 보관)</dd>
+          </dl>
+        </Paper>
+        <KpiPolaroids stats={c.stats} />
+      </ReportCapture>
 
-      <section aria-labelledby="episodes-title" className="grid gap-3">
-        <h2 id="episodes-title" className="text-sm font-semibold">
-          연재 4편
+      <section aria-labelledby="episodes-title" className="grid gap-5">
+        <h2 id="episodes-title" className="font-hand text-[1.75rem] leading-tight font-bold">
+          <Highlight color="mint">연재 4편</Highlight>
         </h2>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-6">
           {c.episodes.map((e) => {
             const live = status?.episodes.find((s) => s.n === e.n);
             return (
@@ -197,14 +220,20 @@ export function ConversationHome({ id }: { id: string }) {
 
       <SharePanel id={id} conversation={c} onChanged={reload} />
 
-      <section aria-labelledby="stats-title" className="grid gap-3">
-        <h2 id="stats-title" className="text-sm font-semibold">
-          대화 통계
+      <section aria-labelledby="stats-title" className="grid gap-5">
+        <h2 id="stats-title" className="font-hand text-[1.75rem] leading-tight font-bold">
+          <Highlight>대화 통계</Highlight>
         </h2>
-        <StatsDashboard stats={c.stats} kind={c.kind} me="" />
+        <StatsDashboard stats={c.stats} kind={c.kind} me="" look="scrap" />
       </section>
 
       <DeleteBox id={id} />
     </PageFrame>
   );
+}
+
+export function ConversationHome({ id }: { id: string }) {
+  const { conversation, status, error, retry, reload } = useConversation(id);
+  if (blocking(error, conversation !== null)) return <PageState error={error} onReload={reload} />;
+  return <ConversationHomeView id={id} conversation={conversation!} status={status} retry={retry} reload={reload} />;
 }

@@ -1,8 +1,11 @@
 "use client";
 
-// 대화 화면들이 아직 내용을 못 그릴 때: 불러오는 중·없음·세션 끝남·네트워크 오류
+// 리포트 화면(대화 홈·편·진행·공유)의 틀과, 아직 내용을 못 그릴 때: 불러오는 중·없음·세션 끝남·네트워크 오류.
+// 틀은 430px 다이어리 한 장이다(DESIGN.md). 기운 카드·테이프가 옆으로 삐져나와도 가로 스크롤이 생기지 않게 가로만 자른다
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { Paper } from "@/components/scrap/Paper";
+import { tapeAt } from "@/components/scrap/tilt";
 import { Button, buttonVariants } from "@/components/ui/button";
 import type { LoadError } from "./useConversation";
 
@@ -13,7 +16,22 @@ const TEXT: Record<LoadError, string> = {
 };
 
 export function PageFrame({ children }: { children: ReactNode }) {
-  return <main className="mx-auto grid w-full max-w-2xl min-w-0 gap-6 px-4 py-8">{children}</main>;
+  return <main className="mx-auto grid w-full max-w-[430px] min-w-0 gap-7 overflow-x-clip px-4 pt-8 pb-16">{children}</main>;
+}
+
+/** 이미지로 저장할 리포트 영역의 id(저장 기능은 아직 없다). 한 화면에 하나 */
+export const REPORT_CAPTURE_ID = "report-capture";
+
+/**
+ * 읽는 리포트(제목 → 본문 → 근거 인용)를 감싼다. 공유 패널·조작 버튼(다시 쓰기·피드백·삭제·공유)은 이 바깥 아래에 둔다.
+ * 위아래 여백은 테이프가 잘리지 않게 둔다
+ */
+export function ReportCapture({ children }: { children: ReactNode }) {
+  return (
+    <div id={REPORT_CAPTURE_ID} className="grid min-w-0 gap-7 py-2">
+      {children}
+    </div>
+  );
 }
 
 /** error가 있으면 그 안내, 없으면 불러오는 중 */
@@ -21,7 +39,7 @@ export function PageState({ error, onReload }: { error: LoadError | null; onRelo
   if (!error) {
     return (
       <PageFrame>
-        <p aria-busy className="text-sm text-muted-foreground">
+        <p aria-busy className="font-hand text-xl text-ink-soft">
           불러오는 중…
         </p>
       </PageFrame>
@@ -29,7 +47,7 @@ export function PageState({ error, onReload }: { error: LoadError | null; onRelo
   }
   return (
     <PageFrame>
-      <div role="alert" className="grid gap-3 rounded-xl border p-4 text-sm">
+      <Paper role="alert" tilt="left" calm tape={tapeAt(0)} className="grid gap-3 pt-6 text-base">
         <p>{TEXT[error]}</p>
         <div className="flex flex-wrap gap-2">
           {error === "network" && (
@@ -41,7 +59,7 @@ export function PageState({ error, onReload }: { error: LoadError | null; onRelo
             {error === "not_found" ? "대화 올리기" : "처음 화면"}
           </Link>
         </div>
-      </div>
+      </Paper>
     </PageFrame>
   );
 }

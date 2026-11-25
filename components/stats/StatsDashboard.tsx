@@ -1,9 +1,14 @@
 // 통계 대시보드(payload.stats 기준). 숫자는 코드가 센 것이고, 해석은 하지 않는다.
 // 달력 히트맵, 대화 지분, 선톡·마무리, 월별 답장 간격, 시간대·요일, ㅋ 길이, 질문 비율, 최장 연속일, 가장 많았던 날, (1:1) 엇갈린 패턴
+// look: plain(업로드 화면) · scrap(대화 홈. 카드는 한 줄로 쌓고 번갈아 기울이며, 막대는 크레파스 색. DESIGN.md).
+// scrap의 숫자 칸은 최장 연속·심야 비율만 둔다: 메시지 수·가장 많았던 날은 대화 홈 위쪽 폴라로이드(KpiPolaroids)가 보여 준다
 import type { ReactNode } from "react";
+import { Paper } from "@/components/scrap/Paper";
+import { alternate } from "@/components/scrap/tilt";
 import type { Payload } from "@/lib/payload/build";
 import type { ChatStats } from "@/lib/stats/compute";
-import { BarList, ChartCard, Columns, SEQ_MAIN, SEQUENTIAL, SERIES } from "./charts";
+import { cn } from "@/lib/utils";
+import { BarList, ChartCard, type ChartLook, Columns, palette, SERIES } from "./charts";
 import { crossedText, formatCount, formatDuration, formatPercent, heatLevel, heatmapRows, topPeople } from "./format";
 
 const MAX_BAR_PEOPLE = SERIES.length;
@@ -22,7 +27,16 @@ function Person({ name, me }: { name: string; me: string }) {
   );
 }
 
-function Tile({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
+function Tile({ label, value, sub, look, index = 0 }: { label: string; value: ReactNode; sub?: ReactNode; look: ChartLook; index?: number }) {
+  if (look === "scrap") {
+    return (
+      <Paper tone="kraft" tilt={alternate(index + 1)} className="grid gap-0.5 p-3">
+        <span className="font-hand text-lg leading-tight font-bold">{label}</span>
+        <span className="truncate text-xl font-bold tabular-nums">{value}</span>
+        {sub && <span className="truncate text-[0.8125rem] text-ink-soft">{sub}</span>}
+      </Paper>
+    );
+  }
   return (
     <div className="grid min-w-0 gap-0.5 rounded-xl bg-muted p-3">
       <span className="text-xs text-muted-foreground">{label}</span>
@@ -32,18 +46,29 @@ function Tile({ label, value, sub }: { label: string; value: ReactNode; sub?: Re
   );
 }
 
-function Heatmap({ dailyCounts }: { dailyCounts: Record<string, number> }) {
+/** 축·범례 글자. scrap은 휴대폰에서 읽히게 조금 키운다 */
+const axisText = (look: ChartLook) => (look === "scrap" ? "text-xs" : "text-[10px]");
+
+function Heatmap({ dailyCounts, look }: { dailyCounts: Record<string, number>; look: ChartLook }) {
   const all = heatmapRows(dailyCounts);
   const rows = all.slice(-MAX_HEATMAP_MONTHS);
   const max = Math.max(0, ...Object.values(dailyCounts));
+  const { sequential } = palette(look);
   return (
     <ChartCard
       title="달력 히트맵"
       note={all.length > rows.length ? `최근 ${rows.length}개월 (전체 ${all.length}개월)` : "날마다 메시지 수"}
+      look={look}
+      index={0}
     >
-      <div role="img" aria-label="날짜별 메시지 수 달력" className="grid gap-0.5" style={{ gridTemplateColumns: "3.25rem repeat(31, minmax(0, 1fr))" }}>
+      <div
+        role="img"
+        aria-label="날짜별 메시지 수 달력"
+        className="grid gap-0.5"
+        style={{ gridTemplateColumns: `${look === "scrap" ? "3.75rem" : "3.25rem"} repeat(31, minmax(0, 1fr))` }}
+      >
         {rows.map((row) => [
-          <span key={`${row.month}-label`} className="text-[10px] leading-3 tabular-nums text-muted-foreground">
+          <span key={`${row.month}-label`} className={cn(axisText(look), "leading-3 tabular-nums text-muted-foreground")}>
             {row.month}
           </span>,
           ...row.days.map((count, i) => (
@@ -51,14 +76,14 @@ function Heatmap({ dailyCounts }: { dailyCounts: Record<string, number> }) {
               key={`${row.month}-${i}`}
               title={count === null ? undefined : `${row.month}-${String(i + 1).padStart(2, "0")} · ${formatCount(count)}개`}
               className="aspect-square min-w-0 rounded-[2px]"
-              style={{ backgroundColor: count === null ? "transparent" : SEQUENTIAL[heatLevel(count, max)] }}
+              style={{ backgroundColor: count === null ? "transparent" : sequential[heatLevel(count, max)] }}
             />
           )),
         ])}
       </div>
-      <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+      <div className={cn(axisText(look), "flex items-center gap-1 text-muted-foreground")}>
         적음
-        {SEQUENTIAL.map((c) => (
+        {sequential.map((c) => (
           <span key={c} aria-hidden className="size-2.5 rounded-[2px]" style={{ backgroundColor: c }} />
         ))}
         많음
@@ -67,20 +92,22 @@ function Heatmap({ dailyCounts }: { dailyCounts: Record<string, number> }) {
   );
 }
 
-function ReplyByMonth({ stats, people, color, me }: { stats: ChatStats; people: string[]; color: (p: string) => string; me: string }) {
+type PartProps = { stats: ChatStats; people: string[]; color: (p: string) => string; me: string; look: ChartLook };
+
+function ReplyByMonth({ stats, people, color, me, look }: PartProps) {
   const months = Object.keys(stats.monthly).sort().slice(-MAX_REPLY_MONTHS);
   const value = (m: string, p: string) => stats.monthly[m].replyMedianMs[p] ?? null;
   // 사람끼리 같은 눈금
   const max = Math.max(0, ...months.flatMap((m) => people.map((p) => value(m, p) ?? 0)));
   if (months.length === 0 || max === 0) {
     return (
-      <ChartCard title="답장 간격 (월별)">
+      <ChartCard title="답장 간격 (월별)" look={look} index={3}>
         <p className="text-sm text-muted-foreground">답장으로 볼 메시지가 아직 적어요.</p>
       </ChartCard>
     );
   }
   return (
-    <ChartCard title="답장 간격 (월별)" note={`중앙값 · ${months[0]} ~ ${months[months.length - 1]} · 높을수록 늦게 답했어요`}>
+    <ChartCard title="답장 간격 (월별)" note={`중앙값 · ${months[0]} ~ ${months[months.length - 1]} · 높을수록 늦게 답했어요`} look={look} index={3}>
       <div className="grid gap-3">
         {people.map((p) => (
           <div key={p} className="grid gap-1">
@@ -97,6 +124,7 @@ function ReplyByMonth({ stats, people, color, me }: { stats: ChatStats; people: 
               color={color(p)}
               height={40}
               max={max}
+              look={look}
             />
           </div>
         ))}
@@ -105,10 +133,10 @@ function ReplyByMonth({ stats, people, color, me }: { stats: ChatStats; people: 
   );
 }
 
-function Laugh({ stats, people, color, me }: { stats: ChatStats; people: string[]; color: (p: string) => string; me: string }) {
+function Laugh({ stats, people, color, me, look }: PartProps) {
   const rows = people.filter((p) => (stats.laughLength[p] ?? []).some((n) => n > 0));
   return (
-    <ChartCard title="ㅋ 길이" note="ㅋ·ㅎ를 몇 개씩 이어 쓰는지 (1 ~ 10개 이상)">
+    <ChartCard title="ㅋ 길이" note="ㅋ·ㅎ를 몇 개씩 이어 쓰는지 (1 ~ 10개 이상)" look={look} index={5}>
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">ㅋ·ㅎ가 없어요.</p>
       ) : (
@@ -130,8 +158,9 @@ function Laugh({ stats, people, color, me }: { stats: ChatStats; people: string[
                   titles={hist.map((n, i) => `${i + 1 === 10 ? "10개 이상" : `${i + 1}개`} · ${formatCount(n)}번`)}
                   color={color(p)}
                   height={32}
+                  look={look}
                 />
-                <div className="flex justify-between text-[10px] text-muted-foreground">
+                <div className={cn(axisText(look), "flex justify-between text-muted-foreground")}>
                   <span>1개</span>
                   <span>10개+</span>
                 </div>
@@ -144,10 +173,10 @@ function Laugh({ stats, people, color, me }: { stats: ChatStats; people: string[
   );
 }
 
-function Crossed({ stats, me }: { stats: ChatStats; me: string }) {
+function Crossed({ stats, me, look }: { stats: ChatStats; me: string; look: ChartLook }) {
   const items = [...stats.crossed].sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0)).slice(0, MAX_CROSSED);
   return (
-    <ChartCard title="엇갈린 패턴" note="한 지표는 오르고 다른 지표는 내린 달이에요. 숫자만 보여 드려요.">
+    <ChartCard title="엇갈린 패턴" note="한 지표는 오르고 다른 지표는 내린 달이에요. 숫자만 보여 드려요." look={look} index={7}>
       {items.length === 0 ? (
         <p className="text-sm text-muted-foreground">눈에 띄게 엇갈린 달은 없었어요.</p>
       ) : (
@@ -162,39 +191,60 @@ function Crossed({ stats, me }: { stats: ChatStats; me: string }) {
           ))}
         </ul>
       )}
-      <p className="text-sm font-medium">어떻게 느꼈나요?</p>
+      <p className={look === "scrap" ? "font-hand text-lg font-bold" : "text-sm font-medium"}>어떻게 느꼈나요?</p>
     </ChartCard>
   );
 }
 
-export function StatsDashboard({ stats, kind, me }: { stats: ChatStats; kind: Payload["kind"]; me: string }) {
+export function StatsDashboard({
+  stats,
+  kind,
+  me,
+  look = "plain",
+}: {
+  stats: ChatStats;
+  kind: Payload["kind"];
+  me: string;
+  look?: ChartLook;
+}) {
   const { people, rest } = topPeople(stats, MAX_BAR_PEOPLE);
   const multiples = people.slice(0, MAX_SMALL_MULTIPLES);
-  const colorOf = new Map(people.map((p, i) => [p, SERIES[i]]));
-  const color = (p: string) => colorOf.get(p) ?? SERIES[0];
+  const colors = palette(look);
+  const colorOf = new Map(people.map((p, i) => [p, colors.series[i]]));
+  const color = (p: string) => colorOf.get(p) ?? colors.series[0];
+  const scrap = look === "scrap";
   const restNote = rest > 0 ? `메시지 많은 ${people.length}명 (그 밖 ${rest}명)` : undefined;
   const restShare = Object.entries(stats.share)
     .filter(([p]) => !colorOf.has(p))
     .reduce((a, [, v]) => a + v, 0);
 
   return (
-    <div className="grid min-w-0 gap-3">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Tile label="메시지" value={`${formatCount(stats.total)}개`} />
-        <Tile label="최장 연속" value={`${formatCount(stats.longestStreakDays)}일`} sub="매일 대화한 날" />
-        <Tile
-          label="가장 많았던 날"
-          value={stats.busiestDay ? `${formatCount(stats.busiestDay.count)}개` : "-"}
-          sub={stats.busiestDay?.date}
-        />
-        <Tile label="심야 비율" value={formatPercent(stats.nightRatio)} sub="22시 ~ 5시" />
-      </div>
+    <div className={cn("grid min-w-0", scrap ? "gap-6" : "gap-3")}>
+      {scrap ? (
+        <div className="grid grid-cols-2 gap-3">
+          <Tile label="최장 연속" value={`${formatCount(stats.longestStreakDays)}일`} sub="매일 대화한 날" look={look} index={0} />
+          <Tile label="심야 비율" value={formatPercent(stats.nightRatio)} sub="22시 ~ 5시" look={look} index={1} />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Tile label="메시지" value={`${formatCount(stats.total)}개`} look={look} />
+          <Tile label="최장 연속" value={`${formatCount(stats.longestStreakDays)}일`} sub="매일 대화한 날" look={look} />
+          <Tile
+            label="가장 많았던 날"
+            value={stats.busiestDay ? `${formatCount(stats.busiestDay.count)}개` : "-"}
+            sub={stats.busiestDay?.date}
+            look={look}
+          />
+          <Tile label="심야 비율" value={formatPercent(stats.nightRatio)} sub="22시 ~ 5시" look={look} />
+        </div>
+      )}
 
-      <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-        <Heatmap dailyCounts={stats.dailyCounts} />
+      <div className={cn("grid min-w-0", scrap ? "gap-6" : "gap-3 sm:grid-cols-2")}>
+        <Heatmap dailyCounts={stats.dailyCounts} look={look} />
 
-        <ChartCard title="대화 지분" note={restNote}>
+        <ChartCard title="대화 지분" note={restNote} look={look} index={1}>
           <BarList
+            look={look}
             max={1}
             rows={[
               ...people.map((p) => ({
@@ -205,13 +255,13 @@ export function StatsDashboard({ stats, kind, me }: { stats: ChatStats; kind: Pa
                 color: color(p),
               })),
               ...(rest > 0
-                ? [{ key: "rest", label: `그 밖 ${rest}명`, value: restShare, display: formatPercent(restShare), color: "#898781" }]
+                ? [{ key: "rest", label: `그 밖 ${rest}명`, value: restShare, display: formatPercent(restShare), color: colors.rest }]
                 : []),
             ]}
           />
         </ChartCard>
 
-        <ChartCard title="선톡 · 마무리" note="6시간 넘게 조용하다가 먼저 말한 횟수 · 마지막으로 말한 횟수">
+        <ChartCard title="선톡 · 마무리" note="6시간 넘게 조용하다가 먼저 말한 횟수 · 마지막으로 말한 횟수" look={look} index={2}>
           <table className="w-full text-sm">
             <thead className="text-xs text-muted-foreground">
               <tr>
@@ -222,7 +272,7 @@ export function StatsDashboard({ stats, kind, me }: { stats: ChatStats; kind: Pa
             </thead>
             <tbody>
               {people.map((p) => (
-                <tr key={p} className="border-t">
+                <tr key={p} className={cn("border-t", scrap && "border-dashed border-ink/20")}>
                   <td className="max-w-0 truncate py-1.5">
                     <span aria-hidden className="mr-1.5 inline-block size-2.5 rounded-sm align-middle" style={{ backgroundColor: color(p) }} />
                     <Person name={p} me={me} />
@@ -235,17 +285,18 @@ export function StatsDashboard({ stats, kind, me }: { stats: ChatStats; kind: Pa
           </table>
         </ChartCard>
 
-        <ReplyByMonth stats={stats} people={multiples} color={color} me={me} />
+        <ReplyByMonth stats={stats} people={multiples} color={color} me={me} look={look} />
 
-        <ChartCard title="시간대 · 요일" note={`심야(22~5시) ${formatPercent(stats.nightRatio)}`}>
+        <ChartCard title="시간대 · 요일" note={`심야(22~5시) ${formatPercent(stats.nightRatio)}`} look={look} index={4}>
           <div className="grid gap-1">
             <Columns
               label="시간대별 메시지 수"
               values={stats.hourHistogram}
               titles={stats.hourHistogram.map((n, h) => `${h}시 · ${formatCount(n)}개`)}
-              color={SEQ_MAIN}
+              color={colors.main}
+              look={look}
             />
-            <div className="flex justify-between text-[10px] tabular-nums text-muted-foreground">
+            <div className={cn(axisText(look), "flex justify-between tabular-nums text-muted-foreground")}>
               <span>0시</span>
               <span>6시</span>
               <span>12시</span>
@@ -258,10 +309,11 @@ export function StatsDashboard({ stats, kind, me }: { stats: ChatStats; kind: Pa
               label="요일별 메시지 수"
               values={stats.weekdayHistogram}
               titles={stats.weekdayHistogram.map((n, d) => `${WEEKDAYS[d]}요일 · ${formatCount(n)}개`)}
-              color={SEQ_MAIN}
+              color={colors.main}
               height={48}
+              look={look}
             />
-            <div className="flex text-[10px] text-muted-foreground">
+            <div className={cn(axisText(look), "flex text-muted-foreground")}>
               {WEEKDAYS.map((d) => (
                 <span key={d} className="flex-1 text-center">
                   {d}
@@ -271,10 +323,17 @@ export function StatsDashboard({ stats, kind, me }: { stats: ChatStats; kind: Pa
           </div>
         </ChartCard>
 
-        <Laugh stats={stats} people={multiples} color={color} me={me} />
+        <Laugh stats={stats} people={multiples} color={color} me={me} look={look} />
 
-        <ChartCard title="질문 비율" note="보낸 글 중 물음표가 든 비율" className={kind === "pair" ? undefined : "sm:col-span-2"}>
+        <ChartCard
+          title="질문 비율"
+          note="보낸 글 중 물음표가 든 비율"
+          className={kind === "pair" || scrap ? undefined : "sm:col-span-2"}
+          look={look}
+          index={6}
+        >
           <BarList
+            look={look}
             max={1}
             rows={people.map((p) => ({
               key: p,
@@ -286,7 +345,7 @@ export function StatsDashboard({ stats, kind, me }: { stats: ChatStats; kind: Pa
           />
         </ChartCard>
 
-        {kind === "pair" && <Crossed stats={stats} me={me} />}
+        {kind === "pair" && <Crossed stats={stats} me={me} look={look} />}
       </div>
     </div>
   );

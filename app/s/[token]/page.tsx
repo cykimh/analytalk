@@ -1,11 +1,8 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { EpisodeView } from "@/components/episode/EpisodeView";
 import { AI_NOTICE } from "@/components/episode/model";
-import { PageFrame } from "@/components/episode/PageState";
-import { buttonVariants } from "@/components/ui/button";
+import { SharedReport } from "@/components/episode/SharedReport";
 import { loadSharedView } from "@/lib/server/handlers/shares";
 import { getRepo } from "@/lib/server/repo";
 
@@ -36,22 +33,5 @@ export default async function SharedPage({ params }: Props) {
   const view = await loadSharedView(getRepo(), token);
   if (!view) notFound();
 
-  return (
-    <PageFrame>
-      <header className="grid gap-1">
-        <p className="text-xs text-muted-foreground">{AI_NOTICE}</p>
-        <p className="text-sm break-words">{view.displayNames.join(" · ")}의 대화</p>
-      </header>
-
-      {view.episodes.length === 0 ? (
-        <p className="rounded-xl border p-4 text-sm">보여 줄 편이 없어요.</p>
-      ) : (
-        view.episodes.map((e) => <EpisodeView key={e.n} n={e.n} content={e.content} stats={view.stats} />)
-      )}
-
-      <Link href="/" className={buttonVariants({ size: "lg" })}>
-        나도 해보기
-      </Link>
-    </PageFrame>
-  );
+  return <SharedReport view={view} />;
 }

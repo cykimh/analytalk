@@ -8,7 +8,8 @@ import { FEEDBACK_LABEL, FEEDBACK_REASONS, type FeedbackReason } from "@/lib/epi
 
 const send = postJson("/api/feedback");
 
-export function FeedbackButton({ id, n, paragraphKey }: { id: string; n: number; paragraphKey: string }) {
+/** describedBy: 어느 문단인지 알려 주는 요소의 id(버튼 설명) */
+export function FeedbackButton({ id, n, paragraphKey, describedBy }: { id: string; n: number; paragraphKey: string; describedBy?: string }) {
   const [state, setState] = useState<"idle" | "choosing" | "sending" | "sent" | "error">("idle");
 
   async function choose(reason: FeedbackReason) {
@@ -30,7 +31,13 @@ export function FeedbackButton({ id, n, paragraphKey }: { id: string; n: number;
   }
   if (state === "idle") {
     return (
-      <Button variant="ghost" size="xs" className="justify-self-start text-muted-foreground" onClick={() => setState("choosing")}>
+      <Button
+        variant="ghost"
+        size="xs"
+        className="justify-self-start text-muted-foreground"
+        aria-describedby={describedBy}
+        onClick={() => setState("choosing")}
+      >
         틀렸어요
       </Button>
     );

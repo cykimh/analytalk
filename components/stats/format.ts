@@ -32,6 +32,16 @@ export function kstDate(ts: number): string {
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
 
+/** 대화 기간: dailyCounts의 첫날·마지막 날(KST, YYYY-MM-DD)과 그 사이 날수(양 끝 포함). 메시지가 없으면 null */
+export function periodOf(dailyCounts: Record<string, number>): { from: string; to: string; days: number } | null {
+  const dates = Object.keys(dailyCounts).sort();
+  if (dates.length === 0) return null;
+  const from = dates[0];
+  const to = dates[dates.length - 1];
+  const days = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / (24 * HOUR)) + 1;
+  return { from, to, days };
+}
+
 /** 메시지 많은 순서(동률은 이름 순) 상위 n명과 나머지 사람 수 */
 export function topPeople(stats: Pick<ChatStats, "byPerson">, n: number): { people: string[]; rest: number } {
   const all = Object.entries(stats.byPerson)

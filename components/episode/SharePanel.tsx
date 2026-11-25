@@ -4,6 +4,9 @@
 // 링크 원문은 처음 만든 응답에만 와서 이 브라우저에 둔다(lib/client/share). 다른 기기에서 만든 링크는 다시 보여 주지 못한다.
 // 공유 제목에는 이름을 넣지 않고 컨셉 제목만 쓴다.
 import { useRef, useState } from "react";
+import { Highlight } from "@/components/scrap/Highlight";
+import { Paper } from "@/components/scrap/Paper";
+import { tapeAt } from "@/components/scrap/tilt";
 import { Button } from "@/components/ui/button";
 import {
   copyLink,
@@ -127,9 +130,9 @@ export function SharePanel({ id, conversation: c, onChanged }: { id: string; con
   }
 
   return (
-    <section aria-labelledby="share-title" className="grid min-w-0 gap-3 rounded-xl border p-4">
-      <h2 id="share-title" className="text-sm font-semibold">
-        공유
+    <Paper as="section" aria-labelledby="share-title" tilt="right" calm tape={tapeAt(4)} className="grid gap-3 pt-6">
+      <h2 id="share-title" className="font-hand text-[1.75rem] leading-tight font-bold">
+        <Highlight color="mint">공유</Highlight>
       </h2>
       <p className="text-sm text-muted-foreground">{SHARE_TEXT.notice(c.expiresAt)}</p>
 
@@ -137,7 +140,7 @@ export function SharePanel({ id, conversation: c, onChanged }: { id: string; con
         <legend className="mb-1 text-sm font-medium">공유 범위</legend>
         <div className="flex flex-wrap gap-2">
           {(Object.keys(SCOPE_LABEL) as ShareScope[]).map((s) => (
-            <label key={s} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm has-checked:border-foreground">
+            <label key={s} className="flex items-center gap-2 rounded-lg border bg-sheet px-3 py-2 text-sm has-checked:border-foreground">
               <input type="radio" name="share-scope" value={s} checked={scope === s} onChange={() => setScope(s)} />
               {SCOPE_LABEL[s]}
             </label>
@@ -213,6 +216,6 @@ export function SharePanel({ id, conversation: c, onChanged }: { id: string; con
           {notice.text}
         </p>
       )}
-    </section>
+    </Paper>
   );
 }

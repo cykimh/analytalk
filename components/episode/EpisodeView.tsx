@@ -1,13 +1,16 @@
-// 편 한 편: 헤드라인 → dek → 섹션(아이콘·제목·문단 → 근거 말풍선) → 다음 편 예고. 'AI 생성, 재미·참고용'을 단다.
-// 모든 글은 React 텍스트 노드로만 그린다. 모델이 쓴 글은 모두 StatText로 그려 {{stat:경로}}를 통계 값으로 채운다.
-// 채운 뒤 빈 헤드라인은 'N편'으로, 빈 dek·예고는 그리지 않는다.
-// feedback이 있으면(대화 주인) 문단마다 [틀렸어요]를 단다. 공유 화면은 feedback 없이 쓴다
-import { paragraphRef } from "@/lib/episode/feedback";
+// 편 한 편: 표지 카드(헤드라인·dek·스티커) → (있으면) 폴라로이드 → 섹션 카드(아이콘 스티커·제목·문단 → 근거 메모지) → 다음 편 예고.
+// 'AI 생성, 재미·참고용'을 단다. 모든 글은 React 텍스트 노드로만 그린다. 모델이 쓴 글은 모두 StatText로 그려
+// {{stat:경로}}를 통계 값으로 채운다. 채운 뒤 빈 헤드라인은 'N편'으로, 빈 dek·예고는 그리지 않는다.
+// 문단 [틀렸어요]는 여기 없다: 편 화면이 리포트 영역(#report-capture) 바깥 아래에 ParagraphFeedback으로 둔다
+import type { ReactNode } from "react";
+import { Highlight } from "@/components/scrap/Highlight";
+import { Paper } from "@/components/scrap/Paper";
+import { Sticker } from "@/components/scrap/Sticker";
+import { alternate, highlightAt, tapeAt } from "@/components/scrap/tilt";
 import { hasStatText } from "@/lib/episode/statText";
 import type { StoredEpisode } from "@/lib/llm/schema";
 import type { ChatStats } from "@/lib/stats/compute";
 import { Evidence } from "./Evidence";
-import { FeedbackButton } from "./FeedbackButton";
 import { AI_NOTICE } from "./model";
 import { StatText } from "./StatText";
 
@@ -15,62 +18,85 @@ export function EpisodeView({
   n,
   content,
   stats,
-  feedback,
+  stickers,
+  snapshot,
 }: {
   n: number;
   content: StoredEpisode;
   stats: ChatStats;
-  feedback?: { id: string };
+  /** 표지 카드 아래쪽 스티커 줄(CoverStickers) */
+  stickers?: ReactNode;
+  /** 표지 다음, 섹션 앞(KpiPolaroids) */
+  snapshot?: ReactNode;
 }) {
   return (
     <article className="grid min-w-0 gap-8">
-      <header className="grid gap-2">
-        <p className="text-xs text-muted-foreground">
+      <Paper as="header" tilt="left" tape={tapeAt(0)} className="grid gap-3 px-5 pt-7 pb-5">
+        <p className="text-[0.8125rem] text-ink-soft">
           {n}편 · {AI_NOTICE}
         </p>
-        <h1 className="text-2xl leading-snug font-semibold break-words">
-          {hasStatText(content.headline, stats) ? <StatText text={content.headline} stats={stats} /> : `${n}편`}
+        <h1 className="font-hand text-[2.125rem] leading-[1.2] font-bold break-words">
+          <Highlight color={highlightAt(0)}>
+            {hasStatText(content.headline, stats) ? <StatText text={content.headline} stats={stats} /> : `${n}편`}
+          </Highlight>
         </h1>
         {hasStatText(content.dek, stats) && (
-          <p className="text-muted-foreground break-words">
+          <p className="text-[1.0625rem] leading-relaxed text-ink-soft break-words">
             <StatText text={content.dek} stats={stats} />
           </p>
         )}
-      </header>
+        {stickers && <div className="pt-1">{stickers}</div>}
+      </Paper>
+
+      {snapshot}
 
       {content.sections.map((section, si) => (
-        <section key={`${si}-${section.title}`} className="grid min-w-0 gap-3">
-          <h2 className="text-lg font-semibold break-words">
-            <span aria-hidden className="mr-1.5">
+        <Paper
+          as="section"
+          key={`${si}-${section.title}`}
+          tilt={alternate(si + 1)}
+          calm
+          tape={tapeAt(si + 1)}
+          className="grid gap-4 px-5 pt-7 pb-6"
+        >
+          <h2 className="flex min-w-0 items-start gap-2 font-hand text-[1.625rem] leading-tight font-bold break-words">
+            <Sticker aria-hidden index={si} className="mt-0.5 shrink-0 px-1.5 font-sans text-lg leading-none">
               {section.icon}
+            </Sticker>
+            <span className="min-w-0">
+              <Highlight color={highlightAt(si + 1)}>
+                <StatText text={section.title} stats={stats} />
+              </Highlight>
             </span>
-            <StatText text={section.title} stats={stats} />
           </h2>
           {section.paragraphs.map((p, pi) => (
-            <div key={`${pi}-${p.key}`} className="grid gap-1">
-              <p className="leading-relaxed break-words">
-                <StatText text={p.text} stats={stats} />
-              </p>
-              {feedback && <FeedbackButton id={feedback.id} n={n} paragraphKey={paragraphRef(si, p.key)} />}
-            </div>
+            <p key={`${pi}-${p.key}`} className="text-[1.0625rem] leading-[1.8] break-words">
+              <StatText text={p.text} stats={stats} />
+            </p>
           ))}
           {section.evidence.length > 0 && (
-            <div className="grid gap-2">
-              {section.evidence.map((e) => (
-                <Evidence key={e.id} sender={e.sender} at={e.at} quote={e.quote} />
+            <div className="grid gap-3 pt-1">
+              {section.evidence.map((e, ei) => (
+                <Evidence key={e.id} index={ei} sender={e.sender} at={e.at} quote={e.quote} />
               ))}
             </div>
           )}
-        </section>
+        </Paper>
       ))}
 
       {hasStatText(content.next_teaser, stats) && (
-        <footer className="grid gap-1 rounded-xl bg-muted p-4 text-sm">
-          <span className="text-xs text-muted-foreground">다음 편 예고</span>
-          <p className="break-words">
+        <Paper
+          as="footer"
+          tone="butter"
+          tilt={alternate(content.sections.length + 1)}
+          tape={tapeAt(content.sections.length + 1)}
+          className="grid gap-1 px-5 pt-6"
+        >
+          <span className="font-hand text-xl font-bold">다음 편 예고</span>
+          <p className="text-base leading-relaxed break-words">
             <StatText text={content.next_teaser} stats={stats} />
           </p>
-        </footer>
+        </Paper>
       )}
     </article>
   );

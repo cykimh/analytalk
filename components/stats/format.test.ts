@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatStats } from "@/lib/stats/compute";
-import { crossedText, formatCount, formatDuration, formatPercent, heatmapRows, heatLevel, kstDate, topPeople } from "./format";
+import { crossedText, formatCount, formatDuration, formatPercent, heatmapRows, heatLevel, kstDate, periodOf, topPeople } from "./format";
 
 describe("포맷", () => {
   it("formatDuration: 분·시간·일, null은 -", () => {
@@ -19,6 +19,15 @@ describe("포맷", () => {
     expect(formatPercent(1)).toBe("100%");
     expect(formatCount(6240)).toBe("6,240");
     expect(kstDate(Date.UTC(2024, 2, 13, 15, 5))).toBe("2024-03-14");
+  });
+});
+
+describe("periodOf", () => {
+  it("첫날·마지막 날과 양 끝을 포함한 날수(달·해를 넘어도)", () => {
+    expect(periodOf({ "2024-03-02": 1, "2023-12-30": 4, "2024-01-01": 2 })).toEqual({ from: "2023-12-30", to: "2024-03-02", days: 64 });
+    expect(periodOf({ "2024-02-28": 1, "2024-03-01": 1 })).toEqual({ from: "2024-02-28", to: "2024-03-01", days: 3 });
+    expect(periodOf({ "2024-05-05": 9 })).toEqual({ from: "2024-05-05", to: "2024-05-05", days: 1 });
+    expect(periodOf({})).toBeNull();
   });
 });
 
