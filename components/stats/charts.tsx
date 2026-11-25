@@ -2,7 +2,7 @@
 // look: plain(업로드 화면, 둥근 카드) · scrap(리포트 화면, 종이 카드 + 테이프 + 크레파스 결 막대. DESIGN.md). 색은 둘 다 크레파스(PALETTE)
 import type { ReactNode } from "react";
 import { Paper } from "@/components/scrap/Paper";
-import { alternate, tapeAt } from "@/components/scrap/tilt";
+import { alternate } from "@/components/scrap/tilt";
 import { cn } from "@/lib/utils";
 
 export type ChartLook = "plain" | "scrap";
@@ -45,7 +45,7 @@ export function ChartCard({
 }) {
   if (look === "scrap") {
     return (
-      <Paper as="section" tilt={alternate(index)} tape={tapeAt(index + 1)} className={cn("grid content-start gap-3 pt-5", className)}>
+      <Paper as="section" tilt={alternate(index)} className={cn("grid content-start gap-3 pt-5", className)}>
         <header className="grid gap-1">
           <h3 className="text-[1.125rem] leading-tight font-bold">{title}</h3>
           {note && <p className="text-base leading-snug text-ink-soft">{note}</p>}

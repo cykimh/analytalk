@@ -13,20 +13,20 @@ import {
 } from "./tilt";
 
 describe("콜라주 기울기", () => {
-  it("카드는 −1.2° / +1°, 긴 본문 카드는 ±0.5° 이하", () => {
-    expect(degreesOf(TILT_CLASS.left)).toBe(-1.2);
-    expect(degreesOf(TILT_CLASS.right)).toBe(1);
+  it("카드·긴 본문 카드는 기울이지 않는다(장식 줄임)", () => {
+    expect(degreesOf(TILT_CLASS.left)).toBe(0);
+    expect(degreesOf(TILT_CLASS.right)).toBe(0);
     expect(degreesOf(TILT_CLASS.none)).toBe(0);
-    for (const c of Object.values(CALM_TILT_CLASS)) expect(Math.abs(degreesOf(c))).toBeLessThanOrEqual(0.5);
+    for (const c of Object.values(CALM_TILT_CLASS)) expect(degreesOf(c)).toBe(0);
   });
 
   it("왼쪽부터 번갈아 기운다", () => {
     expect([0, 1, 2, 3].map(alternate)).toEqual(["left", "right", "left", "right"]);
   });
 
-  it("스티커·폴라로이드·메모지는 ±2° 안에서 기운다", () => {
+  it("스티커·폴라로이드·인용은 기울이지 않는다", () => {
     for (let i = 0; i < 12; i++) {
-      for (const c of [stickerTiltAt(i), polaroidTiltAt(i), noteTiltAt(i)]) expect(Math.abs(degreesOf(c))).toBeLessThanOrEqual(2);
+      for (const c of [stickerTiltAt(i), polaroidTiltAt(i), noteTiltAt(i)]) expect(degreesOf(c)).toBe(0);
     }
   });
 

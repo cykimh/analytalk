@@ -21,27 +21,27 @@ export function CoverStickers({
   return (
     <ul role="list" className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-2">
       <li className="min-w-0">
-        <Sticker index={i++} tone="lilac">
+        <Sticker index={i++}>
           {CONCEPTS[concept].title}
         </Sticker>
       </li>
       {period && (
         <li className="min-w-0">
-          <Sticker index={i++} tone="kraft" className="tabular-nums">
+          <Sticker index={i++} className="tabular-nums">
             {period.from === period.to ? period.from : `${period.from} ~ ${period.to}`}
           </Sticker>
         </li>
       )}
       {shown.map((name, k) => (
         <li key={`${k}-${name}`} className="min-w-0">
-          <Sticker index={i++} tone={(["butter", "mint", "pink", "sky"] as const)[k % 4]}>
+          <Sticker index={i++}>
             {name}
           </Sticker>
         </li>
       ))}
       {more > 0 && (
         <li className="min-w-0">
-          <Sticker index={i++} tone="kraft">
+          <Sticker index={i++}>
             외 {more}명
           </Sticker>
         </li>

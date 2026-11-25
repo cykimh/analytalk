@@ -3,10 +3,10 @@
 
 export type Tilt = "left" | "right" | "none";
 
-/** 카드 기울기: 왼쪽 −1.2°, 오른쪽 +1° */
-export const TILT_CLASS: Record<Tilt, string> = { left: "-rotate-[1.2deg]", right: "rotate-1", none: "" };
-/** 긴 본문이 든 카드는 ±0.5° 이하 */
-export const CALM_TILT_CLASS: Record<Tilt, string> = { left: "-rotate-[0.5deg]", right: "rotate-[0.5deg]", none: "" };
+/** 카드 기울기. 2026-11-25 "장식 줄여줘"로 기울이지 않는다(left·right도 0°). 다시 기울이려면 여기만 바꾼다 */
+export const TILT_CLASS: Record<Tilt, string> = { left: "", right: "", none: "" };
+/** 긴 본문이 든 카드(지금은 TILT_CLASS와 같이 0°) */
+export const CALM_TILT_CLASS: Record<Tilt, string> = { left: "", right: "", none: "" };
 
 /** i번째(0부터) 카드의 기울기. 왼쪽부터 번갈아 */
 export const alternate = (i: number): Tilt => (i % 2 === 0 ? "left" : "right");
@@ -35,16 +35,16 @@ export const STICKER_TONES = ["butter", "pink", "mint", "sky", "lilac", "kraft"]
 export type StickerTone = (typeof STICKER_TONES)[number];
 export const stickerToneAt = (i: number): StickerTone => STICKER_TONES[i % STICKER_TONES.length];
 
-/** 스티커 기울기(−2° ~ +2°) */
-const STICKER_TILTS = ["-rotate-2", "rotate-[1.5deg]", "-rotate-1", "rotate-2", "-rotate-[1.5deg]", "rotate-1"] as const;
+/** 스티커 기울기(지금은 0°) */
+const STICKER_TILTS = [""] as const;
 export const stickerTiltAt = (i: number): string => STICKER_TILTS[i % STICKER_TILTS.length];
 
-/** 폴라로이드 기울기. 카드보다 조금 더 기운다 */
-const POLAROID_TILTS = ["-rotate-2", "rotate-[1.5deg]", "-rotate-1"] as const;
+/** 폴라로이드 기울기(지금은 0°) */
+const POLAROID_TILTS = [""] as const;
 export const polaroidTiltAt = (i: number): string => POLAROID_TILTS[i % POLAROID_TILTS.length];
 
-/** 근거 메모지 기울기(짧은 인용이라 카드보다 조금 더) */
-const NOTE_TILTS = ["-rotate-[0.8deg]", "rotate-[0.6deg]"] as const;
+/** 근거 인용 기울기(지금은 0°) */
+const NOTE_TILTS = [""] as const;
 export const noteTiltAt = (i: number): string => NOTE_TILTS[i % NOTE_TILTS.length];
 
 /** 클래스 글자에서 기울기(도)를 읽는다. 테스트가 "긴 본문 카드 ±0.5° 이하"를 확인하는 데 쓴다 */

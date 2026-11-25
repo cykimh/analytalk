@@ -105,7 +105,7 @@
     --note-line: #e9dfcd;
 
     /* 종이가 살짝 떠 보이는 옅고 따뜻한 그림자 */
-    --shadow-paper: 0 1px 1px rgb(92 70 40 / 0.06), 0 10px 18px -12px rgb(92 70 40 / 0.32);
+    --shadow-paper: 0 0 0 1px rgb(92 70 40 / 0.06), 0 2px 6px -2px rgb(92 70 40 / 0.12);
     --shadow-sticker: 0 0 0 1px rgb(92 70 40 / 0.07), 0 1px 2px rgb(92 70 40 / 0.2);
 
     /* shadcn 변수 → 따뜻한 종이 색 */
@@ -182,7 +182,7 @@
 @layer components {
   /* 붙인 종이 한 장: 모서리는 거의 각지고, 그림자는 옅다 */
   .paper-sheet {
-    border-radius: 3px 2px 4px 2px;
+    border-radius: 8px;
     box-shadow: var(--shadow-paper);
   }
 
@@ -217,15 +217,14 @@
     align-items: center;
     gap: 0.25em;
     max-width: 100%;
-    border: 3px solid #fff;
-    border-radius: 0.7rem;
+    border: 1px solid rgb(92 70 40 / 0.14);
+    border-radius: 999px;
     padding: 0.05em 0.6em 0.1em;
-    font-weight: 700;
-    line-height: 1.35;
+    font-weight: 400;
+    line-height: 1.4;
     letter-spacing: -0.01em;
     color: var(--ink);
-    box-shadow: var(--shadow-sticker);
-  }
+      }
 
   /* 폴라로이드: 흰 테두리, 아래 여백이 두껍다 */
   .polaroid {
@@ -240,15 +239,12 @@
 
   /* 찢은 메모지: 위아래가 들쭉날쭉. 그림자는 바깥 .torn-shadow의 drop-shadow가 모양을 따라 그린다 */
   .torn-shadow {
-    filter: drop-shadow(0 1px 1px rgb(92 70 40 / 0.12)) drop-shadow(0 6px 8px rgb(92 70 40 / 0.1));
+    filter: none;
   }
   .torn {
     background-color: #fffcf2;
-    clip-path: polygon(
-      0 5px, 6% 1px, 13% 4px, 21% 0, 29% 3px, 37% 1px, 46% 5px, 54% 1px, 62% 4px, 71% 0, 79% 3px, 88% 1px, 95% 4px, 100% 2px,
-      100% calc(100% - 4px), 94% 100%, 86% calc(100% - 3px), 77% calc(100% - 1px), 69% calc(100% - 5px), 60% 100%,
-      51% calc(100% - 3px), 42% calc(100% - 1px), 33% calc(100% - 4px), 24% 100%, 15% calc(100% - 3px), 7% calc(100% - 1px), 0 calc(100% - 4px)
-    );
+    border-left: 3px solid var(--note-line);
+    border-radius: 2px 6px 6px 2px;
   }
   /* 왼쪽 위 큰 따옴표 */
   .torn::before {

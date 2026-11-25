@@ -6,7 +6,6 @@
 import { useRef, useState } from "react";
 import { Highlight } from "@/components/scrap/Highlight";
 import { Paper } from "@/components/scrap/Paper";
-import { tapeAt } from "@/components/scrap/tilt";
 import { Button } from "@/components/ui/button";
 import {
   copyLink,
@@ -130,7 +129,7 @@ export function SharePanel({ id, conversation: c, onChanged }: { id: string; con
   }
 
   return (
-    <Paper as="section" aria-labelledby="share-title" tilt="right" calm tape={tapeAt(4)} className="grid gap-3 pt-6">
+    <Paper as="section" aria-labelledby="share-title" tilt="right" calm className="grid gap-3 pt-6">
       <h2 id="share-title" className="text-[1.375rem] leading-tight font-bold tracking-tight">
         <Highlight color="mint">공유</Highlight>
       </h2>

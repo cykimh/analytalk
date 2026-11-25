@@ -4,7 +4,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Highlight } from "@/components/scrap/Highlight";
-import { MaskingTape } from "@/components/scrap/MaskingTape";
 import { Paper } from "@/components/scrap/Paper";
 import { tapeAt } from "@/components/scrap/tilt";
 import { buttonVariants } from "@/components/ui/button";
@@ -18,8 +17,6 @@ export function MissingPage({ title, children }: { title: string; children: Reac
         aria-hidden
         className="relative mt-3 grid aspect-[4/3] w-52 -rotate-2 place-items-center justify-self-center rounded-[2px] border-2 border-dashed border-ink/20 bg-sheet/50"
       >
-        <MaskingTape color="pink" at="left" />
-        <MaskingTape color="sky" at="right" />
         <span className="text-base text-ink-soft">빈자리</span>
       </div>
 

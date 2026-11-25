@@ -58,7 +58,6 @@ export function EpisodeView({
           key={`${si}-${section.title}`}
           tilt={alternate(si + 1)}
           calm
-          tape={tapeAt(si + 1)}
           className="grid grid-cols-1 gap-4 px-5 pt-7 pb-6"
         >
           <h2 className="flex min-w-0 items-start gap-2 text-[1.25rem] leading-tight font-bold wrap-anywhere tracking-tight">
@@ -91,7 +90,6 @@ export function EpisodeView({
           as="footer"
           tone="butter"
           tilt={alternate(content.sections.length + 1)}
-          tape={tapeAt(content.sections.length + 1)}
           className="grid grid-cols-1 gap-1 px-5 pt-6"
         >
           <span className="text-base font-bold">다음 편 예고</span>

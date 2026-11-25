@@ -36,7 +36,6 @@ function StatTicker({ stats }: { stats: ChatStats }) {
       aria-live="off"
       tone="butter"
       tilt="right"
-      tape={tapeAt(1)}
       className="grid gap-1 justify-self-center px-6 pt-6 pb-5 text-center"
     >
       <p className="text-base leading-tight font-bold">{card.label}</p>
@@ -86,7 +85,7 @@ export function StepsFeedView({
             // 채운 뒤 빈 메모(모르는 자리표시자뿐)는 그리지 않는다
             const shown = stats ? (notes[e.n] ?? []).filter((note) => hasStatText(note.note, stats)) : [];
             return (
-              <Paper as="li" key={e.n} tilt={alternate(e.n)} calm tape={tapeAt(e.n + 1)} className="grid grid-cols-1 gap-2 pt-6">
+              <Paper as="li" key={e.n} tilt={alternate(e.n)} calm className="grid grid-cols-1 gap-2 pt-6">
                 <h2 className="text-[1.125rem] leading-tight font-bold">
                   {e.n}편 <span className="font-normal text-ink-soft">· {STATUS_TEXT[e.status] ?? e.status}</span>
                 </h2>
