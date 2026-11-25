@@ -15,7 +15,7 @@ export function MissingPage({ title, children }: { title: string; children: Reac
       {/* 장식: 붙여 둔 사진을 떼어 내고 테이프만 남은 자리 */}
       <div
         aria-hidden
-        className="relative mt-3 grid aspect-[4/3] w-52 -rotate-2 place-items-center justify-self-center rounded-[2px] border-2 border-dashed border-ink/20 bg-sheet/50"
+        className="relative mt-3 grid aspect-[4/3] w-52 place-items-center justify-self-center rounded-lg border-2 border-dashed border-ink/20 bg-sheet/50"
       >
         <span className="text-base text-ink-soft">빈자리</span>
       </div>
