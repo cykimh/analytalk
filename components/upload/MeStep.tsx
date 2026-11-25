@@ -29,10 +29,10 @@ export function MeStep({
       <fieldset className="grid gap-2">
         <legend className="sr-only">나</legend>
         {participants.map((name) => (
-          <label key={name} className="flex items-center gap-2 rounded-lg border p-3 text-sm has-checked:border-foreground">
+          <label key={name} className="flex items-center gap-2.5 rounded-lg border bg-sheet p-3 text-base has-checked:border-foreground">
             <input type="radio" name="me" checked={me === name} onChange={() => onMe(name)} />
             <span className="min-w-0 flex-1 break-all">{name}</span>
-            <span aria-hidden className="text-xs text-muted-foreground">
+            <span aria-hidden className="text-sm text-muted-foreground tabular-nums">
               {formatCount(counts[name] ?? 0)}개
             </span>
           </label>

@@ -29,7 +29,7 @@ export function StepFrame({
         <h2 id="step-title" ref={heading} tabIndex={-1} className="font-hand text-[1.75rem] leading-tight font-bold outline-none">
           {title}
         </h2>
-        {description && <p className="text-sm text-muted-foreground">{description}</p>}
+        {description && <p className="text-base leading-relaxed text-muted-foreground">{description}</p>}
       </header>
       {children}
       {(onBack || action) && (

@@ -45,12 +45,12 @@ export function UploadStep({
           pick(e.dataTransfer.files);
         }}
         className={cn(
-          "grid cursor-pointer justify-items-center gap-1 rounded-xl border-2 border-dashed p-8 text-center text-sm has-focus-visible:ring-3 has-focus-visible:ring-ring/50",
+          "grid cursor-pointer justify-items-center gap-1 rounded-xl border-2 border-dashed p-8 text-center text-base has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-foreground has-focus-visible:outline-solid",
           dragging ? "border-foreground bg-muted" : "border-border",
           busy && "pointer-events-none opacity-60",
         )}
       >
-        <span className="font-medium">{busy ? "대화를 읽는 중…" : "파일 고르기"}</span>
+        <span className="font-bold">{busy ? "대화를 읽는 중…" : "파일 고르기"}</span>
         <span className="text-muted-foreground">.txt · .csv · .zip, 나뉜 파일은 한꺼번에 골라 주세요</span>
         <input
           type="file"
@@ -66,12 +66,12 @@ export function UploadStep({
         />
       </label>
       {busy && (
-        <p role="status" className="text-sm text-muted-foreground">
+        <p role="status" className="text-base text-muted-foreground">
           대화를 읽는 중이에요. 큰 파일은 몇 초 걸려요.
         </p>
       )}
       {error && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-base text-destructive">
           {error}
         </p>
       )}

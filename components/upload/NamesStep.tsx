@@ -36,13 +36,13 @@ export function NamesStep({
     const invalid = root === undefined && checkDisplayName(value) !== null;
     const id = `name-${targets.indexOf(who)}`;
     return (
-      <li key={who} className="grid gap-2 rounded-lg border p-3">
-        <div className="flex min-w-0 items-baseline justify-between gap-2 text-sm">
+      <li key={who} className="grid gap-2 rounded-lg border bg-sheet p-3">
+        <div className="flex min-w-0 items-baseline justify-between gap-2 text-base">
           <label htmlFor={id} className="min-w-0 break-all font-medium">
             {who}
-            {who === me && <span className="ml-1 text-xs text-muted-foreground">(나)</span>}
+            {who === me && <span className="ml-1 text-sm text-muted-foreground">(나)</span>}
           </label>
-          {!senders.has(who) && <span className="shrink-0 text-xs text-muted-foreground">알림에만 나옴</span>}
+          {!senders.has(who) && <span className="shrink-0 text-sm text-muted-foreground">알림에만 나옴</span>}
         </div>
         {root === undefined ? (
           <div className="flex min-w-0 gap-2">
@@ -55,7 +55,7 @@ export function NamesStep({
               disabled={busy}
               onChange={(e) => setName(who, e.target.value)}
               className={cn(
-                "h-9 min-w-0 flex-1 rounded-lg border border-input bg-background px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                "h-11 min-w-0 flex-1 rounded-lg border border-input bg-background px-3 text-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground",
                 invalid && "border-destructive",
               )}
             />
@@ -65,7 +65,7 @@ export function NamesStep({
                 value=""
                 disabled={busy}
                 onChange={(e) => e.target.value && onChange({ ...state, sameAs: mergeInto(state.sameAs, who, e.target.value) })}
-                className="h-9 w-28 shrink-0 rounded-lg border border-input bg-background px-2 text-sm"
+                className="h-11 w-32 shrink-0 rounded-lg border border-input bg-background px-2 text-base"
               >
                 <option value="">같은 사람…</option>
                 {roots
@@ -79,13 +79,13 @@ export function NamesStep({
             )}
           </div>
         ) : (
-          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 text-sm">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 text-base">
             <span className="min-w-0 break-all text-muted-foreground">
               같은 사람: {root} · {state.names[root]}
             </span>
             <button
               type="button"
-              className="text-xs underline disabled:opacity-50"
+              className="min-h-11 px-2 text-base underline underline-offset-4 disabled:opacity-50"
               disabled={busy}
               onClick={() => onChange({ ...state, sameAs: unmerge(state.sameAs, who) })}
             >
@@ -107,12 +107,12 @@ export function NamesStep({
     >
       <ul className="grid gap-2">{targets.map(row)}</ul>
       {problem && (
-        <p id="name-problem" role="alert" className="text-sm text-destructive">
+        <p id="name-problem" role="alert" className="text-base text-destructive">
           {NAME_PROBLEM_TEXT[problem]}
         </p>
       )}
       {busy && (
-        <p role="status" className="text-sm text-muted-foreground">
+        <p role="status" className="text-base text-muted-foreground">
           본문 속 이름을 바꾸는 중…
         </p>
       )}

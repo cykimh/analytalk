@@ -34,7 +34,7 @@ export function ExportGuide() {
   const guide = GUIDES[os];
   return (
     <section aria-labelledby="guide-title" className="grid gap-3">
-      <h3 id="guide-title" className="text-sm font-medium">
+      <h3 id="guide-title" className="text-base font-bold">
         내보내는 법
       </h3>
       <div role="group" aria-label="기기" className="flex flex-wrap gap-1.5">
@@ -45,7 +45,7 @@ export function ExportGuide() {
             aria-pressed={os === key}
             onClick={() => setOs(key)}
             className={cn(
-              "rounded-full border px-3 py-1 text-sm",
+              "min-h-11 rounded-full border px-4 text-base",
               os === key ? "border-foreground bg-foreground text-background" : "border-border text-muted-foreground",
             )}
           >
@@ -55,13 +55,13 @@ export function ExportGuide() {
       </div>
       <ol className="grid gap-2 sm:grid-cols-3">
         {guide.steps.map((step, i) => (
-          <li key={step} className="grid gap-1 rounded-lg bg-muted p-3 text-sm">
-            <span className="text-xs font-semibold text-muted-foreground">{i + 1}</span>
+          <li key={step} className="grid gap-1 rounded-lg bg-muted p-3 text-base">
+            <span className="text-sm font-bold text-muted-foreground">{i + 1}</span>
             {step}
           </li>
         ))}
       </ol>
-      <p className="text-xs text-muted-foreground">{guide.note}</p>
+      <p className="text-base text-muted-foreground">{guide.note}</p>
     </section>
   );
 }

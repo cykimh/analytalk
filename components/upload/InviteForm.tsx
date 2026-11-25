@@ -57,7 +57,7 @@ export function InviteForm() {
 
   return (
     <form onSubmit={submit} className="grid gap-3">
-      <label className="grid gap-1.5 text-sm font-medium">
+      <label className="grid gap-1.5 text-base font-medium">
         초대 코드
         <input
           value={code}
@@ -66,7 +66,7 @@ export function InviteForm() {
           autoCapitalize="characters"
           spellCheck={false}
           maxLength={64}
-          className="h-10 rounded-lg border border-input bg-background px-3 font-mono text-base tracking-wider uppercase outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="h-11 rounded-lg border border-input bg-sheet px-3 font-mono text-base tracking-wider uppercase focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
         />
       </label>
       {SITE_KEY && (
@@ -82,7 +82,7 @@ export function InviteForm() {
         />
       )}
       {error && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-base text-destructive">
           {error}
         </p>
       )}

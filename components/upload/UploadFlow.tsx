@@ -182,7 +182,7 @@ export function UploadFlow({ inApp }: { inApp: boolean }) {
   };
 
   const errorBox = error && step !== "upload" && (
-    <p role="alert" className="text-sm text-destructive">
+    <p role="alert" className="text-base text-destructive">
       {error}
     </p>
   );

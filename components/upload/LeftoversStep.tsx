@@ -49,10 +49,10 @@ export function LeftoversStep({
     >
       <ul className="grid gap-2">
         {leftovers.map((l) => (
-          <li key={l.piece} className="grid gap-2 rounded-lg border p-3 text-sm">
+          <li key={l.piece} className="grid gap-2 rounded-lg border bg-sheet p-3 text-base">
             <div className="flex items-baseline justify-between gap-2">
               <span className="font-medium break-all">{l.piece}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">{l.count}번</span>
+              <span className="shrink-0 text-sm text-muted-foreground tabular-nums">{l.count}번</span>
             </div>
             <p className="break-all text-muted-foreground">{snippet(messages, l)}</p>
             <select
@@ -63,7 +63,7 @@ export function LeftoversStep({
                 const { [l.piece]: _, ...rest } = fixes;
                 onFixes(e.target.value === KEEP ? rest : { ...rest, [l.piece]: e.target.value });
               }}
-              className="h-9 rounded-lg border border-input bg-background px-2"
+              className="h-11 rounded-lg border border-input bg-background px-2 text-base"
             >
               <option value={KEEP}>그대로 두기</option>
               {displayNames.map((name) => (
@@ -76,7 +76,7 @@ export function LeftoversStep({
         ))}
       </ul>
       {busy && (
-        <p role="status" className="text-sm text-muted-foreground">
+        <p role="status" className="text-base text-muted-foreground">
           바꾸는 중…
         </p>
       )}

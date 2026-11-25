@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "안내 · analytalk" };
 // PRD 12 최소 고지 한 장: 무엇이 어디로 가는지, 보관 기간, 삭제 방법, 연락 방법. 쿠키 없이 누구나 본다
 export default function AboutPage() {
   return (
-    <main className="mx-auto grid w-full max-w-2xl min-w-0 gap-8 px-4 py-10 text-sm leading-relaxed">
+    <main className="mx-auto grid w-full max-w-2xl min-w-0 gap-8 px-4 py-10 text-base leading-relaxed">
       <header className="grid gap-2">
         <h1 className="font-hand text-[2.25rem] leading-tight font-bold">analytalk 안내</h1>
         <p className="text-muted-foreground">
@@ -66,7 +66,7 @@ export default function AboutPage() {
         </ul>
       </section>
 
-      <Link href="/" className="justify-self-start text-sm font-medium underline underline-offset-4">
+      <Link href="/" className="inline-flex min-h-11 items-center justify-self-start font-medium underline underline-offset-4">
         처음 화면으로
       </Link>
     </main>

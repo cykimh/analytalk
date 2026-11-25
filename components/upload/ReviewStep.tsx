@@ -66,10 +66,10 @@ export function ReviewStep({
 
   return (
     <StepFrame title="보낼 내용 확인" onBack={onBack} busy={busy}>
-      <p className="rounded-xl bg-muted p-4 text-sm">
+      <p className="rounded-xl bg-muted p-4 text-base">
         이름을 바꾸고 일부를 가린 최근 대화가 미국 Anthropic으로 가서 AI가 읽어요. 30일 보관되고, 학습에는 쓰이지 않아요
       </p>
-      <dl className="grid gap-3 text-sm">
+      <dl className="grid gap-3 text-base tabular-nums">
         <div className="grid gap-0.5">
           <dt className="text-muted-foreground">보낼 범위</dt>
           <dd>
@@ -89,15 +89,15 @@ export function ReviewStep({
           </dd>
         </div>
       </dl>
-      <details className="rounded-xl border p-3 text-sm">
+      <details className="rounded-xl border bg-sheet p-3 text-base">
         <summary className="cursor-pointer font-medium">미리보기 20줄</summary>
-        <pre className="mt-2 max-h-80 overflow-y-auto font-mono text-xs leading-relaxed break-all whitespace-pre-wrap">
+        <pre className="mt-2 max-h-80 overflow-y-auto font-mono text-sm leading-relaxed break-all whitespace-pre-wrap">
           {s.preview.join("\n")}
         </pre>
       </details>
 
       {safety ? (
-        <div role="alert" className="grid gap-1 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm">
+        <div role="alert" className="grid gap-1 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-base">
           <p className="font-medium">{HELP[safety].title}</p>
           {HELP[safety].lines.map((line) => (
             <p key={line}>{line}</p>
@@ -106,7 +106,7 @@ export function ReviewStep({
       ) : (
         <div className="grid gap-3">
           {group && (
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex items-center gap-2.5 py-2.5 text-base">
               <input type="checkbox" checked={told} onChange={(e) => setTold(e.target.checked)} />
               방 사람들에게 말했어요
             </label>
@@ -114,7 +114,7 @@ export function ReviewStep({
           <Button size="lg" disabled={busy || work || (group && !told)} onClick={onCreate}>
             {busy ? "보내는 중…" : "AI 연재 만들기"}
           </Button>
-          <p className="text-xs text-muted-foreground">{note}</p>
+          <p className="text-base text-muted-foreground">{note}</p>
         </div>
       )}
     </StepFrame>
