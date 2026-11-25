@@ -16,6 +16,7 @@
 
 ## analytalk 규칙
 
+- UI 작업 전에 [DESIGN.md](DESIGN.md)를 읽고 따른다
 - 명령: `pnpm test`(vitest), `pnpm typecheck`, `pnpm test:e2e`(Playwright, dev 3100 / prod 3200), `pnpm check:fixtures`, `pnpm invite:add|revoke`(`--prod`는 `.env.production.local` 사용), `pnpm measure`, `pnpm eval`
 - e2e: 처음 한 번 `pnpm exec playwright install chromium webkit`. 기본은 dev 서버(3100), prod 프로젝트(CSP·헤더, `security.spec.ts`)는 `PW_PROD=1 pnpm test:e2e --project=prod-chromium --project=prod-webkit`
 - 저장 금지: 원본 대화 파일·전체 파싱 결과는 브라우저 밖으로 나가지 않는다. 페이로드의 `transcript`·`anchors`는 서버 메모리에서만 다루고 DB·Storage·로그(`console.*` 포함)에 남기지 않는다. 실제 이름은 저장·전송하지 않는다
