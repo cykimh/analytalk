@@ -1,15 +1,12 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { Geist } from "next/font/google";
 import { headers } from "next/headers";
 import { connection } from "next/server";
 import { NonceProvider } from "@/components/NonceProvider";
 import { APP_SCHEMA } from "@/lib/app";
 import { cn } from "@/lib/utils";
+import { gaegu, pretendard } from "./fonts";
 import "./globals.css";
-
-// 라틴 문자만 Geist, 한글은 시스템 폰트로 떨어진다.
-const geist = Geist({ subsets: ["latin"], variable: "--font-sans" });
 
 export const metadata: Metadata = { title: APP_SCHEMA };
 
@@ -19,7 +16,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   await connection();
   const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
-    <html lang="ko" className={cn("font-sans", geist.variable)}>
+    <html lang="ko" className={cn("font-sans", pretendard.variable, gaegu.variable)}>
       <body>
         <NonceProvider nonce={nonce}>{children}</NonceProvider>
       </body>

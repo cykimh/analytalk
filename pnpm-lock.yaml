@@ -38,6 +38,9 @@ importers:
       next:
         specifier: ^16.3.8
         version: 16.3.8(@babel/core@7.29.7)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.4)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      pretendard:
+        specifier: 1.3.9
+        version: 1.3.9
       react:
         specifier: ^19.3.0
         version: 19.3.0
@@ -2241,6 +2244,9 @@ packages:
   powershell-utils@0.2.1:
     resolution: {integrity: sha512-C+y9x90UElAddDZmV4qOx9W53B61PO7cIqWz2dQsWlwswuq4mr8NEwytdGKboYbQlGZ3awrkTeNvcZiZNHnQ8A==}
     engines: {node: '>=20'}
+
+  pretendard@1.3.9:
+    resolution: {integrity: sha512-PaQAADyLY5v4kYFwkpSJHbSSYIkiriY/1xXw75TKoZ9UQQqeU+tvP05yTdZAWibiIYoo8ZKtRv8PM7w0IaywSw==}
 
   pretty-ms@9.3.1:
     resolution: {integrity: sha512-HzMy3Geq23nVALD/M2LliU+F+M+gVNsvkQWWqeBZ8HDiCgzo6YPJ/Omrmtq24EFrIsk0a3EkQGEd7bDOo+IhGA==}
@@ -4497,6 +4503,8 @@ snapshots:
       source-map-js: 1.2.2
 
   powershell-utils@0.2.1: {}
+
+  pretendard@1.3.9: {}
 
   pretty-ms@9.3.1:
     dependencies:
