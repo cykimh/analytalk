@@ -166,10 +166,12 @@
     outline: 2px solid var(--ink);
     outline-offset: 2px;
   }
-  /* 라디오·체크박스도 잉크 색 */
+  /* 라디오·체크박스도 잉크 색. 휴대폰에서 누르기 쉽게 조금 키운다(누르는 영역은 감싼 label이 넓힌다) */
   input[type="checkbox"],
   input[type="radio"] {
     accent-color: var(--ink);
+    width: 1.125rem;
+    height: 1.125rem;
   }
   ::selection {
     background-color: var(--hl-yellow);
