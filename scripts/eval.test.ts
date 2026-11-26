@@ -1,31 +1,42 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import { DEFAULT_EST_COST_USD, inputTokenBudgetFor } from "@/lib/config";
+import { TONE_KEYS } from "@/lib/llm/concepts";
+import { modelSettings } from "@/lib/llm/settings";
 import { buildPayload, payloadIndex } from "@/lib/payload/build";
-import type { ChatMessage } from "@/lib/parse/parse";
+import type { ChatMessage, ParseResult } from "@/lib/parse/parse";
+import { syntheticGroupChat } from "@/test/syntheticChat";
 import {
   discoverGolden,
-  pickLimited,
-  evalPayload,
+  evalCase,
   judgeEval,
   parseArgs,
-  recordEvalUsage,
-  scoreEpisode,
+  pickLimited,
+  prepareCases,
+  renderReview,
+  scoreReport,
   summarizeEval,
-  type EpisodeScore,
-  type FileEval,
+  type EvalCase,
+  type ReportScore,
 } from "./eval";
 
 describe("parseArgs", () => {
-  it("--dir만 주면 기본값", () => {
-    expect(parseArgs(["--dir", "g"])).toEqual({ dir: "g", model: null, limit: null, dryRun: false });
+  it("--dir만 주면 기본값: 모델은 앱 기본, 말투는 전부", () => {
+    expect(parseArgs(["--dir", "g"])).toEqual({ dir: "g", models: [], tones: [...TONE_KEYS], limit: null, dryRun: false, prod: false, yes: false });
   });
-  it("옵션을 읽는다", () => {
-    expect(parseArgs(["--dir", "g", "--model", "claude-sonnet-5-5", "--limit", "4", "--dry-run"])).toEqual({
+  it("옵션을 읽는다: --model·--tone은 여러 번", () => {
+    expect(parseArgs(["--dir", "g", "--model", "a", "--model", "b", "--tone", "warm", "--limit", "4", "--dry-run", "--prod", "--yes"])).toEqual({
       dir: "g",
-      model: "claude-sonnet-5-5",
+      models: ["a", "b"],
+      tones: ["warm"],
       limit: 4,
       dryRun: true,
+      prod: true,
+      yes: true,
     });
+  });
+  it("--compare는 Sonnet 5.5와 Opus 5.5 둘", () => {
+    expect(parseArgs(["--dir", "g", "--compare"]).models).toEqual(["claude-sonnet-5-5", "claude-opus-5-5"]);
   });
   it.each([
     [[], /--dir/],
@@ -33,6 +44,8 @@ describe("parseArgs", () => {
     [["--dir", "g", "--limit", "0"], /limit/],
     [["--dir", "g", "--limit", "x"], /limit/],
     [["--dir", "g", "--model"], /model/],
+    [["--dir", "g", "--tone", "x"], /tone/],
+    [["--dir", "g", "--compare", "--model", "a"], /compare/],
     [["--dir", "g", "--bogus"], /알 수 없는/],
     [["--dir", "g", "extra"], /위치 인자/],
   ])("잘못된 인자 %j 는 던진다", (argv, msg) => {
@@ -77,7 +90,32 @@ const msgs: ChatMessage[] = Array.from({ length: 6 }, (_, i) => ({
 const payload = buildPayload({ messages: msgs, tone: "fact", concept: "group", kind: "group", tokenBudget: 10_000, tokensPerChar: 1 });
 const firstId = [...payloadIndex(payload).keys()][0];
 
-/** 문단 2개(하나는 '~것 같다' 금지 표현), 근거 2개(하나는 본문에 없는 인용) */
+describe("prepareCases", () => {
+  const big = syntheticGroupChat(40, 60);
+  const parsed = { formatId: "android-ko", messages: big, participants: [...new Set(big.flatMap((m) => (m.sender ? [m.sender] : [])))], systemNames: [] } as unknown as ParseResult;
+  const files = [{ path: "group/a.txt", concept: "group" as const, injection: true }];
+  const models = ["claude-sonnet-5-5", "claude-opus-5-5"];
+
+  it("파일 1 × 말투 3 × 모델 2 = 6건, 파일 → 말투 → 모델 순서", () => {
+    const cases = prepareCases(files, [parsed], models, [...TONE_KEYS]);
+    expect(cases).toHaveLength(6);
+    expect(cases.map((c) => `${c.tone}/${c.model}`)).toEqual(TONE_KEYS.flatMap((t) => models.map((m) => `${t}/${m}`)));
+    expect(cases.every((c) => c.label === "group-1-injection" && c.concept === "group" && c.injection)).toBe(true);
+    expect(cases.every((c, i) => c.payload.tone === cases[i].tone)).toBe(true);
+  });
+  it("페이로드는 모델 예산마다 따로 만든다: Sonnet이 Opus보다 많이 보낸다", () => {
+    const cases = prepareCases(files, [parsed], models, ["fact"]);
+    const [sonnet, opus] = cases;
+    expect(inputTokenBudgetFor(sonnet.model)).toBeGreaterThan(inputTokenBudgetFor(opus.model));
+    expect(sonnet.payload.msgSent).toBeGreaterThanOrEqual(opus.payload.msgSent);
+    expect(sonnet.payload.msgSent).toBeGreaterThan(opus.payload.msgSent);
+  });
+  it("형식을 모르는 파일은 던진다", () => {
+    expect(() => prepareCases(files, [{ ...parsed, formatId: null }], models, ["fact"])).toThrow(/형식/);
+  });
+});
+
+/** 문단 3개(둘은 chronicle, 하나는 '~것 같다' 금지 표현), 근거 2개(하나는 본문에 없는 인용) */
 const body = (headline = "머리") =>
   JSON.stringify({
     safety: { flag: "none" },
@@ -87,6 +125,7 @@ const body = (headline = "머리") =>
     dek: "소제",
     sections: [
       {
+        part: "chronicle",
         icon: "x",
         title: "제목",
         about: "group",
@@ -99,102 +138,109 @@ const body = (headline = "머리") =>
           { id: "e2", msg_id: firstId, quote: "없는 말" },
         ],
       },
+      {
+        part: "rhythm",
+        icon: "y",
+        title: "리듬",
+        about: "group",
+        paragraphs: [{ key: "a", text: "저녁마다 이야기했다", evidence_ids: ["e1"] }],
+        evidence: [{ id: "e1", msg_id: firstId, quote: "안녕" }],
+      },
     ],
   });
 
 const stats = payload.stats;
 const idx = payloadIndex(payload);
 
-describe("scoreEpisode", () => {
-  it("문단 삭제율·인용 일치·금지 표현 수를 센다", () => {
-    const s = scoreEpisode(1, body(), "ok", idx, stats, payload);
-    expect(s).toMatchObject({
-      n: 1,
+describe("scoreReport", () => {
+  it("문단 삭제율·구성별 삭제·인용 일치·금지 표현 수를 센다", () => {
+    const { score } = scoreReport(body(), "ok", idx, stats, payload);
+    expect(score).toMatchObject({
       status: "partial",
-      paragraphsIn: 2,
+      paragraphsIn: 3,
       paragraphsDropped: 1,
-      dropRate: 0.5,
-      evidenceIn: 2,
-      evidenceMatched: 1,
+      evidenceIn: 3,
+      evidenceMatched: 2,
       bannedHits: 1,
+      dropByPart: { chronicle: { in: 2, dropped: 1 }, rhythm: { in: 1, dropped: 0 } },
     });
+    expect(score.dropRate).toBeCloseTo(1 / 3, 10);
   });
   it("제목·소제·섹션 제목의 금지 표현도 센다", () => {
-    expect(scoreEpisode(1, body("그는 좋아하는 것 같다"), "ok", idx, stats, payload).bannedHits).toBe(2);
+    expect(scoreReport(body("그는 좋아하는 것 같다"), "ok", idx, stats, payload).score.bannedHits).toBe(2);
   });
   it("JSON이 아니면 failed, 센 것은 0", () => {
-    expect(scoreEpisode(2, "not json", "ok", idx, stats, payload)).toMatchObject({
-      status: "failed",
-      paragraphsIn: 0,
-      dropRate: 0,
-      evidenceIn: 0,
-      bannedHits: 0,
-    });
+    const { score, content } = scoreReport("not json", "ok", idx, stats, payload);
+    expect(content).toBeNull();
+    expect(score).toMatchObject({ status: "failed", paragraphsIn: 0, dropRate: 0, evidenceIn: 0, bannedHits: 0, dropByPart: {} });
   });
 });
 
-const score = (over: Partial<EpisodeScore> = {}): EpisodeScore => ({
-  n: 1,
+const score = (over: Partial<ReportScore> = {}): ReportScore => ({
+  label: "group-1",
+  tone: "fact",
+  model: "claude-sonnet-5-5",
+  servedModel: "claude-sonnet-5-5",
+  fallback: false,
   status: "done",
   kind: "ok",
   totalMs: 100_000,
-  costUsd: 0.3,
+  costUsd: DEFAULT_EST_COST_USD,
   paragraphsIn: 10,
   paragraphsDropped: 1,
   dropRate: 0.1,
+  dropByPart: { chronicle: { in: 10, dropped: 1 } },
   evidenceIn: 8,
   evidenceMatched: 8,
   bannedHits: 0,
+  msgSent: 1000,
   ...over,
-});
-const file = (over: Partial<EpisodeScore>[] = []): FileEval => ({
-  label: "group-1",
-  concept: "group",
-  injection: false,
-  episodes: [1, 2, 3, 4].map((n, i) => score({ n, ...over[i] })),
 });
 
 describe("summarizeEval / judgeEval", () => {
-  it("원가 합·평균, 인용 일치율, 금지 수, 270초 초과 수, 편별 문단 삭제율을 모은다", () => {
+  it("모델별·모델×말투별로 원가 평균, 인용 일치율, 금지 수, 270초 초과 수, 구성별 삭제율을 모은다", () => {
+    const opus = { model: "claude-opus-5-5", servedModel: "claude-opus-5-5" };
     const s = summarizeEval([
-      file(),
-      file([{ paragraphsDropped: 5, dropRate: 0.5, paragraphsIn: 10 }, { bannedHits: 2 }, { totalMs: 271_000 }, { evidenceMatched: 6 }]),
+      score(),
+      score({ tone: "warm", paragraphsDropped: 5, dropByPart: { chronicle: { in: 10, dropped: 5 } }, bannedHits: 2, evidenceMatched: 6 }),
+      score({ ...opus, totalMs: 271_000, costUsd: 2 }),
     ]);
-    expect(s.files).toBe(2);
-    expect(s.costUsdTotal).toBeCloseTo(2.4, 10);
-    expect(s.costUsdAvgPerFile).toBeCloseTo(1.2, 10);
-    expect(s.bannedHits).toBe(2);
-    expect(s.overDeadline).toBe(1);
-    expect(s.quoteMatchRate).toBeCloseTo(62 / 64, 10);
-    expect(s.droppedParagraphs).toBe(12);
-    // 편별 삭제율은 (지운 문단 합 / 전체 문단 합)
-    expect(s.dropRateByEpisode).toEqual([6 / 20, 2 / 20, 2 / 20, 2 / 20]);
+    expect(Object.keys(s.byModel).sort()).toEqual(["claude-opus-5-5", "claude-sonnet-5-5"]);
+    const sonnet = s.byModel["claude-sonnet-5-5"];
+    expect(sonnet).toMatchObject({ cases: 2, bannedHits: 2, overDeadline: 0, droppedParagraphs: 6, fallbacks: 0 });
+    expect(sonnet.quoteMatchRate).toBeCloseTo(14 / 16, 10);
+    expect(sonnet.costUsdAvg).toBeCloseTo(DEFAULT_EST_COST_USD, 10);
+    expect(sonnet.dropRateByPart).toEqual({ chronicle: 6 / 20 });
+    expect(s.byModel["claude-opus-5-5"]).toMatchObject({ cases: 1, overDeadline: 1, costUsdAvg: 2 });
+    expect(Object.keys(s.byModelTone["claude-sonnet-5-5"]).sort()).toEqual(["fact", "warm"]);
+    expect(s.byModelTone["claude-sonnet-5-5"].warm).toMatchObject({ cases: 1, bannedHits: 2 });
   });
-  it("통과 기준: 인용 100%, 금지 0, 270초 초과 0, 평균 $1.60 이하. 검수 평균은 사람이 본다", () => {
-    expect(judgeEval(summarizeEval([file()]))).toEqual({ quote: true, banned: true, deadline: true, cost: true, pass: true, review: "manual" });
-    expect(judgeEval(summarizeEval([file([{ evidenceMatched: 7 }])])).quote).toBe(false);
-    expect(judgeEval(summarizeEval([file([{ bannedHits: 1 }])])).banned).toBe(false);
-    expect(judgeEval(summarizeEval([file([{ totalMs: 270_001 }])])).deadline).toBe(false);
-    expect(judgeEval(summarizeEval([file([{ costUsd: 0.5 }, { costUsd: 0.5 }, { costUsd: 0.5 }, { costUsd: 0.5 }])])).cost).toBe(false);
-    expect(judgeEval(summarizeEval([file([{ status: "failed" }])])).pass).toBe(false);
+  it("통과 기준: 인용 100%, 금지 0, 270초 초과 0, fallback 0, 평균 원가 추정 × 1.3 이하. 검수는 사람이 본다", () => {
+    const j = (over: Partial<ReportScore>[]) => judgeEval(summarizeEval(over.map((o) => score(o))).byModel["claude-sonnet-5-5"]);
+    expect(j([{}])).toEqual({ quote: true, banned: true, deadline: true, cost: true, fallback: true, pass: true, review: "manual" });
+    expect(j([{ evidenceMatched: 7 }]).quote).toBe(false);
+    expect(j([{ bannedHits: 1 }]).banned).toBe(false);
+    expect(j([{ totalMs: 270_000 }]).deadline).toBe(false);
+    expect(j([{ costUsd: DEFAULT_EST_COST_USD * 1.31 }]).cost).toBe(false);
+    expect(j([{ costUsd: DEFAULT_EST_COST_USD * 1.3 }]).cost).toBe(true);
+    expect(j([{ status: "failed" }]).pass).toBe(false);
   });
-  it("마감에 끊긴 편(kind partial)은 총 시간이 270초 아래여도 초과로 센다", () => {
-    const s = summarizeEval([file([{ kind: "partial", status: "partial", totalMs: 269_900 }])]);
+  it("fallback이 있으면 통과하지 못한다", () => {
+    const s = summarizeEval([score({ fallback: true, servedModel: "claude-opus-5-5" })]).byModel["claude-sonnet-5-5"];
+    expect(s.fallbacks).toBe(1);
+    expect(judgeEval(s)).toMatchObject({ fallback: false, pass: false });
+  });
+  it("마감에 끊긴 회차(kind partial)는 총 시간이 270초 아래여도 초과로 센다", () => {
+    const s = summarizeEval([score({ kind: "partial", status: "partial", totalMs: 269_900 })]).byModel["claude-sonnet-5-5"];
     expect(s.overDeadline).toBe(1);
     expect(judgeEval(s).deadline).toBe(false);
-    expect(judgeEval(s).pass).toBe(false);
-    expect(judgeEval(summarizeEval([file([{ totalMs: 270_000 }])])).deadline).toBe(false);
   });
-  it("kind가 ok가 아닌 편은 건진 JSON이 검증을 통과해도 통과를 막는다", () => {
+  it("kind가 ok가 아닌 회차는 건진 JSON이 검증을 통과해도 통과를 막는다", () => {
     for (const kind of ["truncated", "error", "refused", "partial"]) {
-      const s = summarizeEval([file([{ kind, status: "done" }])]);
-      expect(s.notOkEpisodes).toBe(1);
+      const s = summarizeEval([score({ kind, status: "done" })]).byModel["claude-sonnet-5-5"];
+      expect(s.notOk).toBe(1);
       expect(judgeEval(s).pass).toBe(false);
     }
-    expect(summarizeEval([file()]).notOkEpisodes).toBe(0);
-  });
-  it("파일이 없으면 통과하지 않는다", () => {
-    expect(judgeEval(summarizeEval([])).pass).toBe(false);
   });
 });
 
@@ -202,7 +248,7 @@ describe("summarizeEval / judgeEval", () => {
 const enc = new TextEncoder();
 const frame = (e: { type: string; [k: string]: unknown }) => enc.encode(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
 
-function fakeFetch() {
+function fakeFetch(servedModel = "claude-opus-5-5") {
   const calls: Record<string, unknown>[] = [];
   const fetch = async (_url: string | URL | Request, init?: RequestInit) => {
     calls.push(JSON.parse(String(init?.body)));
@@ -210,8 +256,8 @@ function fakeFetch() {
       {
         type: "message_start",
         message: {
-          id: "m", type: "message", role: "assistant", model: "claude-opus-5-5", content: [], stop_reason: null, stop_sequence: null,
-          usage: { input_tokens: 50, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 4000 },
+          id: "m", type: "message", role: "assistant", model: servedModel, content: [], stop_reason: null, stop_sequence: null,
+          usage: { input_tokens: 5000, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
         },
       },
       { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
@@ -233,43 +279,54 @@ function fakeFetch() {
   return { fetch, calls };
 }
 
-describe("evalPayload", () => {
-  it("4편을 실행해 편별 점수를 모으고, --model이면 요청 모델을 바꾼다", async () => {
-    const { fetch, calls } = fakeFetch();
+const theCase = (model: string): EvalCase => ({ label: "group-1", concept: "group", injection: false, tone: "warm", model, payload });
+
+describe("evalCase", () => {
+  it("케이스 모델·출력 상한으로 요청하고, 점수·검수용 본문·원장 한 항목을 돌려준다", async () => {
+    const { fetch, calls } = fakeFetch("claude-sonnet-5-5");
     const client = new Anthropic({ apiKey: "test", fetch: fetch as typeof globalThis.fetch, maxRetries: 0 });
     let t = 0;
-    const r = await evalPayload(client, payload, { model: "claude-sonnet-5-5", now: () => (t += 100) });
-    expect(calls).toHaveLength(4);
-    expect(calls.every((c) => c.model === "claude-sonnet-5-5")).toBe(true);
-    expect(r.episodes.map((e) => e.n)).toEqual([1, 2, 3, 4]);
-    expect(r.episodes.every((e) => e.status === "partial" && e.bannedHits === 1 && e.dropRate === 0.5)).toBe(true);
-    expect(r.episodes.every((e) => e.costUsd > 0 && e.totalMs > 0)).toBe(true);
-    expect(r.ledger).toHaveLength(4);
-    expect(r.ledger.reduce((s, l) => s + l.usage.output_tokens, 0)).toBe(4000);
-    expect(r.ledger.reduce((s, l) => s + l.usage.cache_read_input_tokens, 0)).toBe(16_000);
-    expect(r.ledger.every((l) => l.model === "claude-opus-5-5")).toBe(true);
-    // 검수용 본문(검증을 통과한 것)이 함께 온다
-    expect(r.contents).toHaveLength(4);
-    expect(r.contents[0]?.sections[0].paragraphs).toHaveLength(1);
+    const r = await evalCase(client, theCase("claude-sonnet-5-5"), { now: () => (t += 100) });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].model).toBe("claude-sonnet-5-5");
+    expect(calls[0].max_tokens).toBe(modelSettings({ ANTHROPIC_MODEL: "claude-sonnet-5-5" }).maxTokens);
+    expect(r.score).toMatchObject({
+      label: "group-1", tone: "warm", model: "claude-sonnet-5-5", servedModel: "claude-sonnet-5-5", fallback: false,
+      status: "partial", kind: "ok", bannedHits: 1, msgSent: payload.msgSent,
+    });
+    expect(r.score.totalMs).toBeGreaterThan(0);
+    expect(r.score.costUsd).toBeCloseTo((5000 * 2 + 1000 * 10) / 1e6, 10);
+    expect(r.ledger).toHaveLength(1);
+    expect(r.ledger[0]).toMatchObject({ model: "claude-sonnet-5-5", usage: { input_tokens: 5000, output_tokens: 1000 } });
+    expect(r.content?.sections).toHaveLength(2);
+  });
+  it("응답 모델이 케이스 모델과 다르면 fallback", async () => {
+    const { fetch } = fakeFetch("claude-sonnet-5");
+    const client = new Anthropic({ apiKey: "test", fetch: fetch as typeof globalThis.fetch, maxRetries: 0 });
+    const r = await evalCase(client, theCase("claude-sonnet-5-5"));
+    expect(r.score).toMatchObject({ fallback: true, servedModel: "claude-sonnet-5" });
   });
 });
 
-describe("recordEvalUsage", () => {
-  it("모델별로 사용량·원가를 합쳐 record_script_usage를 한 번씩 부른다", async () => {
-    const rpc = vi.fn(async () => ({ error: null }));
-    const u = (o: number) => ({ input_tokens: 10, output_tokens: o, cache_creation_input_tokens: 1, cache_read_input_tokens: 2 });
-    await recordEvalUsage({ rpc }, [
-      { model: "claude-opus-5-5", usage: u(100), costUsd: 0.5 },
-      { model: "claude-opus-5-5", usage: u(200), costUsd: 0.25 },
-    ]);
-    expect(rpc).toHaveBeenCalledTimes(1);
-    expect(rpc).toHaveBeenCalledWith("record_script_usage", {
-      p_model: "claude-opus-5-5",
-      p_usage: { input_tokens: 20, output_tokens: 300, cache_creation_input_tokens: 2, cache_read_input_tokens: 4 },
-      p_cost: 0.75,
+describe("renderReview", () => {
+  it("파일·말투별로 두 모델 본문을 나란히, 자리표시자를 채우고 품질 메모 칸을 둔다", () => {
+    const content = (text: string) => ({
+      safety: { flag: "none" as const },
+      declined_topics: [],
+      reading_notes: [],
+      headline: "머리",
+      dek: "소제",
+      sections: [{ part: "chronicle", icon: "x", title: "제목", about: "group", paragraphs: [{ key: "a", text, evidence_ids: [] }], evidence: [] }],
     });
-  });
-  it("rpc 오류는 던진다", async () => {
-    await expect(recordEvalUsage({ rpc: async () => ({ error: { message: "x" } }) }, [{ model: "m", usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }, costUsd: 1 }])).rejects.toThrow(/원장/);
+    const md = renderReview([
+      { label: "group-1", tone: "fact", model: "claude-sonnet-5-5", content: content("총 {{stat:total}}개"), stats },
+      { label: "group-1", tone: "fact", model: "claude-opus-5-5", content: null, stats },
+    ]);
+    expect(md).toContain("group-1");
+    expect(md).toContain("claude-sonnet-5-5");
+    expect(md).toContain("총 6개");
+    expect(md).not.toContain("{{stat");
+    expect(md).toMatch(/품질 메모/);
+    expect(md).toMatch(/본문 없음/);
   });
 });

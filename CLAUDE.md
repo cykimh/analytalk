@@ -17,13 +17,14 @@
 ## analytalk 규칙
 
 - UI 작업 전에 [DESIGN.md](DESIGN.md)를 읽고 따른다
-- 명령: `pnpm test`(vitest), `pnpm typecheck`, `pnpm test:e2e`(Playwright, dev 3100 / prod 3200), `pnpm check:fixtures`, `pnpm invite:add|revoke`(`--prod`는 `.env.production.local` 사용), `pnpm measure`, `pnpm eval`
+- 명령: `pnpm test`(vitest), `pnpm typecheck`, `pnpm test:e2e`(Playwright, dev 3100 / prod 3200), `pnpm check:fixtures`, `pnpm invite:add|revoke`(`--prod`는 `.env.production.local` 사용)
+- 실측·평가(리포트 한 번 기준): `pnpm measure <파일> [--concept] [--tone] [--model] [--budget] [--runs] [--count-only | --check-limits] [--dry-run] [--prod] [--yes]`, `pnpm eval --dir <폴더> [--model id]… [--compare] [--tone t]… [--limit n] [--dry-run] [--prod] [--yes]`. `--dry-run`은 API·DB를 부르지 않고, `--count-only`는 무료 countTokens만
 - e2e: 처음 한 번 `pnpm exec playwright install chromium webkit`. 기본은 dev 서버(3100), prod 프로젝트(CSP·헤더, `security.spec.ts`)는 `PW_PROD=1 pnpm test:e2e --project=prod-chromium --project=prod-webkit`
 - 저장·전송: 원본 대화 파일과 전체 파싱 결과는 브라우저 밖으로 나가지 않는다. 페이로드의 `transcript`·`anchors`는 서버 메모리에서만 다루고 DB·Storage·로그(`console.*` 포함)에 남기지 않는다
 - 업로더가 정한 표시 이름(실명일 수 있음)은 Anthropic API로 가고 DB에 30일, 공유 링크에 보인다. 그 밖의 곳(로그·`usage_events`·`claims`)에는 이름을 남기지 않는다
 - 뺀 멤버의 메시지·이름·통계 키는 페이로드 어디에도 없다. 목록도 보내지 않는다
 - 본문은 고치지 않는다(이름 치환 없음, 민감 주제 가림 없음). 전화·이메일·계좌·카드·주민번호는 가리고, 링크는 `[링크:host]`만 남긴다
-- 유료 실행(`pnpm measure`·`pnpm eval`)은 실행마다 사용자 승인. 결과 파일은 `~/Developer/analytalk-samples/`에만
+- 유료 실행(`pnpm measure`의 기본·`--check-limits`, `pnpm eval`)은 실행마다 사용자 승인이고, 스크립트도 추정 원가·남은 주간 한도·DB 호스트를 찍고 y/N을 받는다(남은 한도가 모자라면 `--yes`여도 막는다). 쓴 돈은 케이스마다 원장(`record_script_usage`)에 바로 남는다. 결과 파일은 `~/Developer/analytalk-samples/`에만
 - 되돌리기: Vercel env `ANTHROPIC_MODEL`·`INPUT_TOKEN_BUDGET`·`REPORT_MAX_TOKENS`·`ANTHROPIC_EFFORT`(Config 타입, 재배포 필요). 비우면 기본값(`lib/llm/settings.ts`)
 - 실제 대화 파일은 커밋하지 않는다(공개 저장소). 테스트 파일은 줄 모양만 남긴 가짜 대화다
 - 테스트 모드(E2E)는 `ANALYTALK_E2E === "1" && !process.env.VERCEL` 일 때만 켜진다. Vercel에서는 절대 켜지지 않는다

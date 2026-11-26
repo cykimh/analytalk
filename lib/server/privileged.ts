@@ -5,10 +5,13 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 import { APP_SCHEMA } from "@/lib/app";
 
-/** URL·secret 키가 없으면 null (getRepo가 개발은 memoryRepo, 프로덕션은 503으로 정한다) */
-export function privilegedDb() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SECRET_KEY;
+/**
+ * URL·secret 키가 없으면 null (getRepo가 개발은 memoryRepo, 프로덕션은 503으로 정한다).
+ * env를 주면 process.env 대신 그 값을 쓴다(scripts의 --prod는 .env.production.local을 parseEnv로 읽어 넘긴다)
+ */
+export function privilegedDb(env: Record<string, string | undefined> = process.env) {
+  const url = env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = env.SUPABASE_SECRET_KEY;
   if (!url || !key) return null;
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }).schema(APP_SCHEMA);
 }
