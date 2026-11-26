@@ -108,6 +108,13 @@ describe("validatePayload", () => {
     expect(reject({ ...p, transcript: p.transcript.split("\n").slice(1).join("\n") })).toMatch(/날짜 헤더/);
   });
 
+  it("말투 6개(fact·warm·show·docu·detective·record)는 모두 받는다", () => {
+    for (const tone of ["fact", "warm", "show", "docu", "detective", "record"]) {
+      const out = validatePayload({ ...payload(), tone });
+      expect(out.ok, tone).toBe(true);
+    }
+  });
+
   it("tone이 없거나 모르는 값이면, me 키가 있으면, members가 1명이면 → 거부", () => {
     const { tone: _tone, ...noTone } = payload();
     expect(reject(noTone)).toMatch(/구조/);

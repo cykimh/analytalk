@@ -95,7 +95,7 @@ describe("POST /api/conversations", () => {
     await handleCreateConversation(create(h.cookie, makePayload()), h.deps);
     expect(h.counts).toHaveLength(1);
     expect(Object.keys(h.counts[0]).sort()).toEqual(["messages", "model", "output_config", "system", "thinking"]);
-    expect(JSON.stringify(h.counts[0].messages)).toContain("말투: 팩트 일침");
+    expect(JSON.stringify(h.counts[0].messages)).toContain("말투: 잔소리하는 친구");
   });
 
   it("같은 payload로 두 번 → 200·같은 id. 한도·countTokens·stream이 늘지 않는다 (Review Focus 4)", async () => {

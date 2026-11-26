@@ -1,6 +1,6 @@
 // 실측(비용이 드는 실행, 사용자가 직접 돌린다). 리포트 한 번을 기준으로 잰다.
 //
-//   pnpm measure <파일> [--concept group|couple] [--tone fact|warm|show] [--model id] [--budget n] [--runs n]
+//   pnpm measure <파일> [--concept group|couple] [--tone fact|warm|show|docu|detective|record] [--model id] [--budget n] [--runs n]
 //                       [--count-only | --check-limits] [--dry-run] [--prod] [--yes]
 //
 // 파싱 → 표시 이름(카톡 이름) → buildPayloadForBudget → (실행 모드에 따라)

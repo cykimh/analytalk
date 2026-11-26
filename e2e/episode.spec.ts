@@ -59,7 +59,16 @@ const SHARE_URL = "http://localhost:3100/s/AAAAAAAAAAAAAAAAAAAAAA";
 async function fakeApi(
   context: BrowserContext,
   status: string,
-  o: { paused?: boolean; quote?: string; paragraph?: string; statText?: boolean; shared?: boolean; emptyHeadline?: boolean; notes?: boolean | { range: string; note: string }[] } = {},
+  o: {
+    paused?: boolean;
+    quote?: string;
+    paragraph?: string;
+    statText?: boolean;
+    shared?: boolean;
+    emptyHeadline?: boolean;
+    notes?: boolean | { range: string; note: string }[];
+    tone?: string;
+  } = {},
 ) {
   const api = {
     status,
@@ -90,7 +99,7 @@ async function fakeApi(
       json: {
         concept: "couple",
         kind: "pair",
-        tone: "fact",
+        tone: o.tone ?? "fact",
         displayNames: ["철수", "민지"],
         stats,
         cutoffAt: "2026-09-30T15:00:00.000Z",
@@ -237,15 +246,20 @@ test.describe("AI 리포트", () => {
     expect(String(body.transcript).length).toBeGreaterThan(0);
   });
 
-  test("말투로 예능 중계를 고르면 POST의 tone이 show다", async ({ page, context }) => {
-    await fakeApi(context, "running");
-    const posts = await fakeCreate(page);
-    await toReview(page, androidChat(), [], "예능 중계");
-    await expect(page.getByText("말투", { exact: true }).locator("..")).toContainText("예능 중계");
-    await create(page).click();
-    await expect(page).toHaveURL(`/c/${ID}`);
-    expect(posts[0].tone).toBe("show");
-  });
+  for (const [label, tone] of [
+    ["예능 MC 중계", "show"],
+    ["탐정 사건 보고서", "detective"],
+  ] as const) {
+    test(`말투로 ${label}를 고르면 보낼 내용 확인에 그 라벨이 보이고 POST의 tone이 ${tone}다`, async ({ page, context }) => {
+      await fakeApi(context, "running");
+      const posts = await fakeCreate(page);
+      await toReview(page, androidChat(), [], label);
+      await expect(page.getByText("말투", { exact: true }).locator("..")).toContainText(label);
+      await create(page).click();
+      await expect(page).toHaveURL(`/c/${ID}`);
+      expect(posts[0].tone).toBe(tone);
+    });
+  }
 
   test("영희를 빼면 POST 어디에도 영희의 문장·이름이 없고, 보낼 내용 확인에는 뺀 멤버로 보인다", async ({ page, context }) => {
     await fakeApi(context, "running");
@@ -280,7 +294,7 @@ test.describe("AI 리포트", () => {
 
     await page.goto("/");
     const mine = page.getByRole("region", { name: "내 연재" });
-    await expect(mine.getByRole("link", { name: "단톡방 연재 · 팩트 일침" })).toHaveAttribute("href", `/c/${ID}`);
+    await expect(mine.getByRole("link", { name: "단톡방 연재 · 잔소리하는 친구" })).toHaveAttribute("href", `/c/${ID}`);
     await mine.getByRole("link", { name: /연재/ }).click();
     await expect(page).toHaveURL(`/c/${ID}`);
     await page.getByRole("button", { name: "지금 삭제" }).click();
@@ -483,16 +497,16 @@ test.describe("AI 리포트", () => {
     expect(await bodyText()).not.toMatch(/\{\{|stat:/);
   });
 
-  test("표지 칩은 말투('팩트 일침')이고, 대화 홈·리포트·미리보기 공유 화면마다 테이프 1개·h1 1개이며, 옛 주소는 404", async ({ page, context }) => {
+  test("표지 칩은 말투('잔소리하는 친구')이고, 대화 홈·리포트·미리보기 공유 화면마다 테이프 1개·h1 1개이며, 옛 주소는 404", async ({ page, context }) => {
     await fakeApi(context, "done");
     for (const path of [`/c/${ID}`, `/c/${ID}/report`]) {
       await page.goto(path);
-      await expect(page.getByText("팩트 일침", { exact: true })).toBeVisible();
+      await expect(page.getByText("잔소리하는 친구", { exact: true })).toBeVisible();
       await expect(page.locator(".tape")).toHaveCount(1);
       await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
     }
     await page.goto("/dev/preview/share");
-    await expect(page.getByText("팩트 일침", { exact: true })).toBeVisible();
+    await expect(page.getByText("잔소리하는 친구", { exact: true })).toBeVisible();
     await expect(page.locator(".tape")).toHaveCount(1);
     await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
 
@@ -584,6 +598,17 @@ test.describe("AI 리포트", () => {
       expect(await page.evaluate((id) => localStorage.getItem(`analytalk:share:${id}`), ID)).toBeNull();
     });
 
+    test("새 말투(담임의 생활기록부)도 표지 칩과 공유 제목에 라벨로 보인다", async ({ page, context }) => {
+      await withNativeShare(page);
+      await fakeApi(context, "done", { tone: "record" });
+      await page.goto(`/c/${ID}`);
+      await expect(page.getByText("담임의 생활기록부", { exact: true })).toBeVisible();
+      await panel(page).getByRole("button", { name: "링크 만들기" }).click();
+      await expect(panel(page).getByText("공유했어요")).toBeVisible();
+      const shared = await page.evaluate(() => (window as unknown as { __shared?: ShareData[] }).__shared);
+      expect(shared).toEqual([{ title: "둘의 대화 연재 · 담임의 생활기록부", url: SHARE_URL }]);
+    });
+
     test("navigator.share가 있으면 [링크 만들기]가 '연재 제목 · 말투'(이름 없음)로 공유하고 [카톡으로 보내기]로 다시 보낸다", async ({ page, context }) => {
       await withNativeShare(page);
       const api = await fakeApi(context, "done");
@@ -592,7 +617,7 @@ test.describe("AI 리포트", () => {
       await panel(page).getByRole("button", { name: "링크 만들기" }).click();
       await expect(panel(page).getByText("공유했어요")).toBeVisible();
       const shared = await page.evaluate(() => (window as unknown as { __shared?: ShareData[] }).__shared);
-      expect(shared).toEqual([{ title: "둘의 대화 연재 · 팩트 일침", url: SHARE_URL }]);
+      expect(shared).toEqual([{ title: "둘의 대화 연재 · 잔소리하는 친구", url: SHARE_URL }]);
       expect(api.sharePosts).toEqual([{ id: ID }]);
 
       await expect(panel(page).getByRole("button", { name: "저장" })).toHaveCount(0);

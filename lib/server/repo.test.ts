@@ -178,7 +178,7 @@ describe("memoryRepo claim 판정 순서", () => {
     for (const estCost of [0, -1, Number.NaN]) await expect(claim(repo, many, { estCost })).rejects.toThrow();
   });
 
-  it("display_names·stats·prompt_version·tone이 없거나 tone이 fact·warm·show 밖이면 거부하고 아무것도 만들지 않는다", async () => {
+  it("display_names·stats·prompt_version·tone이 없거나 tone이 말투 6개 밖이면 거부하고 아무것도 만들지 않는다", async () => {
     const { repo, one } = await fixture();
     for (const key of ["display_names", "stats", "prompt_version", "tone"]) {
       await expect(claim(repo, one, { meta: meta({ [key]: null }) })).rejects.toThrow();
@@ -187,6 +187,14 @@ describe("memoryRepo claim 판정 순서", () => {
     await expect(claim(repo, one, { meta: noTone })).rejects.toThrow("[memoryRepo] tone check");
     await expect(claim(repo, one, { meta: meta({ tone: "loud" }) })).rejects.toThrow("[memoryRepo] tone check");
     await created(claim(repo, one));
+  });
+
+  it("tone check는 SQL(20261127090000_analytalk_tones)과 같은 6개 값을 받고, 같은 sha라도 말투마다 새 대화다", async () => {
+    const { repo, many } = await fixture();
+    for (const tone of ["fact", "warm", "show", "docu", "detective", "record"]) {
+      const id = await created(claim(repo, many, { sha: "six", meta: meta({ tone }) }));
+      expect((await repo.getConversation(id))!.tone).toBe(tone);
+    }
   });
 
   it("만든 대화는 메타와 queued 리포트 한 행을 갖고 30일 뒤 만료된다", async () => {

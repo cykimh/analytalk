@@ -1,6 +1,7 @@
 "use client";
 
-// 방 종류와 리포트 말투를 고른다. 직장·팀은 AI가 꺼져 있어 말투를 묻지 않는다
+// 방 종류와 리포트 말투를 고른다. 직장·팀은 AI가 꺼져 있어 말투를 묻지 않는다.
+// 말투는 모두 방 밖의 제3자가 바라본 컨셉이다(TONE_KEYS 순서, 기본 잔소리하는 친구)
 import { type Tone, TONE_KEYS, TONES } from "@/lib/llm/concepts";
 import { type Kind, KIND_LABEL } from "./flow";
 import { NextButton, StepFrame } from "./StepFrame";
@@ -12,9 +13,12 @@ const KIND_NOTE: Record<Kind, string> = {
 };
 
 const TONE_NOTE: Record<Tone, string> = {
-  fact: "숫자와 패턴으로 짧고 세게",
-  warm: "같은 패턴을 서로를 이해하는 쪽으로",
+  fact: "행동을 꼬집는 잔소리. “답장 늦는 거 다 보여”",
+  warm: "같은 패턴을 서로를 이해하는 쪽으로, 다정하게",
   show: "과장된 비유와 별명, 자막 같은 한 줄",
+  docu: "“이 무리는 해가 지면 비로소 활발해진다”",
+  detective: "사건 개요·증거물·용의 패턴·결론, 진지한 척 수사 보고",
+  record: "멤버마다 ‘행동 특성 및 종합 의견’을 적는 담임 코멘트",
 };
 
 export function KindStep({

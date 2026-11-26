@@ -57,7 +57,7 @@ export interface AppRepo {
   findDuplicate(a: { inviteId: string; payloadSha256: string; concept: string; tone: string; promptVersion: string }): Promise<string | null>;
   /**
    * meta 키는 conversations 열 이름: prompt_version, tone, kind, period_start, period_end, cutoff_at, msg_total, msg_sent, display_names, stats.
-   * tone은 채우지 않는다(빠지거나 fact·warm·show 밖이면 던진다)
+   * tone은 채우지 않는다(빠지거나 TONE_KEYS 6개 밖이면 던진다)
    */
   claim(a: { inviteId: string; concept: string; payloadSha256: string; meta: Record<string, unknown>; estCost: number }): Promise<ClaimResult>;
   /** 만료됐거나 리포트 행(n = 1)이 없는 대화는 null */
@@ -314,7 +314,7 @@ export function memoryRepo(seed: { invites?: { code: string; monthlyLimit: numbe
       // 열 제약(check·not null)을 넣기 전에 확인한다. 걸리면 SQL처럼 아무것도 만들지 않는다
       const kind = text(a.meta.kind);
       if (!CONCEPTS.has(a.concept) || (kind !== null && !KINDS.has(kind))) throw new Error("[memoryRepo] concept/kind check");
-      // tone not null + check(fact·warm·show). SQL처럼 기본값으로 채우지 않는다
+      // tone not null + check(말투 6개, 20261127090000_analytalk_tones). SQL처럼 기본값으로 채우지 않는다
       if (tone === null || !TONES.has(tone)) throw new Error("[memoryRepo] tone check");
       if (promptVersion === null || a.meta.display_names == null || a.meta.stats == null) {
         throw new Error("[memoryRepo] prompt_version/display_names/stats not null");

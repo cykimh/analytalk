@@ -62,6 +62,13 @@ describe("내 연재 목록 (이 브라우저의 localStorage)", () => {
     expect(listSeries()).toEqual([]);
   });
 
+  it("v2.1에 더한 말투(docu·detective·record)도 저장하고 읽는다", () => {
+    for (const tone of ["docu", "detective", "record"] as const) {
+      rememberSeries({ id: A, concept: "group", tone, createdAt: Date.now() });
+      expect(listSeries()[0]).toMatchObject({ id: A, tone });
+    }
+  });
+
   it("localStorage가 막혀도 예외 없이 빈 목록", () => {
     setStorage({
       get() {

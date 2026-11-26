@@ -51,6 +51,7 @@ describe("parseArgs", () => {
       yes: true,
     });
     expect(parseArgs(["a.txt", "--count-only"]).mode).toBe("count");
+    for (const tone of ["docu", "detective", "record"]) expect(parseArgs(["a.txt", "--tone", tone]).tone).toBe(tone);
   });
   it.each([
     [[], /샘플 파일/],

@@ -6,7 +6,7 @@ import { buildPayload, legendText, type Payload } from "@/lib/payload/build";
 import { STAT_PATHS } from "@/lib/stats/paths";
 import { statsForPrompt } from "@/lib/stats/view";
 import { syntheticGroupChat } from "@/test/syntheticChat";
-import { CONCEPTS, TONE_KEYS, TONES, type Tone } from "./concepts";
+import { CONCEPTS, DEFAULT_TONE, TONE_KEYS, TONES, type Tone } from "./concepts";
 import { buildRequest, PROMPT_VERSION, requestMessages } from "./prompt";
 import { modelSettings } from "./settings";
 
@@ -40,7 +40,7 @@ const bigPayload = (tone: Tone = "fact") =>
   buildPayload({ messages: syntheticGroupChat(40, 60), tone, concept: "group", kind: "group", tokenBudget: 20_000, tokensPerChar: 1 });
 
 describe("CONCEPTS·TONES", () => {
-  it("구성 4개(키·제목 순서)와 말투 라벨 3개", () => {
+  it("구성 4개(키·제목 순서)와 제3자 말투 라벨 6개(기존 키 fact·warm·show 유지, 기본 fact)", () => {
     expect(CONCEPTS.group.parts).toEqual([
       { key: "chronicle", title: "이 방의 연대기" },
       { key: "characters", title: "멤버 캐릭터 카드" },
@@ -55,13 +55,22 @@ describe("CONCEPTS·TONES", () => {
     ]);
     expect(CONCEPTS.group.title).toBe("친구·가족 단톡방");
     expect(CONCEPTS.couple.title).toBe("연애·썸");
-    expect(TONE_KEYS.map((t) => TONES[t].label)).toEqual(["팩트 일침", "따뜻한 위로", "예능 중계"]);
+    expect(TONE_KEYS).toEqual(["fact", "warm", "show", "docu", "detective", "record"]);
+    expect(TONE_KEYS.map((t) => TONES[t].label)).toEqual([
+      "잔소리하는 친구",
+      "다정한 상담 선생님",
+      "예능 MC 중계",
+      "자연 다큐 내레이터",
+      "탐정 사건 보고서",
+      "담임의 생활기록부",
+    ]);
+    expect(DEFAULT_TONE).toBe("fact");
   });
 });
 
 describe("buildRequest", () => {
   it("PROMPT_VERSION", () => {
-    expect(PROMPT_VERSION).toBe("2026-11-report-2");
+    expect(PROMPT_VERSION).toBe("2026-11-report-3");
   });
 
   it("기본값: Sonnet 5.5, max_tokens 32000, effort medium, adaptive thinking, 서버 측 fallback, 데이터 블록에 cache_control 없음", () => {
@@ -90,7 +99,7 @@ describe("buildRequest", () => {
     expect(r.max_tokens).toBe(9000);
   });
 
-  it("말투 3종 요청은 system·messages[0]이 같고 마지막 지시만 다르다. 지시는 말투 라벨로 시작한다", () => {
+  it("말투 6종 요청은 system·messages[0]이 같고 마지막 지시만 다르다. 지시는 말투 라벨로 시작한다", () => {
     const reqs = TONE_KEYS.map((t) => buildRequest(payload("couple", t)));
     const shared = (r: BetaMessageStreamParams) => ({
       system: r.system,
@@ -106,19 +115,27 @@ describe("buildRequest", () => {
       expect(r.messages).toHaveLength(2);
       expect(shared(r)).toEqual(shared(reqs[0]));
     }
-    expect(new Set(reqs.map((r) => JSON.stringify(r.messages[1]))).size).toBe(3);
+    expect(new Set(reqs.map((r) => JSON.stringify(r.messages[1]))).size).toBe(6);
     expect(reqs[0].messages[1].role).toBe("system");
-    expect(instructionOf(reqs[0]).startsWith("말투: 팩트 일침\n")).toBe(true);
-    expect(instructionOf(reqs[1]).startsWith("말투: 따뜻한 위로\n")).toBe(true);
-    expect(instructionOf(reqs[2]).startsWith("말투: 예능 중계\n")).toBe(true);
+    TONE_KEYS.forEach((t, i) => expect(instructionOf(reqs[i]).startsWith(`말투: ${TONES[t].label}\n`)).toBe(true));
   });
 
-  it("system과 세 지시 어디에도 업로더에게 넘기는 말·없어진 가림 표시가 없다", () => {
+  it("system과 여섯 지시 어디에도 업로더에게 넘기는 말·없어진 가림 표시가 없다", () => {
     const reqs = [...TONE_KEYS.map((t) => buildRequest(payload("couple", t))), buildRequest(payload("group"))];
     const all = [systemOf(reqs[0]), ...reqs.map(instructionOf)];
     for (const banned of ["어떻게 느꼈나요", "업로더", "본인에게", "너에게", "[가림:민감]"]) {
       for (const body of all) expect(body).not.toContain(banned);
     }
+  });
+
+  it("system: 방 밖의 제3자 관찰자 시점. 업로더·멤버 시점('우리'·'나')도, 읽는 사람에게 거는 말('너'·'당신')도 없다", () => {
+    const s = systemOf(buildRequest(payload()));
+    expect(s).toContain("방 밖의 제3자 관찰자");
+    expect(s).toMatch(/대화를 올린 사람이나 어느 멤버의 시점에도 서지 않/);
+    expect(s).toContain("'우리'");
+    expect(s).toContain("'너'·'당신'");
+    // 말투는 단어·리듬·형식만 바꾸고 구성·금지 규칙은 그대로
+    expect(s).toMatch(/말투는 단어·리듬·비유와 글의 형식만 바꾼다/);
   });
 
   it("system: 3인칭 해설자, 참여자 범위, 데이터 계약, 글자 수 상한, 메모 설명, STAT_PATHS 문법", () => {
@@ -145,15 +162,38 @@ describe("buildRequest", () => {
     expect(s).toContain("67%");
   });
 
-  it("말투 지시: 라벨 다음 줄에 말투 지시문, 예시는 자리표시자로만", () => {
-    const styles = TONE_KEYS.map((t) => instructionOf(buildRequest(payload("couple", t))).split("\n")[1]);
-    expect(styles[0]).toContain("해라체");
-    expect(styles[1]).toContain("해요체");
-    expect(styles[2]).toContain("별명");
-    for (const style of styles) {
-      expect(style).toContain("{{stat:");
-      expect(style).toContain("절반·두 배처럼 숫자를 말로 대신 쓰지 않는다");
+  it("말투 지시: 라벨 다음 한 줄에 말투 지시문과 짧은 예시(자리표시자로만), 공통 가드레일", () => {
+    const style = (t: Tone) => instructionOf(buildRequest(payload("couple", t))).split("\n")[1];
+    for (const t of TONE_KEYS) {
+      const line = style(t);
+      expect(line.startsWith(`${TONES[t].label}.`)).toBe(true);
+      expect(line).toContain("예: \"");
+      expect(line).toContain("{{stat:");
+      expect(line).toContain("절반·두 배처럼 숫자를 말로 대신 쓰지 않는다");
+      // 어느 말투든 제3자 관찰자·실명 3인칭·보이는 행동만, 이용 정책 금지
+      expect(line).toContain("방 밖의 관찰자로 실명 3인칭");
+      expect(line).toContain("보이는 행동만");
+      for (const rule of ["속마음·의도", "호감·애정 점수", "진단명·성격 유형", "모욕"]) expect(line).toContain(rule);
+      // 예시 문장에 글자로 쓴 숫자가 없다(자리표시자 안의 경로는 뺀다)
+      const examples = [...line.matchAll(/"([^"]*)"/g)].map((m) => m[1].replace(/\{\{stat:[^}]*\}\}/g, ""));
+      expect(examples.length).toBeGreaterThan(0);
+      for (const ex of examples) expect(ex).not.toMatch(/\d/);
     }
+    // 잔소리: 행동을 꼬집고 근거 인용, 통계 낭독이 아니다
+    expect(style("fact")).toContain("잔소리");
+    expect(style("fact")).toContain("근거로 인용");
+    expect(style("fact")).toContain("통계를 읽어 주는 게 아니라");
+    expect(style("fact")).toContain("다 보여");
+    expect(style("warm")).toContain("해요체");
+    expect(style("warm")).toContain("서로를 이해하는 쪽");
+    expect(style("show")).toContain("별명");
+    expect(style("show")).toContain("자막");
+    expect(style("docu")).toContain("이 무리는 해가 지면 비로소 활발해진다");
+    expect(style("docu")).toContain("깎아내리지 않는다");
+    for (const part of ["사건 개요", "증거물", "용의 패턴", "결론"]) expect(style("detective")).toContain(part);
+    expect(style("detective")).toContain("동기·속마음·의도는 수사하지 않");
+    expect(style("record")).toContain("행동 특성 및 종합 의견");
+    expect(style("record")).toContain("~함");
   });
 
   it("couple 지시: 방·참여자 수, 구성 4개를 CONCEPTS 순서로, 분량 상한", () => {
@@ -168,6 +208,8 @@ describe("buildRequest", () => {
     );
     // 편지는 둘 모두에게 쓰고 한쪽 편을 들지 않는다
     expect(body).toMatch(/letter 「두 사람에게 쓰는 편지」: [^\n]*둘 모두에게[^\n]*한쪽 편을 들지 않/);
+    // 편지도 방 밖의 관찰자가 건넨다('우리'로 방에 끼지 않는다)
+    expect(body).toMatch(/letter 「두 사람에게 쓰는 편지」: [^\n]*방 밖의 관찰자[^\n]*'우리'로 쓰지 않/);
     expect(body).not.toContain("철수");
     expect(body).not.toContain("민지");
   });

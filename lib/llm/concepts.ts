@@ -25,12 +25,18 @@ export const CONCEPTS: Record<Concept, { title: string; parts: readonly { key: P
   },
 };
 
-/** 리포트 말투 */
-export const TONE_KEYS = ["fact", "warm", "show"] as const;
+/**
+ * 리포트 말투. 모두 방 밖의 제3자가 바라본 컨셉이다(v2.1).
+ * fact·warm·show는 예전 행·최근 목록과 호환하려고 키를 그대로 두고 뜻만 바꿨다. 순서가 고르기 화면 순서다
+ */
+export const TONE_KEYS = ["fact", "warm", "show", "docu", "detective", "record"] as const;
 export type Tone = (typeof TONE_KEYS)[number];
 export const DEFAULT_TONE: Tone = "fact";
 export const TONES: Record<Tone, { label: string }> = {
-  fact: { label: "팩트 일침" },
-  warm: { label: "따뜻한 위로" },
-  show: { label: "예능 중계" },
+  fact: { label: "잔소리하는 친구" },
+  warm: { label: "다정한 상담 선생님" },
+  show: { label: "예능 MC 중계" },
+  docu: { label: "자연 다큐 내레이터" },
+  detective: { label: "탐정 사건 보고서" },
+  record: { label: "담임의 생활기록부" },
 };
