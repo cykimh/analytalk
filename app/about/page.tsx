@@ -12,7 +12,7 @@ export default function AboutPage() {
       <header className="grid gap-2">
         <h1 className="text-[1.75rem] leading-tight font-bold tracking-tight">analytalk 안내</h1>
         <p className="text-muted-foreground">
-          카톡 대화 내보내기 파일을 브라우저 안에서 읽어 통계를 보여 주고, 원하면 AI가 4편짜리 연재로 써 주는 지인용 서비스예요.
+          카톡 대화 내보내기 파일을 브라우저 안에서 읽어 통계를 보여 주고, 원하면 AI가 리포트 한 편으로 써 주는 지인용 서비스예요.
         </p>
       </header>
 
@@ -23,13 +23,16 @@ export default function AboutPage() {
         <ul className="grid list-disc gap-1.5 pl-5">
           <li>원본 대화 파일은 이 기기의 브라우저 안에서만 읽어요. 서버로 올리지 않고, 탭을 닫으면 사라져요.</li>
           <li>
-            AI 연재를 만들면 이름을 바꾸고 일부를 가린 최근 대화와 통계가 서버를 거쳐 미국 Anthropic으로 가요. 서버는 이 대화를
-            메모리에서만 다루고 저장하지 않아요. Anthropic은 30일 보관하고(정책 위반으로 표시되면 최대 2년), 학습에는 쓰지 않아요.
+            리포트를 만들면 표시 이름(기본은 카톡 이름)과 대화 본문, 통계가 서버를 거쳐 미국 Anthropic으로 가요. 전화·이메일·계좌·주민번호는
+            가리고 링크는 사이트 이름만 남겨요. 서버는 이 대화를 메모리에서만 다루고 저장하지 않아요. Anthropic은 30일 보관하고(정책
+            위반으로 표시되면 최대 2년), 학습에는 쓰지 않아요.
           </li>
-          <li>다시 쓰기용 페이로드는 이 브라우저에만 두고, 4편이 모두 끝나거나 24시간이 지나면 지워요.</li>
+          <li>분석에서 뺀 멤버의 메시지와 이름은 Anthropic으로 보내지 않아요.</li>
+          <li>다시 쓰기용 페이로드는 이 브라우저에만 두고, 리포트가 끝나거나 24시간이 지나면 지워요.</li>
           <li>
-            서버에는 연재 4편(본문, 근거로 고른 실제 메시지 편당 {MAX_QUOTES_PER_REPORT}개까지, 읽기 메모)과 대화 요약(표시 이름,
-            기간, 메시지 수, 통계)만 남겨요. 지인끼리 링크로 돌려 보기 위해서예요.
+            서버에는 리포트 한 편(본문, 근거로 고른 실제 메시지 리포트 전체 {MAX_QUOTES_PER_REPORT}개까지, 읽기 메모)과 대화 요약(표시
+            이름, 기간, 메시지 수, 통계)만 남겨요. 표시 이름은 {RETENTION_DAYS}일 보관하고 공유 링크에 보여요. 지인끼리 링크로 돌려
+            보기 위해서예요.
           </li>
         </ul>
       </section>
@@ -39,9 +42,9 @@ export default function AboutPage() {
           보관과 삭제
         </h2>
         <ul className="grid list-disc gap-1.5 pl-5">
-          <li>연재와 대화 요약은 {RETENTION_DAYS}일 뒤 자동으로 지워요.</li>
+          <li>리포트와 대화 요약(표시 이름 포함)은 {RETENTION_DAYS}일 뒤 자동으로 지워요.</li>
           <li>
-            그 전에 지우려면 대화 화면 아래의 [지금 삭제]를 누르세요. 4편, 통계, 피드백이 함께 지워지고 되돌릴 수 없어요. 공유 링크도
+            그 전에 지우려면 대화 화면 아래의 [지금 삭제]를 누르세요. 리포트, 통계, 피드백이 함께 지워지고 되돌릴 수 없어요. 공유 링크도
             함께 끊겨요.
           </li>
         </ul>
@@ -61,7 +64,7 @@ export default function AboutPage() {
         <ul className="grid list-disc gap-1.5 pl-5">
           <li>analytalk는 카카오와 무관한 개인 프로젝트예요.</li>
           <li>
-            연재와 해석은 AI가 쓴 글이에요({AI_NOTICE}). 숫자는 코드가 세고, 상대의 속마음은 단정하지 않아요.
+            리포트와 해석은 AI가 쓴 글이에요({AI_NOTICE}). 숫자는 코드가 세고, 상대의 속마음은 단정하지 않아요.
           </li>
         </ul>
       </section>

@@ -129,7 +129,7 @@ test.describe("CSP 위반 0건", () => {
     const res = await page.goto("/about");
     expect(nonceOf(res?.headers()["content-security-policy"])).toBeTruthy();
     await expect(page).toHaveURL(/\/about$/);
-    for (const text of [/원본 대화 파일은 이 기기/, /Anthropic.*30일/, /30일 뒤 자동으로 지워요/, /지금 삭제/, /운영자에게 카톡/, /카카오와 무관/, /AI 생성, 재미·참고용/]) {
+    for (const text of [/원본 대화 파일은 이 기기/, /표시 이름.*Anthropic으로 가요/, /링크는 사이트 이름만 남겨요/, /뺀 멤버의 메시지와 이름은 Anthropic으로 보내지 않아요/, /표시 이름은 30일 보관하고 공유 링크에 보여요/, /리포트 전체 16개까지/, /30일 뒤 자동으로 지워요/, /지금 삭제/, /운영자에게 카톡/, /카카오와 무관/, /AI 생성, 재미·참고용/]) {
       await expect(page.getByText(text).first()).toBeVisible();
     }
     expect(violations).toEqual([]);
