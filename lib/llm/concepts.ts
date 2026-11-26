@@ -10,3 +10,13 @@ export const CONCEPTS: Record<"group" | "couple", { title: string; episodes: [st
     episodes: ["우리 대화의 지도", "누가 먼저, 얼마나 빨리", "표현이 바뀐 구간", "너에게 쓰는 편지"],
   },
 };
+
+/** 리포트 말투 */
+export const TONE_KEYS = ["fact", "warm", "show"] as const;
+export type Tone = (typeof TONE_KEYS)[number];
+export const DEFAULT_TONE: Tone = "fact";
+export const TONES: Record<Tone, { label: string }> = {
+  fact: { label: "팩트 일침" },
+  warm: { label: "따뜻한 위로" },
+  show: { label: "예능 중계" },
+};

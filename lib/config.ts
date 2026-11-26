@@ -3,8 +3,18 @@
 // 편 생성 (서버)
 export const EPISODE_DEADLINE_MS = 270_000; // 편당 마감 (maxDuration = 300)
 export const MAX_PAYLOAD_BYTES = 1_500_000; // 페이로드 상한 1.5MB
-export const INPUT_TOKEN_BUDGET = 128_000; // 입력 예산 (M0 실측 전 기본값)
 export const TOKENS_PER_CHAR = 1.0;
+/** 모델별 입력 예산(토큰). 표 밖의 모델은 FALLBACK. 서버의 INPUT_TOKEN_BUDGET env가 이 값을 덮어쓴다 */
+export const INPUT_TOKEN_BUDGET_BY_MODEL: readonly (readonly [string, number])[] = [
+  ["claude-sonnet-5-5", 400_000],
+  ["claude-opus-5-5", 128_000],
+];
+export const FALLBACK_INPUT_TOKEN_BUDGET = 128_000;
+/** 날짜가 붙은 스냅샷 id도 같은 모델로 본다(lib/llm/cost.ts priceOf와 같은 규칙) */
+export function inputTokenBudgetFor(model: string): number {
+  const hit = INPUT_TOKEN_BUDGET_BY_MODEL.find(([id]) => model === id || model.startsWith(`${id}-`));
+  return hit ? hit[1] : FALLBACK_INPUT_TOKEN_BUDGET;
+}
 export const PROMPT_RESERVE_TOKENS = 6000; // system 프롬프트·편별 지시 몫(토큰 어림). 정확한 값은 countTokens로 확인한다
 
 // 모델에게 보여 주는 통계 요약(statsForPrompt). 서버의 자리표시자 해석은 전체 stats를 쓴다

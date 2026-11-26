@@ -12,7 +12,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { INPUT_TOKEN_BUDGET, PROMPT_RESERVE_TOKENS, TOKENS_PER_CHAR } from "../lib/config";
+import { PROMPT_RESERVE_TOKENS, TOKENS_PER_CHAR } from "../lib/config";
+import { modelSettings } from "../lib/llm/settings";
 import { estimateCostUsd } from "../lib/llm/cost";
 import { buildRequest } from "../lib/llm/prompt";
 import { runEpisode } from "../lib/llm/stream";
@@ -190,14 +191,14 @@ const skipped = (n: number): EpisodeMeasure => ({
 
 // ── 진입점 ──
 
-/** 입력 예산(INPUT_TOKEN_BUDGET)에서 통계 요약·프롬프트 몫(PROMPT_RESERVE_TOKENS)을 빼고 맞춘 페이로드 */
+/** 입력 예산(modelSettings().inputBudget)에서 통계 요약·프롬프트 몫(PROMPT_RESERVE_TOKENS)을 빼고 맞춘 페이로드 */
 export function measurePayload(messages: ChatMessage[], me: string, concept: Args["concept"]): Payload {
   return buildPayloadForBudget({
     messages,
     me,
     concept,
     kind: concept === "couple" ? "pair" : "group",
-    inputBudget: INPUT_TOKEN_BUDGET,
+    inputBudget: modelSettings().inputBudget,
     tokensPerChar: TOKENS_PER_CHAR,
   });
 }
@@ -214,7 +215,7 @@ async function main(): Promise<void> {
   const payload = measurePayload(named.messages, me, args.concept);
   const est = payloadTokens(payload, TOKENS_PER_CHAR);
   console.log(
-    `메시지 ${payload.msgTotal}건, 보낸 ${payload.msgSent}건, 추정 토큰 ${est.total}(본문 ${est.text}) + 프롬프트 몫 ${PROMPT_RESERVE_TOKENS}, 예산 ${INPUT_TOKEN_BUDGET}`,
+    `메시지 ${payload.msgTotal}건, 보낸 ${payload.msgSent}건, 추정 토큰 ${est.total}(본문 ${est.text}) + 프롬프트 몫 ${PROMPT_RESERVE_TOKENS}, 예산 ${modelSettings().inputBudget}`,
   );
   if (args.dryRun) return;
 

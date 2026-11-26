@@ -7,7 +7,6 @@ import type { BuildRequest, RenameInput, RenameResult, WorkerRequest, WorkerResp
 export type { BuildRequest, RenameInput, RenameResult } from "./parse.worker";
 
 type BudgetInput = Extract<BuildRequest, { inputBudget: number }>;
-type TokenInput = Extract<BuildRequest, { tokenBudget: number }>;
 
 let worker: Worker | null = null;
 let seq = 0;
@@ -54,17 +53,16 @@ export function renameInWorker(input: RenameInput): Promise<RenameResult> {
 
 /**
  * 이름 정리를 마친 메시지로 페이로드를 만든다(stats 포함).
- * 첫 요청은 { inputBudget: INPUT_TOKEN_BUDGET }(buildPayloadForBudget), 413 뒤에는 retryBuildInput의 { tokenBudget }(buildPayload)
+ * 입력 예산(inputBudget)은 서버가 알려 준 값(modelSettings)이고, 413 뒤에는 retryBuildInput이 줄인 inputBudget으로 다시 만든다
  */
 export function buildInWorker(input: BuildRequest): Promise<Payload> {
   return call({ op: "build", input });
 }
 
 /**
- * 413 { maxTokens } 뒤 한 번만 다시 만들 입력. maxTokens는 클라이언트 추정 단위(anchors + transcript)라
- * tokenBudget = floor(maxTokens × 0.95)로 그대로 쓴다(Task 13이 buildInWorker에 넘긴다)
+ * 413 { maxTokens } 뒤 한 번만 다시 만들 입력. maxTokens는 서버가 어림한 "입력 예산 단위"(본문 + 통계 + 프롬프트 몫)라
+ * 첫 입력의 inputBudget만 floor(maxTokens × 0.95)로 바꿔 buildPayloadForBudget에 다시 넘긴다
  */
-export function retryBuildInput(first: BudgetInput, maxTokens: number): TokenInput {
-  const { inputBudget: _, ...rest } = first;
-  return { ...rest, tokenBudget: Math.floor(maxTokens * 0.95) };
+export function retryBuildInput(first: BudgetInput, maxTokens: number): BudgetInput {
+  return { ...first, inputBudget: Math.floor(maxTokens * 0.95) };
 }

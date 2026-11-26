@@ -19,7 +19,12 @@
 - UI 작업 전에 [DESIGN.md](DESIGN.md)를 읽고 따른다
 - 명령: `pnpm test`(vitest), `pnpm typecheck`, `pnpm test:e2e`(Playwright, dev 3100 / prod 3200), `pnpm check:fixtures`, `pnpm invite:add|revoke`(`--prod`는 `.env.production.local` 사용), `pnpm measure`, `pnpm eval`
 - e2e: 처음 한 번 `pnpm exec playwright install chromium webkit`. 기본은 dev 서버(3100), prod 프로젝트(CSP·헤더, `security.spec.ts`)는 `PW_PROD=1 pnpm test:e2e --project=prod-chromium --project=prod-webkit`
-- 저장 금지: 원본 대화 파일·전체 파싱 결과는 브라우저 밖으로 나가지 않는다. 페이로드의 `transcript`·`anchors`는 서버 메모리에서만 다루고 DB·Storage·로그(`console.*` 포함)에 남기지 않는다. 실제 이름은 저장·전송하지 않는다
+- 저장·전송: 원본 대화 파일과 전체 파싱 결과는 브라우저 밖으로 나가지 않는다. 페이로드의 `transcript`·`anchors`는 서버 메모리에서만 다루고 DB·Storage·로그(`console.*` 포함)에 남기지 않는다
+- 업로더가 정한 표시 이름(실명일 수 있음)은 Anthropic API로 가고 DB에 30일, 공유 링크에 보인다. 그 밖의 곳(로그·`usage_events`·`claims`)에는 이름을 남기지 않는다
+- 뺀 멤버의 메시지·이름·통계 키는 페이로드 어디에도 없다. 목록도 보내지 않는다
+- 본문은 고치지 않는다(이름 치환 없음, 민감 주제 가림 없음). 전화·이메일·계좌·카드·주민번호는 가리고, 링크는 `[링크:host]`만 남긴다
+- 유료 실행(`pnpm measure`·`pnpm eval`)은 실행마다 사용자 승인. 결과 파일은 `~/Developer/analytalk-samples/`에만
+- 되돌리기: Vercel env `ANTHROPIC_MODEL`·`INPUT_TOKEN_BUDGET`·`REPORT_MAX_TOKENS`·`ANTHROPIC_EFFORT`(Config 타입, 재배포 필요). 비우면 기본값(`lib/llm/settings.ts`)
 - 실제 대화 파일은 커밋하지 않는다(공개 저장소). 테스트 파일은 줄 모양만 남긴 가짜 대화다
 - 테스트 모드(E2E)는 `ANALYTALK_E2E === "1" && !process.env.VERCEL` 일 때만 켜진다. Vercel에서는 절대 켜지지 않는다
 - 비밀값은 Vercel Sensitive 변수로 둔다. 에이전트는 `.env*`를 읽거나 쓰지 않는다(`.env.example`만 수정)

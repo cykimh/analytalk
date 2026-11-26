@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
-import { INPUT_TOKEN_BUDGET, PROMPT_RESERVE_TOKENS, TOKENS_PER_CHAR } from "@/lib/config";
+import { FALLBACK_INPUT_TOKEN_BUDGET, PROMPT_RESERVE_TOKENS, TOKENS_PER_CHAR } from "@/lib/config";
 import { buildPayload, payloadTokens } from "@/lib/payload/build";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { syntheticGroupChat } from "@/test/syntheticChat";
@@ -54,7 +54,7 @@ describe("measurePayload", () => {
 
   it("통계 요약과 프롬프트 몫까지 입력 예산 안에 들고, transcript가 있다", () => {
     const p = measurePayload(messages, "멤버01", "group");
-    expect(payloadTokens(p, TOKENS_PER_CHAR).total + PROMPT_RESERVE_TOKENS).toBeLessThanOrEqual(INPUT_TOKEN_BUDGET);
+    expect(payloadTokens(p, TOKENS_PER_CHAR).total + PROMPT_RESERVE_TOKENS).toBeLessThanOrEqual(FALLBACK_INPUT_TOKEN_BUDGET);
     expect(p.msgSent).toBeGreaterThan(0);
     expect(p).toMatchObject({ me: "멤버01", concept: "group", kind: "group" });
   });

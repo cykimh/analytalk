@@ -58,4 +58,12 @@ describe("estimateCostUsd", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).toContain("claude-haiku-9");
   });
+
+  it("claude-sonnet-5는 캐시 읽기 $0.2, 5-5는 $0.1 (5-5가 Sonnet 5 행에 잡히지 않는다)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(estimateCostUsd(usage({ input_tokens: 1e6 }), "claude-sonnet-5")).toBeCloseTo(2, 9);
+    expect(estimateCostUsd(usage({ cache_read_input_tokens: 1e6 }), "claude-sonnet-5")).toBeCloseTo(0.2, 9);
+    expect(estimateCostUsd(usage({ cache_read_input_tokens: 1e6 }), "claude-sonnet-5-5")).toBeCloseTo(0.1, 9);
+    expect(warn).not.toHaveBeenCalled();
+  });
 });

@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CYCLE_ANCHOR_DAY, DEFAULT_EST_COST_USD, INPUT_TOKEN_BUDGET, TOKENS_PER_CHAR } from "@/lib/config";
+import { CYCLE_ANCHOR_DAY, DEFAULT_EST_COST_USD, inputTokenBudgetFor, DEFAULT_MODEL, PROMPT_RESERVE_TOKENS, TOKENS_PER_CHAR } from "@/lib/config";
+import { retryBuildInput } from "@/lib/client/worker";
+import { buildPayloadForBudget } from "@/lib/payload/build";
+import { syntheticGroupChat } from "@/test/syntheticChat";
 import { PROMPT_VERSION } from "@/lib/llm/prompt";
 import { type Payload, payloadTokens } from "@/lib/payload/build";
 import { sha256Hex } from "@/lib/payload/hash";
@@ -25,7 +28,10 @@ import { handleDeleteConversation } from "./conversation";
 import { handleCreateConversation } from "./conversations";
 import { handleStatus } from "./status";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 const create = (cookie: string | null, body: unknown) => request("POST", "/api/conversations", cookie, body);
 const statusOf = (cookie: string, id: string) => request("GET", `/api/conversations/${id}/status`, cookie);
@@ -251,21 +257,55 @@ describe("POST /api/conversations", () => {
     expect(first.content?.sections.map((s) => s.title)).toEqual(["저녁의 리듬"]);
   });
 
-  it("countTokens가 예산 × 1.05를 넘으면 413 {maxTokens}: 클라이언트 추정 단위(R7). claim·생성 없음", async () => {
+  it("countTokens가 예산 × 1.05를 넘으면 413 {maxTokens}: (본문+통계+프롬프트 몫) 단위. claim·생성 없음", async () => {
+    const budget = inputTokenBudgetFor(DEFAULT_MODEL);
     const h = await harness({ counted: () => 200_000 });
     const claim = vi.spyOn(h.repo, "claim");
     const payload = withTextTokens(makePayload(), 150_000);
-    expect(payloadTokens(payload, TOKENS_PER_CHAR).text).toBe(150_000);
+    const total = payloadTokens(payload, TOKENS_PER_CHAR).total;
     const res = await handleCreateConversation(create(h.cookie, payload), h.deps);
-    expect(res).toEqual({ status: 413, body: { maxTokens: 96_000 } });
+    expect(res).toEqual({ status: 413, body: { maxTokens: Math.floor(((total + PROMPT_RESERVE_TOKENS) * budget) / 200_000) } });
     expect(claim).not.toHaveBeenCalled();
     expect(h.streams).toHaveLength(0);
   });
 
   it("countTokens가 예산 × 1.05와 같으면 받는다", async () => {
-    const h = await harness({ counted: () => INPUT_TOKEN_BUDGET * 1.05 });
+    const h = await harness({ counted: () => inputTokenBudgetFor(DEFAULT_MODEL) * 1.05 });
     h.state.manual = true;
     expect((await handleCreateConversation(create(h.cookie, makePayload()), h.deps)).status).toBe(202);
+  });
+
+  it("ANTHROPIC_MODEL이 예산을 정한다: Sonnet 5.5는 400K까지 받는다", async () => {
+    vi.stubEnv("ANTHROPIC_MODEL", "claude-sonnet-5-5");
+    const h = await harness({ counted: () => 300_000 });
+    h.state.manual = true;
+    expect((await handleCreateConversation(create(h.cookie, makePayload()), h.deps)).status).toBe(202);
+  });
+
+  it("되돌린 예산에서도 한 번 다시 만들면 통과한다 (Review Focus 3)", async () => {
+    vi.stubEnv("ANTHROPIC_MODEL", "claude-opus-5-5");
+    // 가짜 countTokens: 요청 글자 수를 그대로 토큰 수로 돌려준다
+    let h!: Awaited<ReturnType<typeof harness>>;
+    h = await harness({
+      counted: () => {
+        const r = h.counts.at(-1) as { system: unknown; messages: unknown };
+        return JSON.stringify(r.system).length + JSON.stringify(r.messages).length;
+      },
+    });
+    h.state.manual = true;
+    const first = {
+      messages: syntheticGroupChat(40, 60),
+      me: "멤버01",
+      concept: "group" as const,
+      kind: "group" as const,
+      tokensPerChar: TOKENS_PER_CHAR,
+      inputBudget: 400_000,
+    };
+    const res1 = await handleCreateConversation(create(h.cookie, buildPayloadForBudget(first)), h.deps);
+    expect(res1.status).toBe(413);
+    const { maxTokens } = res1.body as { maxTokens: number };
+    const res2 = await handleCreateConversation(create(h.cookie, buildPayloadForBudget(retryBuildInput(first, maxTokens))), h.deps);
+    expect(res2.status).toBe(202);
   });
 
   it("meta는 서버가 payload로 만들고 claim에 추정 원가를 넘긴다", async () => {

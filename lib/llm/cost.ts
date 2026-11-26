@@ -26,13 +26,15 @@ interface Price {
 
 const OPUS_5_5: Price = { input: 4, output: 20, cacheWrite: 5, cacheRead: 0.2 };
 const SONNET_5_5: Price = { input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.1 };
+const SONNET_5: Price = { input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.2 };
 /** Opus 5·Opus 4.8, 그리고 표에 없는 모델 */
 const DEFAULT_PRICE: Price = { input: 5, output: 25, cacheWrite: 6.25, cacheRead: 0.5 };
 
-// 긴 id부터 본다: claude-opus-5는 claude-opus-5-5의 앞부분이다
+// 긴 id부터 본다: claude-opus-5·claude-sonnet-5는 5-5의 앞부분이다
 const PRICES: [string, Price][] = [
   ["claude-opus-5-5", OPUS_5_5],
   ["claude-sonnet-5-5", SONNET_5_5],
+  ["claude-sonnet-5", SONNET_5],
   ["claude-opus-5", DEFAULT_PRICE],
   ["claude-opus-4-8", DEFAULT_PRICE],
 ];

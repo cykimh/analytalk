@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { BlobWriter, TextReader, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
-import { INPUT_TOKEN_BUDGET, TOKENS_PER_CHAR } from "@/lib/config";
+import { FALLBACK_INPUT_TOKEN_BUDGET, TOKENS_PER_CHAR } from "@/lib/config";
 import { buildPayload, buildPayloadForBudget } from "@/lib/payload/build";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { handleMessage, type RenameInput, runOp } from "./parse.worker";
@@ -90,8 +90,8 @@ describe("runOp build", () => {
   const base = { messages, me: "P1", concept: "couple" as const, kind: "pair" as const, tokensPerChar: TOKENS_PER_CHAR };
 
   it("inputBudget이면 buildPayloadForBudget, tokenBudget이면 buildPayload", async () => {
-    expect(await runOp({ op: "build", input: { ...base, inputBudget: INPUT_TOKEN_BUDGET } })).toEqual(
-      buildPayloadForBudget({ ...base, inputBudget: INPUT_TOKEN_BUDGET }),
+    expect(await runOp({ op: "build", input: { ...base, inputBudget: FALLBACK_INPUT_TOKEN_BUDGET } })).toEqual(
+      buildPayloadForBudget({ ...base, inputBudget: FALLBACK_INPUT_TOKEN_BUDGET }),
     );
     expect(await runOp({ op: "build", input: { ...base, tokenBudget: 40 } })).toEqual(buildPayload({ ...base, tokenBudget: 40 }));
   });

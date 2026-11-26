@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_MODEL,
+  INPUT_TOKEN_BUDGET_BY_MODEL,
   EPISODE_DEADLINE_MS,
   MAX_PAYLOAD_BYTES,
   WEEKLY_CAP_USD,
@@ -15,6 +16,12 @@ describe("config", () => {
     expect(MAX_PAYLOAD_BYTES).toBe(1_500_000);
     expect(WEEKLY_CAP_USD).toBe(22.5);
     expect(DEFAULT_MODEL).toBe("claude-opus-5-5");
+  });
+
+  it("모델별 입력 예산 표에서 뒤 id가 앞 id의 접두가 아니다(먼저 맞는 행이 이긴다)", () => {
+    INPUT_TOKEN_BUDGET_BY_MODEL.forEach(([id], i) => {
+      for (const [prev] of INPUT_TOKEN_BUDGET_BY_MODEL.slice(0, i)) expect(id === prev || id.startsWith(`${prev}-`)).toBe(false);
+    });
   });
 
   it("Vercel에서는 E2E 모드가 꺼진다", () => {

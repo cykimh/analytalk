@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { UploadFlow } from "@/components/upload/UploadFlow";
 import { isKakaoInApp } from "@/lib/client/inapp";
+import { modelSettings } from "@/lib/llm/settings";
 import { hasInvite } from "@/lib/server/viewer";
 
 export const metadata: Metadata = { title: "대화 올리기 · analytalk" };
@@ -11,5 +12,5 @@ export const metadata: Metadata = { title: "대화 올리기 · analytalk" };
 export default async function NewPage() {
   if (!(await hasInvite())) redirect("/");
   const ua = (await headers()).get("user-agent") ?? "";
-  return <UploadFlow inApp={isKakaoInApp(ua)} />;
+  return <UploadFlow inApp={isKakaoInApp(ua)} inputBudget={modelSettings().inputBudget} />;
 }

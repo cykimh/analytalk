@@ -18,7 +18,7 @@ import {
   renameInWorker,
   retryBuildInput,
 } from "@/lib/client/worker";
-import { INPUT_TOKEN_BUDGET, TOKENS_PER_CHAR } from "@/lib/config";
+import { TOKENS_PER_CHAR } from "@/lib/config";
 import type { Payload } from "@/lib/payload/build";
 import { sentSafetySignal } from "@/lib/payload/safety";
 import type { ParseResult } from "@/lib/parse/parse";
@@ -51,7 +51,7 @@ const NOT_KAKAO = "카카오톡 대화 내보내기 파일이 아닌 것 같아�
 const NO_MESSAGES = "읽을 메시지가 없어요. 대화 내용이 든 파일인지 확인해 주세요.";
 const errorText = (error: unknown) => (error instanceof Error && error.message ? error.message : "브라우저에서 대화를 읽지 못했어요");
 
-export function UploadFlow({ inApp }: { inApp: boolean }) {
+export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget: number }) {
   const router = useRouter();
   const [step, setStep] = useState<Step>("upload");
   const [busy, setBusy] = useState(false);
@@ -143,7 +143,7 @@ export function UploadFlow({ inApp }: { inApp: boolean }) {
         concept: conceptFor(kind),
         kind,
         tokensPerChar: TOKENS_PER_CHAR,
-        inputBudget: INPUT_TOKEN_BUDGET,
+        inputBudget,
       };
       setBuilt({ payload: await buildInWorker(input), input });
       setStep("stats");

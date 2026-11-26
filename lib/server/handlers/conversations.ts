@@ -3,9 +3,10 @@
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { MessageCountTokensParams } from "@anthropic-ai/sdk/resources/messages";
-import { DEFAULT_EST_COST_USD, INPUT_TOKEN_BUDGET, TOKENS_PER_CHAR } from "@/lib/config";
+import { DEFAULT_EST_COST_USD, PROMPT_RESERVE_TOKENS, TOKENS_PER_CHAR } from "@/lib/config";
 import { classifyError } from "@/lib/llm/errors";
 import { buildRequest, PROMPT_VERSION } from "@/lib/llm/prompt";
+import { modelSettings } from "@/lib/llm/settings";
 import { type Payload, payloadTokens } from "@/lib/payload/build";
 import { sha256Hex } from "@/lib/payload/hash";
 import { validatePayload } from "@/lib/payload/validate";
@@ -59,6 +60,7 @@ export async function handleCreateConversation(req: Request, deps: HandlerDeps):
   const p = checked.payload;
   const payloadSha256 = await sha256Hex(JSON.stringify(p));
   const { inviteId } = auth;
+  const settings = modelSettings();
 
   const duplicate = await deps.repo.findDuplicate({ inviteId, payloadSha256, concept: p.concept, promptVersion: PROMPT_VERSION });
   if (duplicate) return { status: 200, body: { id: duplicate } };
@@ -78,9 +80,10 @@ export async function handleCreateConversation(req: Request, deps: HandlerDeps):
     }
     return fail(502, "count_tokens_failed");
   }
-  if (counted > INPUT_TOKEN_BUDGET * BUDGET_TOLERANCE) {
-    // 클라이언트 추정 단위(anchors + transcript)로 돌려준다. 클라이언트는 이 값의 95%로 다시 만든다(R7)
-    const maxTokens = Math.floor((payloadTokens(p, TOKENS_PER_CHAR).text * INPUT_TOKEN_BUDGET) / counted);
+  if (counted > settings.inputBudget * BUDGET_TOLERANCE) {
+    // 클라이언트 입력 예산 단위(본문 + 통계 + 프롬프트 몫)로 돌려준다. 클라이언트는 이 값의 95%를 inputBudget으로 다시 만든다
+    const estimated = payloadTokens(p, TOKENS_PER_CHAR).total + PROMPT_RESERVE_TOKENS;
+    const maxTokens = Math.floor((estimated * settings.inputBudget) / counted);
     return { status: 413, body: { maxTokens } };
   }
 
