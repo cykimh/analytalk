@@ -17,8 +17,8 @@ import { DEFAULT_TONE } from "../lib/llm/concepts";
 import { modelSettings } from "../lib/llm/settings";
 import { estimateCostUsd } from "../lib/llm/cost";
 import { buildRequest } from "../lib/llm/prompt";
-import { runEpisode } from "../lib/llm/stream";
-import { validateEpisode } from "../lib/llm/validate";
+import { runReport } from "../lib/llm/stream";
+import { validateReport } from "../lib/llm/validate";
 import { applyDisplayNames, defaultDisplayName, type NameMap } from "../lib/payload/names";
 import { buildPayloadForBudget, type Payload, payloadIndex, payloadTokens } from "../lib/payload/build";
 import { type ChatMessage, parseExport } from "../lib/parse/parse";
@@ -75,9 +75,9 @@ export interface EpisodeMeasure {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   costUsd: number;
-  /** validateEpisode 결과. 실행하지 못했거나 JSON이 아니면 failed */
+  /** validateReport 결과. 실행하지 못했거나 JSON이 아니면 failed */
   status: "done" | "partial" | "safety" | "failed" | "skipped";
-  /** runEpisode 결과 */
+  /** runReport 결과 */
   kind: string;
 }
 
@@ -124,7 +124,7 @@ type Client = Pick<Anthropic, "beta">;
 
 /** 요청의 입력 토큰을 센다(system + 데이터 메시지). 편 지시(messages[1])는 편마다 달라서 뺀다 */
 export async function measureTokens(client: Client, payload: Payload): Promise<{ inputTokens: number; chars: number }> {
-  const req = buildRequest(payload, 1, []);
+  const req = buildRequest(payload);
   const system = typeof req.system === "string" ? req.system : "";
   const first = req.messages[0];
   const data = typeof first.content === "string" ? first.content : first.content.map((b) => ("text" in b ? b.text : "")).join("");
@@ -140,8 +140,8 @@ export async function measureRun(client: Client, payload: Payload, deps: { now?:
   const one = async (n: 1 | 2 | 3 | 4, onStart?: () => void): Promise<EpisodeMeasure> => {
     const t0 = now();
     let ttft: number | null = null;
-    const req = buildRequest(payload, n, []);
-    const r = await runEpisode(client as Anthropic, req, {
+    const req = buildRequest(payload);
+    const r = await runReport(client as Anthropic, req, {
       deadlineAt: Date.now() + 270_000,
       onStreamStart: () => {
         ttft = now() - t0;
@@ -152,7 +152,11 @@ export async function measureRun(client: Client, payload: Payload, deps: { now?:
     const totalMs = now() - t0;
     let status: EpisodeMeasure["status"] = "failed";
     try {
-      status = validateEpisode(JSON.parse(r.raw), idx, payload.stats, { truncated: r.kind === "truncated" || r.kind === "partial" }).status;
+      status = validateReport(JSON.parse(r.raw), idx, payload.stats, {
+        truncated: r.kind === "truncated" || r.kind === "partial",
+        concept: payload.concept,
+        members: payload.members,
+      }).status;
     } catch {
       // JSON이 아니면 failed
     }

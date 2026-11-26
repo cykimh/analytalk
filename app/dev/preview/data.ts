@@ -1,9 +1,9 @@
 // dev 미리보기용 가짜 데이터. 표시 이름은 test/syntheticChat의 "멤버01"…이고 실제 이름·대화는 없다.
-// 통계는 진짜 computeStats로 세고, 리포트는 손으로 쓴 StoredEpisode({{stat:…}} 자리표시자·근거 인용 포함)다
+// 통계는 진짜 computeStats로 세고, 리포트는 손으로 쓴 StoredReport({{stat:…}} 자리표시자·근거 인용 포함)다
 import type { ConversationView, Note, StatusView } from "@/components/episode/model";
 import type { SharedReportData } from "@/components/episode/SharedReport";
 import { topPeople } from "@/components/stats/format";
-import type { StoredEpisode } from "@/lib/llm/schema";
+import type { StoredReport } from "@/lib/llm/schema";
 import { computeStats } from "@/lib/stats/compute";
 import { syntheticGroupChat } from "@/test/syntheticChat";
 
@@ -17,8 +17,7 @@ const [top, second, third] = names;
 /** 근거 인용(가짜 대화의 줄 그대로) */
 const evidence = (id: string, sender: string, at: string, quote: string) => ({ id, msg_id: `m${id.slice(1)}`, sender, at, quote });
 
-export const previewReport: StoredEpisode = {
-  episode: 1,
+export const previewReport: StoredReport = {
   safety: { flag: "none" },
   declined_topics: [],
   reading_notes: [
@@ -29,6 +28,7 @@ export const previewReport: StoredEpisode = {
   dek: "{{stat:longestStreakDays}} 연속으로 이어진 수다, 그 첫날부터 지금까지를 한 장에 붙였어요",
   sections: [
     {
+      part: "chronicle",
       icon: "📅",
       title: "저녁 약속으로 문을 연 방",
       about: "group",
@@ -50,6 +50,7 @@ export const previewReport: StoredEpisode = {
       ],
     },
     {
+      part: "scenes",
       icon: "🌙",
       title: "밤이 길어진 계절{{stat:nope}}",
       about: "group",
@@ -70,6 +71,7 @@ export const previewReport: StoredEpisode = {
       ],
     },
     {
+      part: "rhythm",
       icon: "😂",
       title: "ㅋ의 계보",
       about: "group",
@@ -83,7 +85,6 @@ export const previewReport: StoredEpisode = {
       evidence: [],
     },
   ],
-  next_teaser: null,
 };
 
 export const previewConversation: ConversationView = {

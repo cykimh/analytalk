@@ -4,6 +4,8 @@ import {
   INPUT_TOKEN_BUDGET_BY_MODEL,
   EPISODE_DEADLINE_MS,
   MAX_PAYLOAD_BYTES,
+  MAX_QUOTES_PER_REPORT,
+  PROMPT_STATS_MAX_MONTHS,
   WEEKLY_CAP_USD,
   isE2E,
 } from "@/lib/config";
@@ -15,7 +17,9 @@ describe("config", () => {
     expect(EPISODE_DEADLINE_MS).toBe(270_000);
     expect(MAX_PAYLOAD_BYTES).toBe(4_000_000);
     expect(WEEKLY_CAP_USD).toBe(22.5);
-    expect(DEFAULT_MODEL).toBe("claude-opus-5-5");
+    expect(DEFAULT_MODEL).toBe("claude-sonnet-5-5");
+    expect(MAX_QUOTES_PER_REPORT).toBe(16);
+    expect(PROMPT_STATS_MAX_MONTHS).toBe(24);
   });
 
   it("모델별 입력 예산 표에서 뒤 id가 앞 id의 접두가 아니다(먼저 맞는 행이 이긴다)", () => {

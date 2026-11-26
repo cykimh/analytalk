@@ -1,5 +1,5 @@
 // 모델에게 보여 줄 통계 요약. stats는 사람 수 × 달 수에, dailyCounts는 날짜 수에 비례해 커져서 프롬프트에는 줄여 넣는다.
-// 줄이는 것은 모델이 보는 것뿐이다. 서버의 자리표시자 해석(resolveStat·validateEpisode)은 전체 stats를 그대로 쓴다.
+// 줄이는 것은 모델이 보는 것뿐이다. 서버의 자리표시자 해석(resolveStat·validateReport)은 전체 stats를 그대로 쓴다.
 import { PROMPT_STATS_MAX_CROSSED, PROMPT_STATS_MAX_MONTHS, PROMPT_STATS_MAX_PEOPLE } from "@/lib/config";
 import type { ChatStats, MonthStats } from "./compute";
 

@@ -1,11 +1,11 @@
 // 스트리밍 중이거나 끊긴 JSON 출력에서 완결된 값만 꺼낸다. 서버 전용.
-// 스키마 속성 순서(safety → … → reading_notes → … → sections → next_teaser)를 그대로 따라 생성되므로
+// 스키마 속성 순서(safety → declined_topics → reading_notes → headline → dek → sections)를 그대로 따라 생성되므로
 // 맨 위 객체를 앞에서부터 훑으며, 닫는 글자까지 온 값만 완결로 본다. 끝나지 않은 배열은 완결된 원소만 쓴다.
 import "server-only";
 import { MAX_READING_NOTES, NOTE_MAX_CHARS } from "@/lib/config";
 import { isBanned } from "@/lib/payload/banned";
 import { hasPII } from "@/lib/payload/mask";
-import type { Episode } from "./schema";
+import type { Report } from "./schema";
 
 type Note = { range: string; note: string };
 /** 값 하나의 자리. end는 값 다음 글자 인덱스이고, 글이 값 중간에서 끝났으면 null */
@@ -154,10 +154,10 @@ export function sanitizeNotes(notes: unknown): Note[] {
 }
 
 /**
- * 끊긴 출력에서 완결된 필드를 살린다. sections는 완결된 섹션(그 안의 근거 포함)까지다.
- * safety가 완결되지 않았으면 null이다. 값의 모양은 확인하지 않는다(validateEpisode가 한다)
+ * 끊긴 출력에서 완결된 필드를 살린다. sections는 완결된 섹션(그 안의 근거 포함)까지다 — 구성 순서로 쓰므로 앞 구성들이 남는다.
+ * safety가 완결되지 않았으면 null이다. 값의 모양은 확인하지 않는다(validateReport가 한다)
  */
-export function salvageEpisode(partialJson: string): Partial<Episode> | null {
+export function salvageReport(partialJson: string): Partial<Report> | null {
   const top = topObject(partialJson);
   if (top === null) return null;
   const out: Record<string, unknown> = {};
@@ -167,5 +167,5 @@ export function salvageEpisode(partialJson: string): Partial<Episode> | null {
   }
   const safety = out.safety;
   if (typeof safety !== "object" || safety === null || Array.isArray(safety)) return null;
-  return out as Partial<Episode>;
+  return out as Partial<Report>;
 }

@@ -8,7 +8,7 @@ import { CYCLE_ANCHOR_DAY, E2E_INVITE_CODE, isE2E, MONTHLY_BUDGET_USD, RETENTION
 import { hashCode } from "@/lib/invite/code";
 import { TONE_KEYS, type Tone } from "@/lib/llm/concepts";
 import type { Usage } from "@/lib/llm/cost";
-import type { StoredEpisode } from "@/lib/llm/schema";
+import type { StoredReport } from "@/lib/llm/schema";
 import type { ChatStats } from "@/lib/stats/compute";
 import { type PrivilegedDb, privilegedDb } from "./privileged";
 
@@ -18,7 +18,7 @@ const REPORT_N = 1;
 /** 리포트(episodes n = 1 행) 중 앱이 읽는 열 */
 export interface ReportRow {
   status: string;
-  content: StoredEpisode | null;
+  content: StoredReport | null;
   progress: unknown;
   errorCode: string | null;
 }
@@ -471,7 +471,7 @@ interface DbConversation {
   payload_sha256: string;
   share_token_hash: string | null;
   expires_at: string;
-  episodes: { n: number; status: string; content: StoredEpisode | null; progress: unknown; error_code: string | null }[];
+  episodes: { n: number; status: string; content: StoredReport | null; progress: unknown; error_code: string | null }[];
 }
 
 /** 리포트 행(n = 1)이 없으면 null */

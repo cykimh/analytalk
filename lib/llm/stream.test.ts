@@ -3,7 +3,7 @@ import type { BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/m
 import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
 import { NOTES_FLUSH_MS } from "@/lib/config";
 import { estimateCostUsd } from "./cost";
-import { runEpisode } from "./stream";
+import { runReport } from "./stream";
 
 // ── 가짜 fetch: 공식 SSE 형식(event: … / data: …)의 ReadableStream 응답 ──
 
@@ -27,10 +27,10 @@ const messageStart = (model = "claude-opus-5-5"): Ev => ({
 const textStart: Ev = { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
 const delta = (text: string): Ev => ({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } });
 const blockStop: Ev = { type: "content_block_stop", index: 0 };
-const messageDelta = (stop_reason: string, output_tokens = 7_000): Ev => ({
+const messageDelta = (stop_reason: string, output_tokens = 7_000, extra: { delta?: object; usage?: object } = {}): Ev => ({
   type: "message_delta",
-  delta: { stop_reason, stop_sequence: null },
-  usage: { output_tokens },
+  delta: { stop_reason, stop_sequence: null, ...extra.delta },
+  usage: { output_tokens, ...extra.usage },
 });
 const messageStop: Ev = { type: "message_stop" };
 const ping: Ev = { type: "ping" };
@@ -102,36 +102,37 @@ async function until(cond: () => boolean) {
   if (!cond()) throw new Error("조건이 1초 안에 채워지지 않았다");
 }
 
-type RunOpts = Parameters<typeof runEpisode>[2];
+type RunOpts = Parameters<typeof runReport>[2];
 const opts = (over: { deadlineAt?: number; onNotes?: Mock<RunOpts["onNotes"]> } = {}) => ({
   deadlineAt: over.deadlineAt ?? Date.now() + 60_000,
   onStreamStart: vi.fn<RunOpts["onStreamStart"]>(),
   onNotes: over.onNotes ?? vi.fn<RunOpts["onNotes"]>(),
 });
 
-const BODY = '{"episode":1,"safety":{"flag":"none"},"declined_topics":[],"reading_notes":[],"headline":"h"}';
+const BODY = '{"safety":{"flag":"none"},"declined_topics":[],"reading_notes":[],"headline":"h"}';
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("runEpisode", () => {
+describe("runReport", () => {
   it("정상 종료 → ok. raw는 text delta 누적, usage·model은 finalMessage에서", async () => {
     const s = sse(whole(BODY));
-    const r = await runEpisode(client(s.fetch), REQ, opts());
+    const r = await runReport(client(s.fetch), REQ, opts());
     expect(r).toEqual({
       kind: "ok",
       raw: BODY,
       stopReason: "end_turn",
       model: "claude-opus-5-5",
       usage: { input_tokens: 120, output_tokens: 7_000, cache_creation_input_tokens: 128_000, cache_read_input_tokens: 0 },
+      stopCategory: null,
       startedStream: true,
     });
   });
 
   it("요청: beta 경로, betas는 헤더로, fallbacks·stream은 본문으로", async () => {
     const s = sse(whole(BODY));
-    await runEpisode(client(s.fetch), REQ, opts());
+    await runReport(client(s.fetch), REQ, opts());
     expect(s.requests).toHaveLength(1);
     const [req] = s.requests;
     expect(req.url).toContain("/v1/messages?beta=true");
@@ -141,16 +142,46 @@ describe("runEpisode", () => {
   });
 
   it("refusal → refused, max_tokens → truncated", async () => {
-    const refused = await runEpisode(client(sse(whole(BODY, "refusal")).fetch), REQ, opts());
+    const refused = await runReport(client(sse(whole(BODY, "refusal")).fetch), REQ, opts());
     expect(refused).toMatchObject({ kind: "refused", stopReason: "refusal", startedStream: true });
-    const truncated = await runEpisode(client(sse(whole(BODY, "max_tokens")).fetch), REQ, opts());
+    const truncated = await runReport(client(sse(whole(BODY, "max_tokens")).fetch), REQ, opts());
     expect(truncated).toMatchObject({ kind: "truncated", stopReason: "max_tokens", raw: BODY });
+  });
+
+  it("거절 분류(stop_details.category)는 stopCategory로, 없으면 null. 생각 토큰(thinking_tokens)도 넘긴다", async () => {
+    const stopDetails = { type: "refusal", category: "cyber", explanation: "거절 이유" };
+    const refused = await runReport(
+      client(
+        sse([
+          messageStart(),
+          textStart,
+          delta("{}"),
+          blockStop,
+          messageDelta("refusal", 300, { delta: { stop_details: stopDetails }, usage: { output_tokens_details: { thinking_tokens: 120 } } }),
+          messageStop,
+        ]).fetch,
+      ),
+      REQ,
+      opts(),
+    );
+    expect(refused).toMatchObject({ kind: "refused", stopCategory: "cyber", thinkingTokens: 120 });
+    // 분류가 null인 거절
+    const unnamed = await runReport(
+      client(sse([messageStart(), messageDelta("refusal", 1, { delta: { stop_details: { ...stopDetails, category: null } } }), messageStop]).fetch),
+      REQ,
+      opts(),
+    );
+    expect(unnamed).toMatchObject({ kind: "refused", stopCategory: null });
+    expect(unnamed.thinkingTokens).toBeUndefined();
+    const ok = await runReport(client(sse(whole(BODY)).fetch), REQ, opts());
+    expect(ok.stopCategory).toBeNull();
+    expect(ok).not.toHaveProperty("thinkingTokens");
   });
 
   it("onStreamStart는 message_start에서 정확히 1번, 텍스트 전에 실제 모델로 불린다", async () => {
     const s = sse([messageStart("claude-opus-4-8")], false);
     const o = opts();
-    const done = runEpisode(client(s.fetch), { ...REQ }, o);
+    const done = runReport(client(s.fetch), { ...REQ }, o);
     await until(() => o.onStreamStart.mock.calls.length > 0);
     // 아직 텍스트를 하나도 보내지 않았다
     expect(o.onStreamStart).toHaveBeenCalledTimes(1);
@@ -165,17 +196,18 @@ describe("runEpisode", () => {
   });
 
   it("SSE가 deadline을 넘기면 abort하고 partial. usage는 currentMessage에서, 출력은 max_tokens 상한으로 센다", async () => {
-    const s = sse([messageStart(), textStart, delta('{"episode":1,"safety":{"flag":"none"},"rea')], false);
-    const r = await runEpisode(client(s.fetch), REQ, opts({ deadlineAt: Date.now() + 80 }));
+    const s = sse([messageStart(), textStart, delta('{"safety":{"flag":"none"},"rea')], false);
+    const r = await runReport(client(s.fetch), REQ, opts({ deadlineAt: Date.now() + 80 }));
     expect(s.state.aborted).toBe(true);
     expect(r).toEqual({
       kind: "partial",
-      raw: '{"episode":1,"safety":{"flag":"none"},"rea',
+      raw: '{"safety":{"flag":"none"},"rea',
       stopReason: null,
       model: "claude-opus-5-5",
       // 입력·캐시는 message_start 값 그대로, 출력은 message_start 값(1) 대신 max_tokens(thinking 포함 상한)
       usage: { input_tokens: 120, output_tokens: 12_000, cache_creation_input_tokens: 128_000, cache_read_input_tokens: 0 },
       usageEstimated: true,
+      stopCategory: null,
       startedStream: true,
     });
     // 원장 원가: 캐시 쓰기 128K($0.64) + 입력 120 + 출력 12K($0.24)
@@ -192,8 +224,8 @@ describe("runEpisode", () => {
         { type: "fallback_message", model: "claude-opus-4-8", input_tokens: 120, output_tokens: 1 },
       ],
     };
-    const s = sse([start, textStart, delta('{"episode":1')], false);
-    const r = await runEpisode(client(s.fetch), REQ, opts({ deadlineAt: Date.now() + 80 }));
+    const s = sse([start, textStart, delta('{"safety":')], false);
+    const r = await runReport(client(s.fetch), REQ, opts({ deadlineAt: Date.now() + 80 }));
     expect(r.kind).toBe("partial");
     expect(r.usageEstimated).toBe(true);
     expect(r.usage?.iterations?.map((it) => [it.model, it.output_tokens])).toEqual([
@@ -204,7 +236,7 @@ describe("runEpisode", () => {
 
   it("응답 시작 전에 deadline이 지나면 partial, startedStream false, usage는 null(추정 없음)", async () => {
     const s = sse([], false);
-    const r = await runEpisode(client(s.fetch), REQ, opts({ deadlineAt: Date.now() + 30 }));
+    const r = await runReport(client(s.fetch), REQ, opts({ deadlineAt: Date.now() + 30 }));
     expect(r).toMatchObject({ kind: "partial", raw: "", usage: null, startedStream: false, model: "claude-opus-5-5" });
     expect(r.usageEstimated).toBeUndefined();
   });
@@ -212,7 +244,7 @@ describe("runEpisode", () => {
   it("HTTP 오류는 classifyError로 분류한 error (재시도 없음)", async () => {
     let calls = 0;
     const overloaded = failing(529, { type: "overloaded_error", message: "Overloaded" });
-    const r = await runEpisode(
+    const r = await runReport(
       client(async () => {
         calls++;
         return overloaded();
@@ -223,7 +255,7 @@ describe("runEpisode", () => {
     expect(calls).toBe(1);
     expect(r).toMatchObject({ kind: "error", error: "retryable", startedStream: false, usage: null, raw: "" });
     expect(r.usageEstimated).toBeUndefined();
-    const spend = await runEpisode(
+    const spend = await runReport(
       client(
         failing(429, {
           type: "rate_limit_error",
@@ -238,13 +270,13 @@ describe("runEpisode", () => {
   });
 
   it("스트림 중간 SSE overloaded_error → error retryable, startedStream true", async () => {
-    const s = sse([messageStart(), textStart, delta('{"episode":1')], false);
+    const s = sse([messageStart(), textStart, delta('{"safety":')], false);
     const o = opts();
-    const done = runEpisode(client(s.fetch), REQ, o);
+    const done = runReport(client(s.fetch), REQ, o);
     await until(() => o.onStreamStart.mock.calls.length > 0);
     s.raw(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } })}\n\n`);
     const r = await done;
-    expect(r).toMatchObject({ kind: "error", error: "retryable", startedStream: true, raw: '{"episode":1' });
+    expect(r).toMatchObject({ kind: "error", error: "retryable", startedStream: true, raw: '{"safety":' });
     expect(r.usage?.cache_creation_input_tokens).toBe(128_000);
     // 응답이 시작된 뒤 끊겼으니 출력은 max_tokens 상한으로 센다
     expect(r.usage?.output_tokens).toBe(12_000);
@@ -257,12 +289,12 @@ describe("runEpisode", () => {
       [
         messageStart(),
         textStart,
-        delta('{"episode":1,"safety":{"flag":"none"},"declined_topics":[],"reading_notes":[{"range":"10-01~10-03","note":"저녁마다 짧게"},'),
+        delta('{"safety":{"flag":"none"},"declined_topics":[],"reading_notes":[{"range":"10-01~10-03","note":"저녁마다 짧게"},'),
       ],
       false,
     );
     const o = opts();
-    const done = runEpisode(client(s.fetch), REQ, o);
+    const done = runReport(client(s.fetch), REQ, o);
     await until(() => o.onStreamStart.mock.calls.length > 0);
     await sleep(20);
     expect(o.onNotes).not.toHaveBeenCalled();
@@ -298,7 +330,7 @@ describe("runEpisode", () => {
         throw new Error("db down");
       }),
     });
-    const done = runEpisode(client(s.fetch), REQ, o);
+    const done = runReport(client(s.fetch), REQ, o);
     await until(() => o.onStreamStart.mock.calls.length > 0);
     await sleep(20);
     await vi.advanceTimersByTimeAsync(NOTES_FLUSH_MS);

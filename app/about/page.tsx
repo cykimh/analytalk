@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AI_NOTICE } from "@/components/episode/model";
-import { MAX_QUOTES_PER_EPISODE, RETENTION_DAYS } from "@/lib/config";
+import { MAX_QUOTES_PER_REPORT, RETENTION_DAYS } from "@/lib/config";
 
 export const metadata: Metadata = { title: "안내 · analytalk" };
 
@@ -28,7 +28,7 @@ export default function AboutPage() {
           </li>
           <li>다시 쓰기용 페이로드는 이 브라우저에만 두고, 4편이 모두 끝나거나 24시간이 지나면 지워요.</li>
           <li>
-            서버에는 연재 4편(본문, 근거로 고른 실제 메시지 편당 {MAX_QUOTES_PER_EPISODE}개까지, 읽기 메모)과 대화 요약(표시 이름,
+            서버에는 연재 4편(본문, 근거로 고른 실제 메시지 편당 {MAX_QUOTES_PER_REPORT}개까지, 읽기 메모)과 대화 요약(표시 이름,
             기간, 메시지 수, 통계)만 남겨요. 지인끼리 링크로 돌려 보기 위해서예요.
           </li>
         </ul>

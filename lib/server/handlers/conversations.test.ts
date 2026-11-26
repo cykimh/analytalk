@@ -12,7 +12,7 @@ import {
   cut,
   cutInSecondSection,
   delta,
-  episodeJson,
+  reportJson,
   harness,
   makePayload,
   messageDelta,
@@ -46,7 +46,7 @@ function withTextTokens(p: Payload, target: number): Payload {
 describe("POST /api/conversations", () => {
   it("정상 흐름: 202, 스트림 1번, report done, startReport 1번, fetch 0번. status는 DB만 읽는다 (Review Focus 1)", async () => {
     const h = await harness({
-      reply: (n) => ({ steps: [messageStart(), textStart, delta(JSON.stringify(episodeJson(n))), blockStop, messageDelta("end_turn"), messageStop] }),
+      reply: () => ({ steps: [messageStart(), textStart, delta(JSON.stringify(reportJson())), blockStop, messageDelta("end_turn"), messageStop] }),
     });
     const start = vi.spyOn(h.repo, "startReport");
     const payload = makePayload();
@@ -89,13 +89,13 @@ describe("POST /api/conversations", () => {
     expect((await h.repo.getConversation((warm.body as { id: string }).id))!.tone).toBe("warm");
   });
 
-  it("countTokens에는 1편 요청의 model·system·messages·thinking·output_config만 보낸다", async () => {
+  it("countTokens에는 리포트 요청의 model·system·messages·thinking·output_config만 보낸다", async () => {
     const h = await harness();
     h.state.manual = true;
     await handleCreateConversation(create(h.cookie, makePayload()), h.deps);
     expect(h.counts).toHaveLength(1);
     expect(Object.keys(h.counts[0]).sort()).toEqual(["messages", "model", "output_config", "system", "thinking"]);
-    expect(JSON.stringify(h.counts[0].messages)).toContain("episode는 1이다");
+    expect(JSON.stringify(h.counts[0].messages)).toContain("말투: 팩트 일침");
   });
 
   it("같은 payload로 두 번 → 200·같은 id. 한도·countTokens·stream이 늘지 않는다 (Review Focus 4)", async () => {
@@ -218,7 +218,7 @@ describe("POST /api/conversations", () => {
   });
 
   it("2번째 섹션 뒤에서 끊긴 SSE(마감) → DB content는 섹션 1개, status partial", async () => {
-    const h = await harness({ reply: (n) => cut(cutInSecondSection(n)), deadlineMs: 150 });
+    const h = await harness({ reply: () => cut(cutInSecondSection()), deadlineMs: 150 });
     const res = await handleCreateConversation(create(h.cookie, makePayload()), h.deps);
     await h.settle();
     const { report } = (await h.repo.getConversation((res.body as { id: string }).id))!;
@@ -228,12 +228,13 @@ describe("POST /api/conversations", () => {
 
   it("countTokens가 예산 × 1.05를 넘으면 413 {maxTokens}: (본문+통계+프롬프트 몫) 단위. claim·생성 없음", async () => {
     const budget = inputTokenBudgetFor(DEFAULT_MODEL);
-    const h = await harness({ counted: () => 200_000 });
+    const counted = budget * 2;
+    const h = await harness({ counted: () => counted });
     const claim = vi.spyOn(h.repo, "claim");
     const payload = withTextTokens(makePayload(), 150_000);
     const total = payloadTokens(payload, TOKENS_PER_CHAR).total;
     const res = await handleCreateConversation(create(h.cookie, payload), h.deps);
-    expect(res).toEqual({ status: 413, body: { maxTokens: Math.floor(((total + PROMPT_RESERVE_TOKENS) * budget) / 200_000) } });
+    expect(res).toEqual({ status: 413, body: { maxTokens: Math.floor(((total + PROMPT_RESERVE_TOKENS) * budget) / counted) } });
     expect(claim).not.toHaveBeenCalled();
     expect(h.streams).toHaveLength(0);
   });

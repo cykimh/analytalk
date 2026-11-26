@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateEpisode } from "@/lib/llm/validate";
+import { validateReport } from "@/lib/llm/validate";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { buildPayload, payloadIndex } from "@/lib/payload/build";
 import { glueTails, hasStatText, MAX_STAT_TAIL, renderStatPlain, renderStatText } from "./statText";
@@ -18,9 +18,9 @@ function fixture() {
   }
   const messages: ChatMessage[] = rows.map(([sender, ts, text], id) => ({ id, ts, sender, kind: "text", text, line: id + 1 }));
   const p = buildPayload({ messages, tone: "fact", concept: "couple", kind: "pair", tokenBudget: 1_000_000, tokensPerChar: 1 });
-  return { idx: payloadIndex(p), stats: p.stats };
+  return { idx: payloadIndex(p), stats: p.stats, members: p.members };
 }
-const { idx, stats } = fixture();
+const { idx, stats, members } = fixture();
 
 describe("renderStatText", () => {
   it("자리표시자를 통계 값으로 채운다: ms → N분", () => {
@@ -55,12 +55,11 @@ describe("renderStatText", () => {
     expect(renderStatText("", stats)).toEqual([]);
   });
 
-  it("monthly.2026-10.replyMedianMs.민지는 validateEpisode가 남긴 문단에서 같은 값으로 풀린다", () => {
+  it("monthly.2026-10.replyMedianMs.민지는 validateReport가 남긴 문단에서 같은 값으로 풀린다", () => {
     const path = "monthly.2026-10.replyMedianMs.민지";
     const text = `민지의 10월 답장 간격은 {{stat:${path}}}였어요`;
-    const r = validateEpisode(
+    const r = validateReport(
       {
-        episode: 1,
         safety: { flag: "none" },
         declined_topics: [],
         reading_notes: [],
@@ -68,6 +67,7 @@ describe("renderStatText", () => {
         dek: "사흘",
         sections: [
           {
+            part: "first",
             icon: "🌙",
             title: "답장",
             about: "pair",
@@ -78,13 +78,12 @@ describe("renderStatText", () => {
             evidence: [],
           },
         ],
-        next_teaser: null,
       },
       idx,
       stats,
-      { truncated: false },
+      { truncated: false, concept: "couple", members },
     );
-    // 9월은 없어서 validateEpisode가 지우고, renderStatText도 그 자리를 빼고 보여 준다
+    // 9월은 없어서 validateReport가 지우고, renderStatText도 그 자리를 빼고 보여 준다
     expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual([text]);
     expect(renderStatText("민지는 {{stat:monthly.2026-09.replyMedianMs.민지}}", stats)).toEqual(["민지는 "]);
     expect(renderStatText(r.content!.sections[0].paragraphs[0].text, stats)).toEqual([

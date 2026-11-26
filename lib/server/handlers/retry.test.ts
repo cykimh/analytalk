@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cut, cutInSecondSection, episodeJson, harness, makePayload, request, whole } from "@/test/generation";
+import { cut, cutInSecondSection, reportJson, harness, makePayload, request, whole } from "@/test/generation";
 import { handleCreateConversation } from "./conversations";
 import { handleRetry } from "./retry";
 import { handleStatus } from "./status";
@@ -38,7 +38,7 @@ const spend = (h: Awaited<ReturnType<typeof harness>>, cost: number) =>
 
 describe("POST /api/episodes/retry", () => {
   it("리포트가 HTTP 503을 두 번 냄 → failed(retryable). retry가 202 → done, fetch 0번 (Review Focus 2)", async () => {
-    const h = await harness({ reply: (n, call) => (call <= 2 ? unavailable : whole(JSON.stringify(episodeJson(n)))) });
+    const h = await harness({ reply: (call) => (call <= 2 ? unavailable : whole(JSON.stringify(reportJson()))) });
     const { id, payload } = await created(h);
     expect(await reportOf(h, id)).toEqual(["failed", "retryable"]);
     expect(h.streams).toHaveLength(2);
@@ -52,7 +52,7 @@ describe("POST /api/episodes/retry", () => {
   });
 
   it("옛 본문 {id, n, payload}도 받는다(n은 버린다)", async () => {
-    const h = await harness({ reply: (n, call) => (call <= 2 ? unavailable : whole(JSON.stringify(episodeJson(n)))) });
+    const h = await harness({ reply: (call) => (call <= 2 ? unavailable : whole(JSON.stringify(reportJson()))) });
     const { id, payload } = await created(h);
     expect((await handleRetry(retry(h.cookie, { id, n: 3, payload }), h.deps)).status).toBe(202);
     await h.settle();
@@ -60,7 +60,7 @@ describe("POST /api/episodes/retry", () => {
   });
 
   it("partial 리포트를 동시에 두 번 다시 쓰면 하나는 202·running, 하나는 409", async () => {
-    const h = await harness({ reply: (n) => cut(cutInSecondSection(n)), deadlineMs: 150 });
+    const h = await harness({ reply: () => cut(cutInSecondSection()), deadlineMs: 150 });
     const { id, payload } = await created(h);
     expect(await reportOf(h, id)).toEqual(["partial", null]);
 
@@ -96,7 +96,7 @@ describe("POST /api/episodes/retry", () => {
   });
 
   it("정지 중이면 423: 리포트를 시작하지 않고 Anthropic을 부르지 않는다. 정지가 풀리면 받는다", async () => {
-    const h = await harness({ reply: (n, call) => (call <= 2 ? unavailable : whole(JSON.stringify(episodeJson(n)))) });
+    const h = await harness({ reply: (call) => (call <= 2 ? unavailable : whole(JSON.stringify(reportJson()))) });
     const { id, payload } = await created(h);
     expect(await reportOf(h, id)).toEqual(["failed", "retryable"]);
 
@@ -114,7 +114,7 @@ describe("POST /api/episodes/retry", () => {
   });
 
   it("리포트의 유료 실행은 3번까지: 늘 partial로 끝나는 리포트를 계속 다시 쓰면 세 번째 다시 쓰기부터 429 retry_limit", async () => {
-    const h = await harness({ reply: (n) => cut(cutInSecondSection(n)), deadlineMs: 150 });
+    const h = await harness({ reply: () => cut(cutInSecondSection()), deadlineMs: 150 });
     const { id, payload } = await created(h);
     for (let i = 0; i < 2; i++) {
       expect((await handleRetry(retry(h.cookie, { id, payload }), h.deps)).status).toBe(202);
@@ -128,7 +128,7 @@ describe("POST /api/episodes/retry", () => {
   });
 
   it("주간 상한: 최근 7일 원가 + 이번 몫(평균 원가 전체 1.2)이 22.5를 넘으면 429 global_limit, 리포트를 시작하지 않는다", async () => {
-    const h = await harness({ reply: (n, call) => (call <= 2 ? unavailable : whole(JSON.stringify(episodeJson(n)))) });
+    const h = await harness({ reply: (call) => (call <= 2 ? unavailable : whole(JSON.stringify(reportJson()))) });
     const { id, payload } = await created(h);
     expect(await reportOf(h, id)).toEqual(["failed", "retryable"]);
     // 21.4 + 1.2 = 22.6 > 22.5
@@ -140,7 +140,7 @@ describe("POST /api/episodes/retry", () => {
     expect(await reportOf(h, id)).toEqual(["failed", "retryable"]);
 
     // 20.0 + 1.2 = 21.2 ≤ 22.5
-    const ok = await harness({ reply: (n, call) => (call <= 2 ? unavailable : whole(JSON.stringify(episodeJson(n)))) });
+    const ok = await harness({ reply: (call) => (call <= 2 ? unavailable : whole(JSON.stringify(reportJson()))) });
     const c = await created(ok);
     await spend(ok, 20);
     expect((await handleRetry(retry(ok.cookie, { id: c.id, payload: c.payload }), ok.deps)).status).toBe(202);
@@ -148,7 +148,7 @@ describe("POST /api/episodes/retry", () => {
 
   it("partial 리포트의 다시 쓰기가 응답 전에 실패해도(529 두 번) 앞의 글은 남는다: partial·content 그대로, 오류 코드만 남긴다", async () => {
     const h = await harness({
-      reply: (n, call) => (call === 1 ? cut(cutInSecondSection(n)) : { status: 529, error: { type: "overloaded_error", message: "busy" } }),
+      reply: (call) => (call === 1 ? cut(cutInSecondSection()) : { status: 529, error: { type: "overloaded_error", message: "busy" } }),
       deadlineMs: 150,
     });
     const { id, payload } = await created(h);

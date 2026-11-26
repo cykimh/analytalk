@@ -4,7 +4,7 @@ import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { Tone } from "@/lib/llm/concepts";
-import type { StoredEpisode } from "@/lib/llm/schema";
+import type { StoredReport } from "@/lib/llm/schema";
 import { resolveBaseUrl } from "@/lib/server/baseUrl";
 import type { AppRepo, ConversationRow } from "@/lib/server/repo";
 import { fail, type HandlerDeps, type HandlerResult, readJson } from "@/lib/server/route";
@@ -69,7 +69,7 @@ export interface SharedView {
   tone: Tone;
   displayNames: string[];
   stats: ChatStats;
-  report: StoredEpisode | null;
+  report: StoredReport | null;
 }
 
 /** 토큰으로 지금 공유 중인 대화를 읽는다. 폐기·만료·삭제·모르는 토큰이면 null. 매번 저장소를 읽는다(캐시 없음) */

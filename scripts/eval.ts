@@ -17,9 +17,9 @@ import { pathToFileURL } from "node:url";
 import { EPISODE_DEADLINE_MS, TOKENS_PER_CHAR } from "../lib/config";
 import { estimateCostUsd, type Usage } from "../lib/llm/cost";
 import { buildRequest, PROMPT_VERSION } from "../lib/llm/prompt";
-import type { StoredEpisode } from "../lib/llm/schema";
-import { runEpisode } from "../lib/llm/stream";
-import { validateEpisode } from "../lib/llm/validate";
+import type { StoredReport } from "../lib/llm/schema";
+import { runReport } from "../lib/llm/stream";
+import { validateReport } from "../lib/llm/validate";
 import { isBanned } from "../lib/payload/banned";
 import { applyDisplayNames } from "../lib/payload/names";
 import { type Payload, payloadIndex, payloadTokens } from "../lib/payload/build";
@@ -104,9 +104,9 @@ export function pickLimited(files: GoldenFile[], limit: number | null): GoldenFi
 
 export interface EpisodeScore {
   n: number;
-  /** validateEpisode 결과. 실행하지 못했거나 JSON이 아니면 failed */
+  /** validateReport 결과. 실행하지 못했거나 JSON이 아니면 failed */
   status: "done" | "partial" | "safety" | "failed";
-  /** runEpisode 결과 (실행하지 못한 편은 skipped) */
+  /** runReport 결과 (실행하지 못한 편은 skipped) */
   kind: string;
   totalMs: number;
   costUsd: number;
@@ -130,7 +130,7 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
 /** 원문(JSON)에서 모델이 쓴 문장을 모은다. 구조가 틀리면 있는 것만 */
 function writtenTexts(raw: unknown): { texts: string[]; paragraphs: number; evidence: number } {
   if (!isRecord(raw)) return { texts: [], paragraphs: 0, evidence: 0 };
-  const texts = [str(raw.headline), str(raw.dek), str(raw.next_teaser)];
+  const texts = [str(raw.headline), str(raw.dek)];
   for (const n of arr(raw.reading_notes)) if (isRecord(n)) texts.push(str(n.note));
   let paragraphs = 0;
   let evidence = 0;
@@ -152,14 +152,19 @@ function scoreRaw(
   kind: string,
   idx: ReturnType<typeof payloadIndex>,
   stats: Payload["stats"],
-): { score: Scored; content: StoredEpisode | null } {
+  who: Pick<Payload, "concept" | "members">,
+): { score: Scored; content: StoredReport | null } {
   let raw: unknown;
   try {
     raw = JSON.parse(rawText);
   } catch {
     return { score: { n, status: "failed", kind, paragraphsIn: 0, paragraphsDropped: 0, dropRate: 0, evidenceIn: 0, evidenceMatched: 0, bannedHits: 0 }, content: null };
   }
-  const v = validateEpisode(raw, idx, stats, { truncated: kind === "truncated" || kind === "partial" });
+  const v = validateReport(raw, idx, stats, {
+    truncated: kind === "truncated" || kind === "partial",
+    concept: who.concept,
+    members: who.members,
+  });
   const w = writtenTexts(raw);
   return {
     score: {
@@ -183,8 +188,9 @@ export function scoreEpisode(
   kind: string,
   idx: ReturnType<typeof payloadIndex>,
   stats: Payload["stats"],
+  who: Pick<Payload, "concept" | "members">,
 ): Scored {
-  return scoreRaw(n, rawText, kind, idx, stats).score;
+  return scoreRaw(n, rawText, kind, idx, stats, who).score;
 }
 
 // ── 집계 ──
@@ -212,7 +218,7 @@ export function summarizeEval(files: FileEval[]) {
     quoteMatchRate: evidenceIn === 0 ? 1 : round(sum(eps.map((e) => e.evidenceMatched)) / evidenceIn),
     droppedParagraphs: sum(eps.map((e) => e.paragraphsDropped)),
     bannedHits: sum(eps.map((e) => e.bannedHits)),
-    /** 마감에 걸린 편: runEpisode가 마감 시각에 끊으면 kind가 partial이고 총 시간은 마감 근처에서 멈춘다 */
+    /** 마감에 걸린 편: runReport가 마감 시각에 끊으면 kind가 partial이고 총 시간은 마감 근처에서 멈춘다 */
     overDeadline: eps.filter((e) => e.kind === "partial" || e.totalMs >= EPISODE_DEADLINE_MS).length,
     /** kind가 ok가 아닌 편(error·refused·partial·truncated·skipped). 건진 JSON이 검증을 통과해도 센다 */
     notOkEpisodes: eps.filter((e) => e.kind !== "ok").length,
@@ -246,7 +252,7 @@ export interface LedgerItem {
 export interface PayloadEval {
   episodes: EpisodeScore[];
   /** 검수용: 검증을 통과한 편(없으면 null) */
-  contents: (StoredEpisode | null)[];
+  contents: (StoredReport | null)[];
   ledger: LedgerItem[];
 }
 
@@ -261,15 +267,15 @@ export async function evalPayload(
 
   const one = async (n: 1 | 2 | 3 | 4, onStart?: () => void) => {
     const t0 = now();
-    const req = buildRequest(payload, n, []);
+    const req = buildRequest(payload);
     if (deps.model) req.model = deps.model;
-    const r = await runEpisode(client as Anthropic, req, {
+    const r = await runReport(client as Anthropic, req, {
       deadlineAt: Date.now() + EPISODE_DEADLINE_MS,
       onStreamStart: () => onStart?.(),
       onNotes: () => {},
     });
     const totalMs = now() - t0;
-    const { score, content } = scoreRaw(n, r.raw, r.kind, idx, payload.stats);
+    const { score, content } = scoreRaw(n, r.raw, r.kind, idx, payload.stats, payload);
     const costUsd = r.usage ? round(estimateCostUsd(r.usage, r.model)) : 0;
     return {
       score: { ...score, totalMs, costUsd } satisfies EpisodeScore,
@@ -286,7 +292,7 @@ export async function evalPayload(
     rest.length > 0
       ? await Promise.all(rest)
       : [2, 3, 4].map((n) => ({
-          score: { ...scoreEpisode(n, "", "skipped", idx, payload.stats), totalMs: 0, costUsd: 0 } as EpisodeScore,
+          score: { ...scoreEpisode(n, "", "skipped", idx, payload.stats, payload), totalMs: 0, costUsd: 0 } as EpisodeScore,
           content: null,
           ledger: [] as LedgerItem[],
         }));
@@ -361,7 +367,7 @@ async function main(): Promise<void> {
   const client = new Anthropic({ apiKey: key, maxRetries: 0 });
 
   const results: FileEval[] = [];
-  const review: { label: string; contents: (StoredEpisode | null)[] }[] = [];
+  const review: { label: string; contents: (StoredReport | null)[] }[] = [];
   const ledger: LedgerItem[] = [];
   for (const p of prepared) {
     const r = await evalPayload(client, p.payload, { model: args.model });

@@ -7,7 +7,7 @@ import { tapeAt } from "@/components/scrap/tilt";
 import { KpiPolaroids } from "@/components/stats/KpiPolaroids";
 import { buttonVariants } from "@/components/ui/button";
 import type { Tone } from "@/lib/llm/concepts";
-import type { StoredEpisode } from "@/lib/llm/schema";
+import type { StoredReport } from "@/lib/llm/schema";
 import type { ChatStats } from "@/lib/stats/compute";
 import { CoverStickers } from "./CoverStickers";
 import { AI_NOTICE, SERIES_TITLE } from "./model";
@@ -20,7 +20,7 @@ export interface SharedReportData {
   tone: Tone;
   displayNames: string[];
   stats: ChatStats;
-  report: StoredEpisode | null;
+  report: StoredReport | null;
 }
 
 export function SharedReport({ view }: { view: SharedReportData }) {

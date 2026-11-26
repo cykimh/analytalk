@@ -10,7 +10,7 @@ import { Paper } from "@/components/scrap/Paper";
 import { Sticker } from "@/components/scrap/Sticker";
 import { alternate, highlightAt, tapeAt } from "@/components/scrap/tilt";
 import { hasStatText } from "@/lib/episode/statText";
-import type { StoredEpisode } from "@/lib/llm/schema";
+import type { StoredReport } from "@/lib/llm/schema";
 import type { ChatStats } from "@/lib/stats/compute";
 import { Evidence } from "./Evidence";
 import { StatText } from "./StatText";
@@ -23,7 +23,7 @@ export function ReportView({
   stickers,
   snapshot,
 }: {
-  content: StoredEpisode;
+  content: StoredReport;
   stats: ChatStats;
   /** 표지 맨 위 한 줄(제목 종류 · AI 고지) */
   kicker: string;

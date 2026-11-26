@@ -24,7 +24,7 @@ const BUDGET_TOLERANCE = 1.05;
  * 베타가 아닌 countTokens에 그대로 보낼 수 있다. 베타 타입이 더 넓어서 두 필드만 좁힌다
  */
 async function countInputTokens(client: Anthropic, p: Payload): Promise<number> {
-  const { model, system, messages, thinking, output_config } = buildRequest(p, 1, []);
+  const { model, system, messages, thinking, output_config } = buildRequest(p);
   const counted = await client.messages.countTokens({
     model,
     system,

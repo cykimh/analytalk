@@ -10,7 +10,7 @@ import {
   cut,
   cutInSecondSection,
   delta,
-  episodeJson,
+  reportJson,
   harness,
   makePayload,
   messageDelta,
@@ -29,10 +29,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const ok = (n: number) => whole(JSON.stringify(episodeJson(n)));
+const ok = () => whole(JSON.stringify(reportJson()));
 
 /** 대화 하나를 만들어 두고 runReportJob을 직접 부른다 */
-async function setup(reply: (n: number, call: number) => Reply, o: Parameters<typeof harness>[0] = {}) {
+async function setup(reply: (call: number) => Reply, o: Parameters<typeof harness>[0] = {}) {
   const h = await harness({ reply, ...o });
   const payload = makePayload();
   const invite = await h.repo.findInvite(hashCode(CODE));
@@ -70,43 +70,47 @@ describe("runReportJob 결과 처리", () => {
       id: s.id,
       status: "done",
       content: e.content,
-      model: "claude-opus-5-5",
+      model: "claude-sonnet-5-5",
       stopReason: "end_turn",
       errorCode: null,
       usage,
-      cost: estimateCostUsd(usage, "claude-opus-5-5"),
+      cost: estimateCostUsd(usage, "claude-sonnet-5-5"),
     });
   });
 
   it("ok인데 JSON이 아니면 failed(invalid_output). usage는 남긴다", async () => {
-    const s = await setup(() => whole('{"episode":1, 이건 JSON이 아니다'));
+    const s = await setup(() => whole('{ 이건 JSON이 아니다'));
     await s.run();
     expect(await s.report()).toMatchObject({ status: "failed", errorCode: "invalid_output", content: null });
     expect(lastFinish(s.finish).usage).not.toBeNull();
   });
 
   it("max_tokens(truncated) → 완결된 섹션만 살려 partial. 검증 결과가 done이어도 partial", async () => {
-    const s = await setup((n) => whole(cutInSecondSection(n), { stop: "max_tokens" }));
+    const s = await setup(() => whole(cutInSecondSection(), { stop: "max_tokens" }));
     await s.run();
     const e = await s.report();
     expect(e.status).toBe("partial");
     expect(e.content?.sections.map((x) => x.title)).toEqual(["저녁의 리듬"]);
 
-    const full = await setup((n) => whole(JSON.stringify(episodeJson(n)), { stop: "max_tokens" }));
+    const full = await setup(() => whole(JSON.stringify(reportJson()), { stop: "max_tokens" }));
     await full.run();
     expect((await full.report()).status).toBe("partial");
     expect((await full.report()).content?.sections).toHaveLength(2);
   });
 
-  it("refusal → refused. 파싱하지 않고 내용 없이, usage는 남긴다", async () => {
-    const s = await setup(() => whole(JSON.stringify(episodeJson(1)), { stop: "refusal" }));
+  it("refusal → refused. 파싱하지 않고 내용 없이, usage는 남긴다. 거절 분류가 있으면 errorCode에 refusal_<분류>", async () => {
+    const s = await setup(() => whole(JSON.stringify(reportJson()), { stop: "refusal", stopCategory: "cyber" }));
     await s.run();
-    expect(await s.report()).toMatchObject({ status: "refused", content: null, errorCode: null });
+    expect(await s.report()).toMatchObject({ status: "refused", content: null, errorCode: "refusal_cyber" });
     expect(lastFinish(s.finish)).toMatchObject({ stopReason: "refusal", usage: expect.objectContaining({ output_tokens: 200 }) });
+
+    const unnamed = await setup(() => whole(JSON.stringify(reportJson()), { stop: "refusal" }));
+    await unnamed.run();
+    expect(await unnamed.report()).toMatchObject({ status: "refused", content: null, errorCode: null });
   });
 
   it("마감에 끊기면 완결된 섹션만 partial, 출력 usage는 max_tokens 상한 그대로", async () => {
-    const s = await setup((n) => cut(cutInSecondSection(n)), { deadlineMs: 150 });
+    const s = await setup(() => cut(cutInSecondSection()), { deadlineMs: 150 });
     await s.run();
     const e = await s.report();
     expect(e.status).toBe("partial");
@@ -131,7 +135,7 @@ describe("runReportJob 결과 처리", () => {
     const failsAfter = (text: string): Reply => ({ steps: [messageStart(), textStart, delta(text), sseError("overloaded_error")] });
 
     it("완결된 섹션이 1개 이상이면 partial. 다시 하지 않는다", async () => {
-      const s = await setup((n) => failsAfter(cutInSecondSection(n)));
+      const s = await setup(() => failsAfter(cutInSecondSection()));
       await s.run();
       const e = await s.report();
       expect(e).toMatchObject({ status: "partial", errorCode: null });
@@ -141,13 +145,13 @@ describe("runReportJob 결과 처리", () => {
     });
 
     it("safety가 none이 아니면 safety", async () => {
-      const s = await setup(() => failsAfter('{"episode":1,"safety":{"flag":"self_harm"},"declined'));
+      const s = await setup(() => failsAfter('{"safety":{"flag":"self_harm"},"declined'));
       await s.run();
       expect(await s.report()).toMatchObject({ status: "safety", content: null });
     });
 
     it("살릴 섹션이 없으면 분류한 오류로 failed", async () => {
-      const s = await setup(() => failsAfter('{"episode":1,"safety":{"flag":"none"},"reading_notes":['));
+      const s = await setup(() => failsAfter('{"safety":{"flag":"none"},"reading_notes":['));
       await s.run();
       expect(await s.report()).toMatchObject({ status: "failed", errorCode: "retryable" });
       expect(s.h.streams).toHaveLength(1);
@@ -177,7 +181,7 @@ describe("runReportJob 결과 처리", () => {
   });
 
   it("retryable(5xx)이고 응답 전·60초 안이면 같은 함수에서 1번만 다시 한다", async () => {
-    const s = await setup((n, call) => (call === 1 ? { status: 503, error: { type: "api_error", message: "unavailable" } } : ok(n)));
+    const s = await setup((call) => (call === 1 ? { status: 503, error: { type: "api_error", message: "unavailable" } } : ok()));
     await s.run();
     expect(s.h.streams).toHaveLength(2);
     expect((await s.report()).status).toBe("done");
@@ -201,18 +205,19 @@ describe("runReportJob 결과 처리", () => {
 
   it("응답 모델이 요청 모델과 다르면 fallback_on_writer를 기록하고 실제 모델로 원가를 센다", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const s = await setup((n) => whole(JSON.stringify(episodeJson(n)), { model: "claude-opus-4-8" }));
+    // Sonnet 5.5의 기본 폴백 대상
+    const s = await setup(() => whole(JSON.stringify(reportJson()), { model: "claude-sonnet-5" }));
     await s.run();
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).toMatch(/fallback_on_writer/);
     const finish = lastFinish(s.finish);
-    expect(finish).toMatchObject({ status: "done", model: "claude-opus-4-8" });
-    expect(finish.cost).toBe(estimateCostUsd(finish.usage as never, "claude-opus-4-8"));
+    expect(finish).toMatchObject({ status: "done", model: "claude-sonnet-5" });
+    expect(finish.cost).toBe(estimateCostUsd(finish.usage as never, "claude-sonnet-5"));
   });
 
   it("스트리밍 중 정리된 reading_notes를 saveProgress로 남긴다", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-    const text = JSON.stringify(episodeJson(1));
+    const text = JSON.stringify(reportJson());
     const at = text.indexOf('"headline"');
     let release = () => {};
     const gate = new Promise<void>((r) => {
@@ -256,12 +261,12 @@ describe("runReportJob 결과 처리", () => {
 
   describe("실행 한 번 = finishReport 한 번(usage 한 행), deps.fetch는 부르지 않는다", () => {
     const failsAfter = (text: string): Reply => ({ steps: [messageStart(), textStart, delta(text), sseError("overloaded_error")] });
-    it.each<[string, (n: number, call: number) => Reply, object]>([
+    it.each<[string, (call: number) => Reply, object]>([
       ["ok", ok, { status: "done" }],
-      ["max_tokens 살리기", (n) => whole(cutInSecondSection(n), { stop: "max_tokens" }), { status: "partial" }],
+      ["max_tokens 살리기", () => whole(cutInSecondSection(), { stop: "max_tokens" }), { status: "partial" }],
       ["refusal", () => whole("{}", { stop: "refusal" }), { status: "refused" }],
-      ["응답 시작 뒤 오류 살리기(R8)", (n) => failsAfter(cutInSecondSection(n)), { status: "partial" }],
-      ["응답 전 retryable → 같은 함수 재시도 → ok", (n, call) => (call === 1 ? { status: 503, error: { type: "api_error", message: "x" } } : ok(n)), { status: "done" }],
+      ["응답 시작 뒤 오류 살리기(R8)", () => failsAfter(cutInSecondSection()), { status: "partial" }],
+      ["응답 전 retryable → 같은 함수 재시도 → ok", (call) => (call === 1 ? { status: 503, error: { type: "api_error", message: "x" } } : ok()), { status: "done" }],
       ["재시도도 retryable", () => ({ status: 529, error: { type: "overloaded_error", message: "x" } }), { status: "failed", errorCode: "retryable" }],
       ["fatal", () => ({ status: 400, error: { type: "invalid_request_error", message: "x" } }), { status: "failed", errorCode: "fatal" }],
     ])("%s", async (_label, reply, expected) => {
@@ -273,7 +278,7 @@ describe("runReportJob 결과 처리", () => {
     });
 
     it("마감에 끊겨도 한 번", async () => {
-      const s = await setup((n) => cut(cutInSecondSection(n)), { deadlineMs: 150 });
+      const s = await setup(() => cut(cutInSecondSection()), { deadlineMs: 150 });
       await s.run();
       expect(s.finish).toHaveBeenCalledTimes(1);
       expect(s.h.fetches).toHaveLength(0);

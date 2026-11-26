@@ -49,9 +49,10 @@ describe("statsForPrompt: 40명 × 60개월", () => {
     expect(view.byPerson[top[0]]).toBe(full.byPerson[top[0]]);
   });
 
-  it("monthly는 최근 12개월, 그 안의 맵도 남은 사람만", () => {
+  it("monthly는 최근 24개월, 그 안의 맵도 남은 사람만", () => {
     expect(Object.keys(view.monthly)).toEqual(recent);
-    expect(recent[0]).toBe("2025-01");
+    expect(recent).toHaveLength(24);
+    expect(recent[0]).toBe("2024-01");
     for (const month of recent) {
       for (const metric of ["count", "replyMedianMs", "replyP75Ms", "questionRate", "avgLen"] as const) {
         expect(Object.keys(view.monthly[month][metric])).toEqual(top);
@@ -85,12 +86,12 @@ describe("statsForPrompt: 40명 × 60개월", () => {
     expect(view.crossed).toEqual(eligible.slice(-PROMPT_STATS_MAX_CROSSED));
   });
 
-  it("omitted는 빠진 사람 28명, 빠진 달 48개", () => {
-    expect(view.omitted).toEqual({ people: 28, months: 48 });
+  it("omitted는 빠진 사람 28명, 빠진 달 36개", () => {
+    expect(view.omitted).toEqual({ people: 28, months: 36 });
   });
 
-  it("JSON은 24,000자 이하", () => {
-    expect(JSON.stringify(view).length).toBeLessThanOrEqual(24_000);
+  it("JSON은 36,000자 이하", () => {
+    expect(JSON.stringify(view).length).toBeLessThanOrEqual(36_000);
   });
 });
 

@@ -1,13 +1,13 @@
 // 대화 홈·리포트 화면의 순수 로직(API 응답 → 화면 상태·문구). DOM 없이 테스트한다.
 import { formatCount, kstDate } from "@/components/stats/format";
 import type { Tone } from "@/lib/llm/concepts";
-import type { StoredEpisode } from "@/lib/llm/schema";
+import type { StoredReport } from "@/lib/llm/schema";
 import type { ChatStats } from "@/lib/stats/compute";
 
 /** 리포트 한 편의 상태·내용 */
 export interface ReportState {
   status: string;
-  content: StoredEpisode | null;
+  content: StoredReport | null;
   errorCode: string | null;
 }
 

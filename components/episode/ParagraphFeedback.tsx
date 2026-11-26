@@ -2,12 +2,12 @@
 // 문단마다 앞부분을 보여 주고 버튼 설명(aria-describedby)으로 묶는다. 보내는 것은 FeedbackButton 그대로다(문단 글은 보내지 않는다)
 import { Paper } from "@/components/scrap/Paper";
 import { paragraphRef } from "@/lib/episode/feedback";
-import type { StoredEpisode } from "@/lib/llm/schema";
+import type { StoredReport } from "@/lib/llm/schema";
 import type { ChatStats } from "@/lib/stats/compute";
 import { FeedbackButton } from "./FeedbackButton";
 import { StatText } from "./StatText";
 
-export function ParagraphFeedback({ id, content, stats }: { id: string; content: StoredEpisode; stats: ChatStats }) {
+export function ParagraphFeedback({ id, content, stats }: { id: string; content: StoredReport; stats: ChatStats }) {
   const rows = content.sections.flatMap((s, si) => s.paragraphs.map((p) => ({ ref: paragraphRef(si, p.key), text: p.text })));
   if (rows.length === 0) return null;
   return (

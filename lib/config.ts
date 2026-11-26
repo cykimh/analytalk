@@ -15,11 +15,11 @@ export function inputTokenBudgetFor(model: string): number {
   const hit = INPUT_TOKEN_BUDGET_BY_MODEL.find(([id]) => model === id || model.startsWith(`${id}-`));
   return hit ? hit[1] : FALLBACK_INPUT_TOKEN_BUDGET;
 }
-export const PROMPT_RESERVE_TOKENS = 6000; // system 프롬프트·편별 지시 몫(토큰 어림). 정확한 값은 countTokens로 확인한다
+export const PROMPT_RESERVE_TOKENS = 6000; // system 프롬프트·리포트 지시 몫(토큰 어림). 정확한 값은 countTokens로 확인한다
 
 // 모델에게 보여 주는 통계 요약(statsForPrompt). 서버의 자리표시자 해석은 전체 stats를 쓴다
 export const PROMPT_STATS_MAX_PEOPLE = 12;
-export const PROMPT_STATS_MAX_MONTHS = 12;
+export const PROMPT_STATS_MAX_MONTHS = 24;
 export const PROMPT_STATS_MAX_CROSSED = 20;
 
 // 보관·한도·예산
@@ -32,7 +32,7 @@ export const MAX_REPORT_RUNS = 3; // 리포트의 유료 실행 상한(처음 1�
 export const CYCLE_ANCHOR_DAY = 1; // 크레딧 주기 기준일(서울 00:00 시작). settings.cycle_anchor_day 기본값과 같다
 
 // 검증
-export const MAX_QUOTES_PER_EPISODE = 8;
+export const MAX_QUOTES_PER_REPORT = 16; // 리포트 전체 근거 인용 상한
 export const PARTIAL_DROP_RATIO = 0.3; // 문단 30% 이상 삭제되면 partial
 export const RECOGNITION_WARN = 0.98; // 줄 인식률 경고 기준
 export const NOTE_MAX_CHARS = 60;
@@ -56,7 +56,7 @@ export const SESSION_TTL_DAYS = 30;
 export const TURNSTILE_INVITE_ACTION = "invite";
 
 // 모델·테스트
-export const DEFAULT_MODEL = "claude-opus-5-5";
+export const DEFAULT_MODEL = "claude-sonnet-5-5";
 export const E2E_INVITE_CODE = "E2ETESTCODE";
 
 /** E2E 테스트 모드. Vercel에서는 절대 켜지지 않는다. */

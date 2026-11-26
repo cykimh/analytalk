@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { extractReadingNotes, salvageEpisode, sanitizeNotes } from "./notes";
-import type { Episode } from "./schema";
+import { extractReadingNotes, salvageReport, sanitizeNotes } from "./notes";
+import type { Report } from "./schema";
 
-const section = (n: number): Episode["sections"][number] => ({
+const PARTS = ["map", "first", "shift", "letter"];
+const section = (n: number): Report["sections"][number] => ({
+  part: PARTS[n - 1],
   icon: "🗺️",
   title: `섹션${n}`,
   about: "pair",
@@ -13,8 +15,7 @@ const section = (n: number): Episode["sections"][number] => ({
   evidence: [{ id: `e${n}`, msg_id: `m${n}`, quote: `인용${n} \\ 역슬래시` }],
 });
 
-const EPISODE: Episode = {
-  episode: 1,
+const REPORT: Report = {
   safety: { flag: "none" },
   declined_topics: ["inner_feelings"],
   reading_notes: [
@@ -23,22 +24,21 @@ const EPISODE: Episode = {
   ],
   headline: "저녁 8시의 지도",
   dek: "석 달 동안의 흐름",
-  sections: [section(1), section(2), section(3)],
-  next_teaser: "다음 편: 누가 먼저",
+  sections: [section(1), section(2), section(3), section(4)],
 };
 
 describe("extractReadingNotes", () => {
   it("끝나지 않은 배열에서 완결된 메모만 꺼낸다", () => {
     const partial =
-      '{"episode":1,"safety":{"flag":"none"},"declined_topics":[],"reading_notes":[{"range":"08-02~08-31","note":"가"},{"range":"09';
+      '{"safety":{"flag":"none"},"declined_topics":[],"reading_notes":[{"range":"08-02~08-31","note":"가"},{"range":"09';
     expect(extractReadingNotes(partial)).toEqual([{ range: "08-02~08-31", note: "가" }]);
   });
 
   it("들여쓰기된 JSON·완결된 응답·reading_notes 전 단계", () => {
-    const pretty = JSON.stringify(EPISODE, null, 2);
-    expect(extractReadingNotes(pretty)).toEqual(EPISODE.reading_notes);
-    expect(extractReadingNotes(pretty.slice(0, pretty.indexOf("주말")))).toEqual([EPISODE.reading_notes[0]]);
-    expect(extractReadingNotes('{"episode":1,"safety":{"flag":"none"},"declined_')).toEqual([]);
+    const pretty = JSON.stringify(REPORT, null, 2);
+    expect(extractReadingNotes(pretty)).toEqual(REPORT.reading_notes);
+    expect(extractReadingNotes(pretty.slice(0, pretty.indexOf("주말")))).toEqual([REPORT.reading_notes[0]]);
+    expect(extractReadingNotes('{"safety":{"flag":"none"},"declined_')).toEqual([]);
     expect(extractReadingNotes("")).toEqual([]);
     expect(extractReadingNotes("not json")).toEqual([]);
   });
@@ -86,42 +86,44 @@ describe("sanitizeNotes", () => {
   });
 });
 
-describe("salvageEpisode", () => {
-  const full = JSON.stringify(EPISODE);
+describe("salvageReport", () => {
+  const full = JSON.stringify(REPORT);
 
-  it("3번째 섹션 중간에서 끊기면 섹션 2개와 그 근거", () => {
-    const cut = full.slice(0, full.indexOf('"title":"섹션3"') + 12);
-    const r = salvageEpisode(cut);
-    expect(r?.sections).toEqual([section(1), section(2)]);
+  it("4번째 섹션(편지) 가운데서 끊기면 앞 3개 섹션과 그 근거", () => {
+    const cut = full.slice(0, full.indexOf('"title":"섹션4"') + 12);
+    const r = salvageReport(cut);
+    expect(r?.sections).toEqual([section(1), section(2), section(3)]);
+    expect(r?.sections?.map((s) => s.part)).toEqual(["map", "first", "shift"]);
+    expect(r?.sections?.[2].evidence).toEqual([{ id: "e3", msg_id: "m3", quote: "인용3 \\ 역슬래시" }]);
     expect(r?.safety).toEqual({ flag: "none" });
-    expect(r?.headline).toBe(EPISODE.headline);
-    expect(r).not.toHaveProperty("next_teaser");
+    expect(r?.headline).toBe(REPORT.headline);
   });
 
   it("첫 섹션 근거 중간에서 끊기면 섹션 0개", () => {
     const at = full.indexOf('"quote":"인용1');
-    const r = salvageEpisode(full.slice(0, at + 12));
+    const r = salvageReport(full.slice(0, at + 12));
     expect(r?.sections).toEqual([]);
-    expect(r?.reading_notes).toEqual(EPISODE.reading_notes);
+    expect(r?.reading_notes).toEqual(REPORT.reading_notes);
   });
 
   it("safety 전이나 safety 중간에서 끊기면 null", () => {
-    expect(salvageEpisode(full.slice(0, full.indexOf('"safety"')))).toBeNull();
-    expect(salvageEpisode(full.slice(0, full.indexOf('"none"') + 3))).toBeNull();
-    expect(salvageEpisode("")).toBeNull();
-    expect(salvageEpisode("[1,2]")).toBeNull();
-    expect(salvageEpisode('{"episode":1,"safety":"none","sections":[]}')).toBeNull();
+    expect(salvageReport(full.slice(0, full.indexOf('"safety"')))).toBeNull();
+    expect(salvageReport(full.slice(0, full.indexOf('"none"') + 3))).toBeNull();
+    expect(salvageReport("")).toBeNull();
+    expect(salvageReport("[1,2]")).toBeNull();
+    expect(salvageReport('{"safety":"none","sections":[]}')).toBeNull();
   });
 
-  it("끝난 응답은 그대로, next_teaser 중간이면 그 필드만 빠진다", () => {
-    expect(salvageEpisode(full)).toEqual(EPISODE);
-    expect(salvageEpisode(JSON.stringify(EPISODE, null, 2))).toEqual(EPISODE);
-    const r = salvageEpisode(full.slice(0, full.indexOf("누가")));
-    expect(r?.sections).toEqual(EPISODE.sections);
-    expect(r).not.toHaveProperty("next_teaser");
+  it("끝난 응답은 그대로, dek 중간이면 dek와 그 뒤가 빠진다", () => {
+    expect(salvageReport(full)).toEqual(REPORT);
+    expect(salvageReport(JSON.stringify(REPORT, null, 2))).toEqual(REPORT);
+    const r = salvageReport(full.slice(0, full.indexOf("동안의")));
+    expect(r?.headline).toBe(REPORT.headline);
+    expect(r).not.toHaveProperty("dek");
+    expect(r).not.toHaveProperty("sections");
   });
 
   it("끝에 구분 글자가 없는 숫자는 완결로 보지 않는다", () => {
-    expect(salvageEpisode('{"safety":{"flag":"none"},"episode":1')).toEqual({ safety: { flag: "none" } });
+    expect(salvageReport('{"safety":{"flag":"none"},"count":1')).toEqual({ safety: { flag: "none" } });
   });
 });

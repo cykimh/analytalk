@@ -80,7 +80,6 @@ const firstId = [...payloadIndex(payload).keys()][0];
 /** 문단 2개(하나는 '~것 같다' 금지 표현), 근거 2개(하나는 본문에 없는 인용) */
 const body = (headline = "머리") =>
   JSON.stringify({
-    episode: 1,
     safety: { flag: "none" },
     declined_topics: [],
     reading_notes: [],
@@ -101,7 +100,6 @@ const body = (headline = "머리") =>
         ],
       },
     ],
-    next_teaser: null,
   });
 
 const stats = payload.stats;
@@ -109,7 +107,7 @@ const idx = payloadIndex(payload);
 
 describe("scoreEpisode", () => {
   it("문단 삭제율·인용 일치·금지 표현 수를 센다", () => {
-    const s = scoreEpisode(1, body(), "ok", idx, stats);
+    const s = scoreEpisode(1, body(), "ok", idx, stats, payload);
     expect(s).toMatchObject({
       n: 1,
       status: "partial",
@@ -122,10 +120,10 @@ describe("scoreEpisode", () => {
     });
   });
   it("제목·소제·섹션 제목의 금지 표현도 센다", () => {
-    expect(scoreEpisode(1, body("그는 좋아하는 것 같다"), "ok", idx, stats).bannedHits).toBe(2);
+    expect(scoreEpisode(1, body("그는 좋아하는 것 같다"), "ok", idx, stats, payload).bannedHits).toBe(2);
   });
   it("JSON이 아니면 failed, 센 것은 0", () => {
-    expect(scoreEpisode(2, "not json", "ok", idx, stats)).toMatchObject({
+    expect(scoreEpisode(2, "not json", "ok", idx, stats, payload)).toMatchObject({
       status: "failed",
       paragraphsIn: 0,
       dropRate: 0,

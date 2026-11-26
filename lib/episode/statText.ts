@@ -1,5 +1,5 @@
 // 모델이 쓴 글(headline·dek·섹션 제목·문단·예고·reading_notes)의 {{stat:경로}} 자리표시자를 통계 값으로 채운다(브라우저·서버 공용).
-// 값은 validateEpisode와 같은 resolveStat으로 풀어서, 저장 전 검증이 남긴 문단은 화면에서도 같은 값으로 보인다.
+// 값은 validateReport와 같은 resolveStat으로 풀어서, 저장 전 검증이 남긴 문단은 화면에서도 같은 값으로 보인다.
 // 화면은 조각을 React 텍스트 노드로만 그린다(components/episode/StatText). <title>·OG처럼 문자열이 필요하면 renderStatPlain.
 import { formatCount, formatDuration, formatPercent } from "@/components/stats/format";
 import type { ChatStats } from "@/lib/stats/compute";

@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
-import { FALLBACK_INPUT_TOKEN_BUDGET, PROMPT_RESERVE_TOKENS, TOKENS_PER_CHAR } from "@/lib/config";
+import { DEFAULT_MODEL, inputTokenBudgetFor, PROMPT_RESERVE_TOKENS, TOKENS_PER_CHAR } from "@/lib/config";
 import { buildPayload, payloadTokens } from "@/lib/payload/build";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { syntheticGroupChat } from "@/test/syntheticChat";
@@ -51,7 +51,7 @@ describe("measurePayload", () => {
 
   it("통계 요약과 프롬프트 몫까지 입력 예산 안에 들고, transcript가 있다", () => {
     const p = measurePayload(messages, "group");
-    expect(payloadTokens(p, TOKENS_PER_CHAR).total + PROMPT_RESERVE_TOKENS).toBeLessThanOrEqual(FALLBACK_INPUT_TOKEN_BUDGET);
+    expect(payloadTokens(p, TOKENS_PER_CHAR).total + PROMPT_RESERVE_TOKENS).toBeLessThanOrEqual(inputTokenBudgetFor(DEFAULT_MODEL));
     expect(p.msgSent).toBeGreaterThan(0);
     expect(p).toMatchObject({ v: 2, tone: "fact", concept: "group", kind: "group" });
   });
@@ -107,14 +107,12 @@ const enc = new TextEncoder();
 const frame = (e: { type: string; [k: string]: unknown }) => enc.encode(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
 
 const BODY = JSON.stringify({
-  episode: 1,
   safety: { flag: "none" },
   declined_topics: [],
   reading_notes: [],
   headline: "머리",
   dek: "소제",
   sections: [{ icon: "x", title: "제목", about: "group", paragraphs: [{ key: "a", text: "함께 이야기했다", evidence_ids: [] }], evidence: [] }],
-  next_teaser: null,
 });
 
 function fakeFetch() {

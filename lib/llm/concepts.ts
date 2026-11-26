@@ -1,13 +1,27 @@
-// 분석 컨셉과 4편 제목(PRD 컨셉 표). 컨셉 선택 화면과 편별 지시가 같이 쓴다.
+// 분석 컨셉과 리포트 구성(v2 설계 G7). 컨셉 선택 화면·리포트 지시·검증이 같이 쓴다.
 
-export const CONCEPTS: Record<"group" | "couple", { title: string; episodes: [string, string, string, string] }> = {
+export type Concept = "group" | "couple";
+/** 리포트 구성 키. 섹션의 part가 이 값이다 */
+export type PartKey = "chronicle" | "characters" | "scenes" | "rhythm" | "map" | "first" | "shift" | "letter";
+
+export const CONCEPTS: Record<Concept, { title: string; parts: readonly { key: PartKey; title: string }[] }> = {
   group: {
     title: "친구·가족 단톡방",
-    episodes: ["이 방의 연대기", "멤버 캐릭터 카드", "명장면", "이 방이 굴러가는 법"],
+    parts: [
+      { key: "chronicle", title: "이 방의 연대기" },
+      { key: "characters", title: "멤버 캐릭터 카드" },
+      { key: "scenes", title: "명장면" },
+      { key: "rhythm", title: "이 방이 굴러가는 법" },
+    ],
   },
   couple: {
     title: "연애·썸",
-    episodes: ["우리 대화의 지도", "누가 먼저, 얼마나 빨리", "표현이 바뀐 구간", "너에게 쓰는 편지"],
+    parts: [
+      { key: "map", title: "두 사람의 대화 지도" },
+      { key: "first", title: "누가 먼저, 얼마나 빨리" },
+      { key: "shift", title: "표현이 바뀐 구간" },
+      { key: "letter", title: "두 사람에게 쓰는 편지" },
+    ],
   },
 };
 

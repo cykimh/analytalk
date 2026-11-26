@@ -3,10 +3,10 @@
 import "server-only";
 import { CYCLE_ANCHOR_DAY } from "@/lib/config";
 import { estimateCostUsd } from "@/lib/llm/cost";
-import { salvageEpisode } from "@/lib/llm/notes";
+import { salvageReport } from "@/lib/llm/notes";
 import { buildRequest } from "@/lib/llm/prompt";
-import { type RunResult, runEpisode } from "@/lib/llm/stream";
-import { validateEpisode } from "@/lib/llm/validate";
+import { type RunResult, runReport } from "@/lib/llm/stream";
+import { validateReport } from "@/lib/llm/validate";
 import { type Payload, payloadIndex } from "@/lib/payload/build";
 import type { AppRepo } from "./repo";
 import type { HandlerDeps } from "./route";
@@ -64,10 +64,11 @@ async function judge(
   payload: Payload,
   r: RunResult,
 ): Promise<{ status: string; content: unknown; errorCode: string | null }> {
-  const validate = (raw: unknown, truncated: boolean) => validateEpisode(raw, payloadIndex(payload), payload.stats, { truncated });
+  const validate = (raw: unknown, truncated: boolean) =>
+    validateReport(raw, payloadIndex(payload), payload.stats, { truncated, concept: payload.concept, members: payload.members });
   /** 끊긴 글에서 완결된 섹션만 살린다. done이어도 partial이다 */
   const salvage = (raw: string, failedCode: string) => {
-    const v = validate(salvageEpisode(raw), true);
+    const v = validate(salvageReport(raw), true);
     if (v.status === "failed") return { status: "failed", content: null, errorCode: failedCode };
     return { status: v.status === "done" ? "partial" : v.status, content: v.content, errorCode: null };
   };
@@ -82,7 +83,8 @@ async function judge(
     case "partial":
       return salvage(r.raw, "timeout");
     case "refused":
-      return { status: "refused", content: null, errorCode: null };
+      // 거절 분류만 남긴다(문구 없는 열거값이라 출력 글·이름이 섞이지 않는다)
+      return { status: "refused", content: null, errorCode: r.stopCategory ? `refusal_${r.stopCategory}` : null };
     case "error": {
       let errorCode: string = r.error ?? "fatal";
       if (r.error === "spend_limit" || r.error === "credit_exhausted") {
@@ -108,15 +110,14 @@ export async function runReportJob(deps: HandlerDeps, a: { id: string; payload: 
       await repo.finishReport(failure(a.id, "not_ready"));
       return;
     }
-    // 프롬프트는 아직 v1의 1편 지시를 쓴다
-    const req = buildRequest(a.payload, 1, []);
+    const req = buildRequest(a.payload);
     const startedAt = deps.now();
     const deadlineAt = deps.deadlineAt();
 
     const onStreamStart = (model: string) => {
       if (model !== req.model) console.warn(`[jobs] fallback_on_writer: ${req.model} → ${model}`);
     };
-    const attempt = () => runEpisode(client, req, { deadlineAt, onStreamStart, onNotes: (notes) => repo.saveProgress(a.id, notes) });
+    const attempt = () => runReport(client, req, { deadlineAt, onStreamStart, onNotes: (notes) => repo.saveProgress(a.id, notes) });
 
     let r = await attempt();
     if (r.kind === "error" && r.error === "retryable" && !r.startedStream && deps.now() - startedAt <= RETRY_WINDOW_MS) {

@@ -31,7 +31,6 @@ const stats = computeStats(messages);
  */
 function content(quote: string, statText = false, paragraph?: string, emptyHeadline = false) {
   return {
-    episode: 1,
     safety: { flag: "none" },
     declined_topics: [],
     reading_notes: [{ range: "10-01~10-03", note: statText ? "{{stat:total}}개를 읽었다" : "저녁마다 이야기했다" }],
@@ -39,6 +38,7 @@ function content(quote: string, statText = false, paragraph?: string, emptyHeadl
     dek: statText ? "{{stat:longestStreakDays}} 동안의 흐름" : "사흘 동안의 흐름",
     sections: [
       {
+        part: "map",
         icon: "🌙",
         title: statText ? "{{stat:total}}번의 저녁{{stat:nope}}" : "저녁의 리듬",
         about: "pair",
@@ -49,7 +49,6 @@ function content(quote: string, statText = false, paragraph?: string, emptyHeadl
         evidence: [{ id: "e1", msg_id: "m1", quote, sender: "민지", at: "2026-10-01T20:04:00+09:00" }],
       },
     ],
-    next_teaser: null,
   };
 }
 

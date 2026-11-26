@@ -19,7 +19,7 @@ const frame = (e: Ev) => enc.encode(`event: ${e.type}\ndata: ${JSON.stringify(e)
 
 /** message_start의 usage. 원가가 작아서 주간·일간 한도에 걸리지 않는다 */
 export const START_USAGE = { input_tokens: 100, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
-export const messageStart = (model = "claude-opus-5-5"): Ev => ({
+export const messageStart = (model = "claude-sonnet-5-5"): Ev => ({
   type: "message_start",
   message: {
     id: "msg_test",
@@ -35,9 +35,14 @@ export const messageStart = (model = "claude-opus-5-5"): Ev => ({
 export const textStart: Ev = { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
 export const delta = (text: string): Ev => ({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } });
 export const blockStop: Ev = { type: "content_block_stop", index: 0 };
-export const messageDelta = (stop_reason: string, output_tokens = 200): Ev => ({
+/** stopCategory가 있으면 거절 분류(stop_details)를 싣는다 */
+export const messageDelta = (stop_reason: string, output_tokens = 200, stopCategory?: string): Ev => ({
   type: "message_delta",
-  delta: { stop_reason, stop_sequence: null },
+  delta: {
+    stop_reason,
+    stop_sequence: null,
+    ...(stopCategory ? { stop_details: { type: "refusal", category: stopCategory, explanation: null } } : {}),
+  },
   usage: { output_tokens },
 });
 export const messageStop: Ev = { type: "message_stop" };
@@ -45,22 +50,29 @@ export const messageStop: Ev = { type: "message_stop" };
 export const sseError = (type: string): Ev => ({ type: "error", error: { type, message: type } });
 
 /**
- * 편 요청 하나에 돌려줄 응답.
+ * 리포트 요청 하나에 돌려줄 응답.
  * - status: JSON 오류 본문의 HTTP 응답
  * - steps: SSE 이벤트를 차례로 보낸다. 함수는 그 자리에서 기다린다(스트림을 붙잡아 둔다). open이면 끝에 닫지 않는다
  */
 export type Reply = { status: number; error: object } | { steps: (Ev | (() => Promise<void>))[]; open?: boolean };
 
 /** text를 두 조각으로 보내고 닫는 응답 */
-export const whole = (text: string, o: { stop?: string; model?: string } = {}): Reply => ({
-  steps: [messageStart(o.model), textStart, delta(text.slice(0, 20)), delta(text.slice(20)), blockStop, messageDelta(o.stop ?? "end_turn"), messageStop],
+export const whole = (text: string, o: { stop?: string; model?: string; stopCategory?: string } = {}): Reply => ({
+  steps: [
+    messageStart(o.model),
+    textStart,
+    delta(text.slice(0, 20)),
+    delta(text.slice(20)),
+    blockStop,
+    messageDelta(o.stop ?? "end_turn", 200, o.stopCategory),
+    messageStop,
+  ],
 });
 
 /** text를 보낸 뒤 열어 둔다(마감 abort를 기다린다) */
 export const cut = (text: string): Reply => ({ steps: [messageStart(), textStart, delta(text)], open: true });
 
 export interface StreamCall {
-  n: number;
   body: { model: string; messages: { role: string; content: unknown }[] } & Record<string, unknown>;
 }
 
@@ -71,8 +83,8 @@ const errorResponse = (r: { status: number; error: object }) =>
 /** count_tokens 응답: 토큰 수, 또는 JSON 오류 본문의 HTTP 응답 */
 export type Counted = () => number | { status: number; error: object };
 
-/** 요청을 기록하고 reply(편 번호, 그 편의 몇 번째 호출)로 응답하는 Anthropic 클라이언트. count_tokens는 counted()를 돌려준다 */
-export function fakeAnthropic(reply: (n: number, call: number) => Reply, counted: Counted = () => 1000) {
+/** 요청을 기록하고 reply(몇 번째 리포트 호출인지, 1부터)로 응답하는 Anthropic 클라이언트. count_tokens는 counted()를 돌려준다 */
+export function fakeAnthropic(reply: (call: number) => Reply, counted: Counted = () => 1000) {
   const streams: StreamCall[] = [];
   const counts: Record<string, unknown>[] = [];
   const fetch = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -82,10 +94,8 @@ export function fakeAnthropic(reply: (n: number, call: number) => Reply, counted
       const c = counted();
       return typeof c === "number" ? Response.json({ input_tokens: c }) : errorResponse(c);
     }
-    const n = Number(/episode는 (\d)이다/.exec(JSON.stringify(body.messages))?.[1]);
-    const call = streams.filter((s) => s.n === n).length + 1;
-    streams.push({ n, body });
-    const r = reply(n, call);
+    streams.push({ body });
+    const r = reply(streams.length);
     if ("status" in r) return errorResponse(r);
     let ctrl!: ReadableStreamDefaultController<Uint8Array>;
     let closed = false;
@@ -119,7 +129,7 @@ export function fakeAnthropic(reply: (n: number, call: number) => Reply, counted
   return { client: new Anthropic({ apiKey: "test", fetch: fetch as typeof globalThis.fetch, maxRetries: 0 }), streams, counts };
 }
 
-// ── 가짜 대화와 편 출력 ──
+// ── 가짜 대화와 리포트 출력 ──
 
 const kst = (d: number, h: number, mi: number) => Date.UTC(2026, 9, d, h, mi) - 9 * 3_600_000;
 
@@ -139,7 +149,8 @@ export function makePayload(variant = 0, tone: Tone = "fact"): Payload {
   return buildPayload({ messages, tone, concept: "couple", kind: "pair", tokenBudget: 100_000, tokensPerChar: 1 });
 }
 
-const section = (title: string) => ({
+const section = (part: string, title: string) => ({
+  part,
   icon: "🌙",
   title,
   about: "pair",
@@ -147,24 +158,22 @@ const section = (title: string) => ({
   evidence: [{ id: "e1", msg_id: "m1", quote: "쉬는 중" }],
 });
 
-/** 검증을 통과하는(done) n편 출력. 섹션 2개 */
-export function episodeJson(n: number, over: Record<string, unknown> = {}) {
+/** 검증을 통과하는(done) 리포트 출력. 섹션 2개 */
+export function reportJson(over: Record<string, unknown> = {}) {
   return {
-    episode: n,
     safety: { flag: "none" },
     declined_topics: [],
     reading_notes: [{ range: "10-01~10-03", note: "저녁마다 이야기했다" }],
-    headline: `${n}편 헤드라인`,
+    headline: "리포트 헤드라인",
     dek: "사흘 동안의 흐름",
-    sections: [section("저녁의 리듬"), section("주말 약속")],
-    next_teaser: n === 4 ? null : "다음 편 예고",
+    sections: [section("map", "저녁의 리듬"), section("first", "주말 약속")],
     ...over,
   };
 }
 
-/** n편 출력을 2번째 섹션의 인용 앞에서 자른 글. 완결된 섹션은 1개다 */
-export function cutInSecondSection(n: number, over: Record<string, unknown> = {}): string {
-  const raw = JSON.stringify(episodeJson(n, over));
+/** 리포트 출력을 2번째 섹션의 인용 앞에서 자른 글. 완결된 섹션은 1개다 */
+export function cutInSecondSection(over: Record<string, unknown> = {}): string {
+  const raw = JSON.stringify(reportJson(over));
   return raw.slice(0, raw.lastIndexOf('"quote"'));
 }
 
@@ -188,7 +197,7 @@ export interface FetchCall {
  */
 export async function harness(
   o: {
-    reply?: (n: number, call: number) => Reply;
+    reply?: (call: number) => Reply;
     counted?: Counted;
     monthlyLimit?: number;
     deadlineMs?: number;
@@ -200,7 +209,7 @@ export async function harness(
       { code: OTHER_CODE, monthlyLimit: 2 },
     ],
   });
-  const anthropic = fakeAnthropic(o.reply ?? ((n) => whole(JSON.stringify(episodeJson(n)))), o.counted);
+  const anthropic = fakeAnthropic(o.reply ?? (() => whole(JSON.stringify(reportJson()))), o.counted);
   const pending: Promise<void>[] = [];
   const queued: (() => Promise<void>)[] = [];
   const fetches: FetchCall[] = [];
