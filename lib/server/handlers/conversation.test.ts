@@ -16,7 +16,7 @@ const get = (cookie: string | null, id: string) => request("GET", `/api/conversa
 const del = (cookie: string | null, id: string) => request("DELETE", `/api/conversations/${id}`, cookie);
 
 describe("GET /api/conversations/[id]", () => {
-  it("같은 invite면 대화 정보와 편 4개(n·status·content·errorCode)", async () => {
+  it("같은 invite면 대화 정보·tone과 리포트(status·content·errorCode)", async () => {
     const { h, payload, id } = await created();
     const res = await handleGetConversation(get(h.cookie, id), h.deps, id);
     expect(res.status).toBe(200);
@@ -25,19 +25,16 @@ describe("GET /api/conversations/[id]", () => {
     expect(res.body).toEqual({
       concept: "couple",
       kind: "pair",
+      tone: "fact",
       displayNames: payload.members,
       stats: payload.stats,
       cutoffAt: row!.cutoffAt,
       msgSent: payload.msgSent,
       expiresAt: row!.expiresAt,
       shared: false,
-      shareScope: null,
-      shareHidden: [],
-      episodes: row!.episodes.map(({ n, status, content, errorCode }) => ({ n, status, content, errorCode })),
+      report: { status: "done", content: row!.report.content, errorCode: null },
     });
-    const episodes = (res.body as { episodes: { status: string; content: unknown }[] }).episodes;
-    expect(episodes.map((e) => e.status)).toEqual(["done", "done", "done", "done"]);
-    expect(episodes.every((e) => e.content !== null)).toBe(true);
+    expect(row!.report.content).not.toBeNull();
   });
 
   it("shared는 링크가 살아 있는지만 알린다: 공유 전 false, POST 뒤 true, DELETE 뒤 false. 토큰 해시는 내보내지 않는다", async () => {
@@ -45,18 +42,16 @@ describe("GET /api/conversations/[id]", () => {
     const read = async () => (await handleGetConversation(get(h.cookie, id), h.deps, id)).body as Record<string, unknown>;
     expect((await read()).shared).toBe(false);
 
-    const res = await handleCreateShare(request("POST", "/api/shares", h.cookie, { id, scope: "all", hidden: [3] }), h.deps);
+    const res = await handleCreateShare(request("POST", "/api/shares", h.cookie, { id }), h.deps);
     expect(res.status).toBe(200);
     const after = await read();
-    expect([after.shared, after.shareScope, after.shareHidden]).toEqual([true, "all", [3]]);
+    expect(after.shared).toBe(true);
     const hash = (await h.repo.getConversation(id))!.shareTokenHash!;
     expect(after).not.toHaveProperty("shareTokenHash");
     expect(JSON.stringify(after)).not.toContain(hash);
 
     expect((await handleRevokeShare(request("DELETE", "/api/shares", h.cookie, { id }), h.deps)).status).toBe(204);
-    const revoked = await read();
-    // 폐기해도 범위·숨김 설정은 남는다
-    expect([revoked.shared, revoked.shareScope, revoked.shareHidden]).toEqual([false, "all", [3]]);
+    expect((await read()).shared).toBe(false);
   });
 
   it("다른 invite·없는 id는 404, 쿠키가 없으면 401", async () => {

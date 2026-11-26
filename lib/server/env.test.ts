@@ -3,9 +3,8 @@ import { routeConfig } from "./env";
 
 afterEach(() => vi.unstubAllEnvs());
 
-function stubSecrets(values: { session?: string; internal?: string; turnstile?: string }) {
+function stubSecrets(values: { session?: string; turnstile?: string }) {
   vi.stubEnv("SESSION_SECRET", values.session ?? "");
-  vi.stubEnv("INTERNAL_HMAC_SECRET", values.internal ?? "");
   vi.stubEnv("TURNSTILE_SECRET_KEY", values.turnstile ?? "");
 }
 
@@ -14,12 +13,11 @@ describe("routeConfig", () => {
     vi.stubEnv("ANALYTALK_E2E", "1");
     vi.stubEnv("VERCEL", "");
     vi.stubEnv("NODE_ENV", "production");
-    stubSecrets({ session: "real-session", internal: "real-internal", turnstile: "real-turnstile" });
+    stubSecrets({ session: "real-session", turnstile: "real-turnstile" });
     const config = routeConfig();
     expect(config.production).toBe(false);
     expect(config.secrets.session).not.toBe("real-session");
     expect(config.secrets.session.length).toBeGreaterThan(0);
-    expect(config.secrets.internal).not.toBe("real-internal");
     expect(config.secrets.turnstile).toBeUndefined();
   });
 
@@ -29,10 +27,10 @@ describe("routeConfig", () => {
     stubSecrets({ session: "real-session", turnstile: "real-turnstile" });
     expect(routeConfig()).toEqual({
       production: true,
-      secrets: { session: "real-session", internal: "", turnstile: "real-turnstile" },
+      secrets: { session: "real-session", turnstile: "real-turnstile" },
     });
     stubSecrets({});
-    expect(routeConfig().secrets).toEqual({ session: "", internal: "", turnstile: undefined });
+    expect(routeConfig().secrets).toEqual({ session: "", turnstile: undefined });
   });
 
   it("Vercel에서는 ANALYTALK_E2E=1이어도 E2E가 아니다", () => {
@@ -40,17 +38,16 @@ describe("routeConfig", () => {
     vi.stubEnv("VERCEL", "1");
     vi.stubEnv("NODE_ENV", "production");
     stubSecrets({});
-    expect(routeConfig()).toEqual({ production: true, secrets: { session: "", internal: "", turnstile: undefined } });
+    expect(routeConfig()).toEqual({ production: true, secrets: { session: "", turnstile: undefined } });
   });
 
-  it("개발에서 없는 세션·내부 비밀값은 고정 개발 값으로 채운다", () => {
+  it("개발에서 없는 세션 비밀값은 고정 개발 값으로 채운다", () => {
     vi.stubEnv("ANALYTALK_E2E", "");
     vi.stubEnv("NODE_ENV", "development");
     stubSecrets({});
     const config = routeConfig();
     expect(config.production).toBe(false);
     expect(config.secrets.session.length).toBeGreaterThan(0);
-    expect(config.secrets.internal.length).toBeGreaterThan(0);
     expect(config.secrets.turnstile).toBeUndefined();
   });
 });

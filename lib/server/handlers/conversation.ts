@@ -23,6 +23,7 @@ export async function handleGetConversation(req: Request, deps: HandlerDeps, id:
     body: {
       concept: row.concept,
       kind: row.kind,
+      tone: row.tone,
       displayNames: row.displayNames,
       stats: row.stats,
       cutoffAt: row.cutoffAt,
@@ -30,15 +31,13 @@ export async function handleGetConversation(req: Request, deps: HandlerDeps, id:
       expiresAt: row.expiresAt,
       // 링크가 살아 있는지만 알린다. 토큰 해시는 내보내지 않는다
       shared: row.shareTokenHash !== null,
-      shareScope: row.shareScope,
-      shareHidden: row.shareHidden,
-      episodes: row.episodes.map(({ n, status, content, errorCode }) => ({ n, status, content, errorCode })),
+      report: { status: row.report.status, content: row.report.content, errorCode: row.report.errorCode },
     },
     headers: NO_STORE,
   };
 }
 
-/** 대화·편·피드백을 지운다. claim 원장은 남아 이번 주기 한도와 오늘 건수가 되돌아가지 않는다 */
+/** 대화·리포트·피드백을 지운다. claim 원장은 남아 이번 주기 한도와 오늘 건수가 되돌아가지 않는다 */
 export async function handleDeleteConversation(req: Request, deps: HandlerDeps, id: string): Promise<HandlerResult> {
   const auth = await requireInvite(req, deps);
   if (!("inviteId" in auth)) return fail(401, "unauthorized");

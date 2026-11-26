@@ -20,7 +20,7 @@ function makeDeps(over: Partial<HandlerDeps> = {}, siteverify: unknown = { succe
     deadlineAt: () => Number.POSITIVE_INFINITY,
     now: () => NOW,
     fetch,
-    secrets: { session: SECRET, internal: "test-internal-secret", turnstile: "ts-secret" },
+    secrets: { session: SECRET, turnstile: "ts-secret" },
     production: true,
     ...over,
   };
@@ -85,17 +85,17 @@ describe("handleInvite", () => {
   });
 
   it("프로덕션에서 Turnstile secret이 없으면 503", async () => {
-    const { deps } = makeDeps({ secrets: { session: SECRET, internal: "i" } });
+    const { deps } = makeDeps({ secrets: { session: SECRET } });
     expect((await handleInvite(post({ code: GOOD, turnstileToken: "tok" }), deps)).status).toBe(503);
   });
 
   it("프로덕션에서 세션 secret이 없으면 503", async () => {
-    const { deps } = makeDeps({ secrets: { session: "", internal: "i", turnstile: "ts-secret" } });
+    const { deps } = makeDeps({ secrets: { session: "", turnstile: "ts-secret" } });
     expect((await handleInvite(post({ code: GOOD, turnstileToken: "tok" }), deps)).status).toBe(503);
   });
 
   it("개발에서 Turnstile secret이 없으면 확인 없이 통과하고 쿠키에 Secure가 없다", async () => {
-    const { deps, fetch } = makeDeps({ production: false, secrets: { session: SECRET, internal: "i" } });
+    const { deps, fetch } = makeDeps({ production: false, secrets: { session: SECRET } });
     const res = await handleInvite(post({ code: GOOD, turnstileToken: "x" }), deps);
     expect(res.status).toBe(200);
     expect(res.headers?.["set-cookie"]?.split("; ")).not.toContain("Secure");

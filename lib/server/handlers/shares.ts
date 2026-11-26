@@ -3,6 +3,7 @@
 import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
+import type { Tone } from "@/lib/llm/concepts";
 import type { StoredEpisode } from "@/lib/llm/schema";
 import { resolveBaseUrl } from "@/lib/server/baseUrl";
 import type { AppRepo, ConversationRow } from "@/lib/server/repo";
@@ -15,86 +16,66 @@ const TOKEN_BYTES = 16;
 /** 16바이트의 base64url은 22글자다 */
 const TOKEN_SHAPE = /^[A-Za-z0-9_-]{22}$/;
 
-const createSchema = z.object({
-  id: z.string().min(1).max(64),
-  scope: z.enum(["first", "all"]),
-  hidden: z.array(z.literal([1, 2, 3, 4])).max(4),
-});
-const revokeSchema = z.object({ id: z.string().min(1).max(64) });
+/** 옛 탭이 보내는 scope·hidden은 z.object가 버린다(한 편이라 범위·숨김이 없다) */
+const bodySchema = z.object({ id: z.string().min(1).max(64) });
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /**
- * 공유 범위를 정한다.
+ * 공유 링크를 만든다.
  * - 아직 공유 중이 아니면 새 토큰을 만들고 `{ url, shared: true }`를 돌려준다
- * - 이미 공유 중이면 토큰은 그대로 두고 범위·숨김만 바꾼다. 원문 토큰은 DB에 없어 `{ url: null, shared: true }`이다(발급한 URL은 클라이언트가 보관한다. 새 링크가 필요하면 폐기 후 다시 만든다)
- * - 읽은 뒤 토큰이 동시에 바뀌었으면(폐기·중복 발급) 쓰지 않고 409다
+ * - 이미 공유 중이면 쓰지 않는다. 원문 토큰은 DB에 없어 `{ url: null, shared: true }`이다(발급한 URL은 클라이언트가 보관한다. 새 링크가 필요하면 폐기 후 다시 만든다)
+ * - 읽은 뒤 다른 요청이 먼저 발급했으면 쓰지 않고 409다
  */
 export async function handleCreateShare(req: Request, deps: HandlerDeps): Promise<HandlerResult> {
   const auth = await requireInvite(req, deps);
   if (!("inviteId" in auth)) return fail(401, "unauthorized");
-  const body = createSchema.safeParse(await readJson(req));
+  const body = bodySchema.safeParse(await readJson(req));
   if (!body.success) return fail(400, "bad_request");
-  const { id, scope, hidden } = body.data;
+  const { id } = body.data;
 
   const row = await ownConversation(deps.repo, id, auth.inviteId);
   if (!row) return fail(404, "not_found");
+  if (row.shareTokenHash !== null) return { status: 200, body: { url: null, shared: true }, headers: NO_STORE };
 
-  const hiddenSet = [...new Set(hidden)].sort();
-  const issued = row.shareTokenHash === null ? randomBytes(TOKEN_BYTES).toString("base64url") : null;
-  const ok = await deps.repo.setShare(id, auth.inviteId, {
-    tokenHash: issued === null ? row.shareTokenHash : sha256(issued),
-    scope,
-    hidden: hiddenSet,
-    // 읽은 뒤 다른 요청이 토큰을 바꿨으면(폐기·중복 발급) 쓰지 않는다
-    expectHash: row.shareTokenHash,
-  });
-  if (!ok) {
+  const issued = randomBytes(TOKEN_BYTES).toString("base64url");
+  // 읽은 뒤 다른 요청이 먼저 발급했으면 쓰지 않는다
+  if (!(await deps.repo.setShare(id, auth.inviteId, { tokenHash: sha256(issued), expectHash: null }))) {
     // 조건이 안 맞았다: 대화가 사라졌으면 404, 아니면 동시에 바뀐 것이라 409
     return (await deps.repo.getConversation(id)) ? fail(409, "conflict") : fail(404, "not_found");
   }
-  if (issued === null) return { status: 200, body: { url: null, shared: true }, headers: NO_STORE };
   return { status: 200, body: { url: `${resolveBaseUrl(req.url).baseUrl}/s/${issued}`, shared: true }, headers: NO_STORE };
 }
 
-/** 링크를 폐기한다(토큰 해시를 null로). 범위·숨김 설정은 남긴다 */
+/** 링크를 폐기한다(토큰 해시를 null로) */
 export async function handleRevokeShare(req: Request, deps: HandlerDeps): Promise<HandlerResult> {
   const auth = await requireInvite(req, deps);
   if (!("inviteId" in auth)) return fail(401, "unauthorized");
-  const body = revokeSchema.safeParse(await readJson(req));
+  const body = bodySchema.safeParse(await readJson(req));
   if (!body.success) return fail(400, "bad_request");
 
   const row = await ownConversation(deps.repo, body.data.id, auth.inviteId);
   if (!row) return fail(404, "not_found");
-  const share = { tokenHash: null, scope: row.shareScope ?? ("first" as const), hidden: row.shareHidden };
-  if (!(await deps.repo.setShare(row.id, auth.inviteId, share))) return fail(404, "not_found");
+  if (!(await deps.repo.setShare(row.id, auth.inviteId, { tokenHash: null }))) return fail(404, "not_found");
   return { status: 204, body: undefined };
 }
 
-/** 공유 화면이 그리는 것. 표시 이름·통계·보여 줄 편의 저장된 내용뿐이다(실제 이름·transcript·anchors는 DB에 없다) */
+/**
+ * 공유 화면이 그리는 것. 컨셉·말투·표시 이름(업로더가 정한 이름)·통계·리포트 내용뿐이다(transcript·anchors는 DB에 없다).
+ * report는 저장된 내용이 없으면(쓰는 중·실패) null
+ */
 export interface SharedView {
   concept: ConversationRow["concept"];
+  tone: Tone;
   displayNames: string[];
   stats: ChatStats;
-  episodes: { n: number; content: StoredEpisode }[];
-}
-
-/** 범위(first면 1편만)와 숨김을 적용하고, 내용이 있는 편만 남긴다 */
-export function visibleEpisodes(row: ConversationRow): SharedView["episodes"] {
-  const hidden = new Set(row.shareHidden);
-  const out: SharedView["episodes"] = [];
-  for (const e of row.episodes) {
-    if (row.shareScope === "first" && e.n !== 1) continue;
-    if (hidden.has(e.n) || !e.content) continue;
-    out.push({ n: e.n, content: e.content });
-  }
-  return out;
+  report: StoredEpisode | null;
 }
 
 /** 토큰으로 지금 공유 중인 대화를 읽는다. 폐기·만료·삭제·모르는 토큰이면 null. 매번 저장소를 읽는다(캐시 없음) */
 export async function loadSharedView(repo: AppRepo, token: string): Promise<SharedView | null> {
   if (!TOKEN_SHAPE.test(token)) return null;
   const row = await repo.getByShareHash(sha256(token));
-  if (!row || row.shareScope === null) return null;
-  return { concept: row.concept, displayNames: row.displayNames, stats: row.stats, episodes: visibleEpisodes(row) };
+  if (!row) return null;
+  return { concept: row.concept, tone: row.tone, displayNames: row.displayNames, stats: row.stats, report: row.report.content };
 }

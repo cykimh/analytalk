@@ -1,4 +1,4 @@
-// 생성 API 테스트 도구: 공식 SSE를 돌려주는 가짜 Anthropic, 가짜 내부 fetch, 즉시 실행하는 schedule, 초대 코드 세션.
+// 생성 API 테스트 도구: 공식 SSE를 돌려주는 가짜 Anthropic, 부르면 던지는 fetch, 즉시 실행하는 schedule, 초대 코드 세션.
 // 실제 API는 부르지 않는다. 대화는 줄 모양만 있는 가짜이고 이름은 ALLOWED_NAMES의 표시 이름이다.
 // memoryRepo의 하루 건수 한도는 실제 날짜로 계산돼 매달 1일에는 2건까지만 만들 수 있다. 저장소 하나에서 대화는 2건까지만 만든다.
 import Anthropic from "@anthropic-ai/sdk";
@@ -8,9 +8,8 @@ import { signSession } from "@/lib/invite/session";
 import type { Tone } from "@/lib/llm/concepts";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { buildPayload, type Payload } from "@/lib/payload/build";
-import { handleInternalEpisode } from "@/lib/server/handlers/internal";
 import { memoryRepo } from "@/lib/server/repo";
-import { type HandlerDeps, toResponse } from "@/lib/server/route";
+import type { HandlerDeps } from "@/lib/server/route";
 
 // ── 공식 SSE 형식(event: … / data: …) ──
 
@@ -173,20 +172,17 @@ export function cutInSecondSection(n: number, over: Record<string, unknown> = {}
 
 export const CODE = "GOOD234567";
 export const OTHER_CODE = "OTHR234567";
-export const SECRETS = { session: "test-session-secret-0123456789abcdef", internal: "test-internal-secret-0123456789abcdef" };
+export const SECRETS = { session: "test-session-secret-0123456789abcdef" };
 export const BASE = "https://analytalk.example.com";
 
-export interface InternalCall {
+/** deps.fetch로 나간 요청. 생성 흐름은 fetch를 부르지 않는다(0건이어야 한다) */
+export interface FetchCall {
   url: string;
-  headers: Headers;
-  body: { id: string; n: number; payload: unknown };
 }
 
-type Fetch = (url: string, init: RequestInit) => Promise<Response>;
-
 /**
- * memoryRepo + 가짜 Anthropic + 가짜 내부 fetch로 HandlerDeps를 만든다.
- * - 내부 fetch는 기본으로 handleInternalEpisode를 같은 deps로 부른다(다른 함수 호출 흉내). internal로 바꿀 수 있다
+ * memoryRepo + 가짜 Anthropic + 부르면 던지는 fetch로 HandlerDeps를 만든다.
+ * - deps.fetch는 요청을 fetches에 남기고 "예상 못 한 fetch"로 던진다(생성·다시 쓰기는 자기 호출을 하지 않는다)
  * - schedule은 기본으로 즉시 실행하고 settle()이 끝날 때까지 기다린다. manual이면 모아 두고 runQueued()로 돌린다
  * - 시각은 실제 시각(memoryRepo의 now()와 같다)에 skew를 더한 것
  */
@@ -195,7 +191,6 @@ export async function harness(
     reply?: (n: number, call: number) => Reply;
     counted?: Counted;
     monthlyLimit?: number;
-    internal?: Fetch;
     deadlineMs?: number;
   } = {},
 ) {
@@ -208,7 +203,7 @@ export async function harness(
   const anthropic = fakeAnthropic(o.reply ?? ((n) => whole(JSON.stringify(episodeJson(n)))), o.counted);
   const pending: Promise<void>[] = [];
   const queued: (() => Promise<void>)[] = [];
-  const internal: InternalCall[] = [];
+  const fetches: FetchCall[] = [];
   const state = { manual: false, skew: 0 };
 
   const deps: HandlerDeps = {
@@ -220,11 +215,10 @@ export async function harness(
     },
     deadlineAt: () => Date.now() + (o.deadlineMs ?? 60_000),
     now: () => Date.now() + state.skew,
-    fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+    fetch: (async (input: string | URL | Request) => {
       const url = String(input);
-      internal.push({ url, headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) });
-      if (o.internal) return o.internal(url, init ?? {});
-      return toResponse(await handleInternalEpisode(new Request(url, init), deps));
+      fetches.push({ url });
+      throw new Error(`[test] 예상 못 한 fetch: ${url}`);
     }) as typeof fetch,
     secrets: { ...SECRETS },
     production: true,
@@ -240,7 +234,7 @@ export async function harness(
     repo,
     streams: anthropic.streams,
     counts: anthropic.counts,
-    internal,
+    fetches,
     state,
     cookie: await cookieFor(CODE),
     otherCookie: await cookieFor(OTHER_CODE),

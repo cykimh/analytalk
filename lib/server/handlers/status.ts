@@ -6,8 +6,8 @@ import { NO_STORE, ownConversation } from "./conversation";
 import { requireInvite } from "./invite";
 
 /**
- * 편마다 상태와 진행 메모(sanitizeNotes를 거친 reading_notes).
- * paused: 지금 새 생성이 전역으로 멈춰 있다(settings.paused_until > 지금). 이 대화의 편 오류 코드와 상관없다.
+ * 리포트의 상태와 진행 메모(sanitizeNotes를 거친 reading_notes. 첫 메모 전에는 null).
+ * paused: 지금 새 생성이 전역으로 멈춰 있다(settings.paused_until > 지금). 이 대화의 리포트 오류 코드와 상관없다.
  * true인 동안 생성·다시 쓰기는 423이다. 화면은 [다시 쓰기] 대신 "이번 달 AI 마감"을 보여 주고, 풀리면 다시 보여 준다
  */
 export async function handleStatus(req: Request, deps: HandlerDeps, id: string): Promise<HandlerResult> {
@@ -18,7 +18,7 @@ export async function handleStatus(req: Request, deps: HandlerDeps, id: string):
   return {
     status: 200,
     body: {
-      episodes: row.episodes.map(({ n, status, progress, errorCode }) => ({ n, status, progress, errorCode })),
+      report: { status: row.report.status, progress: row.report.progress, errorCode: row.report.errorCode },
       paused: await isPaused(deps.repo, deps.now()),
     },
     headers: NO_STORE,

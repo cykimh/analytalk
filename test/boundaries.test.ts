@@ -65,6 +65,11 @@ describe("소스 경계", () => {
     expect(hits).toEqual([]);
   });
 
+  it("내부 편 호출(HMAC 라우트)의 흔적이 없다", () => {
+    expect(filesMatching(/INTERNAL_HMAC_SECRET|\/api\/internal|x-analytalk-signature/)).toEqual([]);
+    expect(files.some((f) => f.startsWith("app/api/internal/"))).toBe(false);
+  });
+
   it("isE2E 정의에 VERCEL 검사가 있다", () => {
     expect(text.get("lib/config.ts")).toMatch(/export const isE2E\s*=[^\n]*&&\s*!process\.env\.VERCEL\b/);
   });

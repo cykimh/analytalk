@@ -14,7 +14,7 @@ export interface HandlerDeps {
   deadlineAt: () => number;
   now: () => number;
   fetch: typeof fetch;
-  secrets: { session: string; internal: string; turnstile?: string };
+  secrets: { session: string; turnstile?: string };
   production: boolean;
 }
 
@@ -24,7 +24,7 @@ export interface HandlerResult {
   headers?: Record<string, string>;
 }
 
-/** 요청 하나의 deps. 편 마감은 함수 마감 30초 전과 요청 시작 + 270초 중 이른 쪽(로컬에는 함수 마감이 없다) */
+/** 요청 하나의 deps. 리포트 마감은 함수 마감 30초 전과 요청 시작 + 270초 중 이른 쪽(로컬에는 함수 마감이 없다) */
 export function routeDeps(start = Date.now()): HandlerDeps {
   const config = routeConfig();
   const fnDeadline = getDeadline();

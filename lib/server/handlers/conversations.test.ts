@@ -19,11 +19,9 @@ import {
   messageStart,
   messageStop,
   request,
-  SECRETS,
   textStart,
-  until,
 } from "@/test/generation";
-import { nextCycleStart, verifyInternal } from "../jobs";
+import { nextCycleStart } from "../jobs";
 import { handleDeleteConversation } from "./conversation";
 import { handleCreateConversation } from "./conversations";
 import { handleStatus } from "./status";
@@ -46,29 +44,11 @@ function withTextTokens(p: Payload, target: number): Payload {
 }
 
 describe("POST /api/conversations", () => {
-  it("정상 흐름: 202, 1편 message_start에서(텍스트 전) 서명한 내부 호출 3번, 4편 모두 done, 편마다 startEpisode 1번 (Review Focus 1)", async () => {
-    let dispatchedBeforeText = -1;
+  it("정상 흐름: 202, 스트림 1번, report done, startReport 1번, fetch 0번. status는 DB만 읽는다 (Review Focus 1)", async () => {
     const h = await harness({
-      reply: (n) => {
-        const text = JSON.stringify(episodeJson(n));
-        if (n !== 1) return { steps: [messageStart(), textStart, delta(text), blockStop, messageDelta("end_turn"), messageStop] };
-        return {
-          steps: [
-            messageStart(),
-            async () => {
-              await until(() => h.internal.length === 3);
-              dispatchedBeforeText = h.internal.length;
-            },
-            textStart,
-            delta(text),
-            blockStop,
-            messageDelta("end_turn"),
-            messageStop,
-          ],
-        };
-      },
+      reply: (n) => ({ steps: [messageStart(), textStart, delta(JSON.stringify(episodeJson(n))), blockStop, messageDelta("end_turn"), messageStop] }),
     });
-    const start = vi.spyOn(h.repo, "startEpisode");
+    const start = vi.spyOn(h.repo, "startReport");
     const payload = makePayload();
 
     const res = await handleCreateConversation(create(h.cookie, payload), h.deps);
@@ -76,23 +56,37 @@ describe("POST /api/conversations", () => {
     const { id } = res.body as { id: string };
     await h.settle();
 
-    expect(dispatchedBeforeText).toBe(3);
-    const sha = await sha256Hex(JSON.stringify(payload));
-    expect(h.internal.map((c) => c.body.n).sort()).toEqual([2, 3, 4]);
-    for (const call of h.internal) {
-      expect(verifyInternal(call.headers.get("x-analytalk-signature"), { id, n: call.body.n, payloadSha256: sha }, Date.now(), SECRETS.internal)).toBe(
-        true,
-      );
-    }
-    expect(start.mock.calls.map(([, n]) => n).sort()).toEqual([1, 2, 3, 4]);
-    expect(h.streams.map((s) => s.n).sort()).toEqual([1, 2, 3, 4]);
+    expect(start.mock.calls).toEqual([[id]]);
+    expect(h.streams).toHaveLength(1);
+    expect(h.fetches).toHaveLength(0);
+    expect((await h.repo.getConversation(id))!.report.status).toBe("done");
 
     // 탭을 닫았다 열어도 status는 DB만 읽는다
-    const calls = { streams: h.streams.length, counts: h.counts.length, internal: h.internal.length };
+    const calls = { streams: h.streams.length, counts: h.counts.length };
     const status = await handleStatus(statusOf(h.cookie, id), h.deps, id);
     expect(status.status).toBe(200);
-    expect((status.body as { episodes: { status: string }[] }).episodes.map((e) => e.status)).toEqual(["done", "done", "done", "done"]);
-    expect({ streams: h.streams.length, counts: h.counts.length, internal: h.internal.length }).toEqual(calls);
+    expect(status.body).toEqual({ report: { status: "done", progress: null, errorCode: null }, paused: false });
+    expect({ streams: h.streams.length, counts: h.counts.length }).toEqual(calls);
+    expect(h.fetches).toHaveLength(0);
+  });
+
+  it("tone만 다른 같은 대화는 중복이 아니라 새 id(202). findDuplicate에 tone을 넘긴다", async () => {
+    const h = await harness();
+    h.state.manual = true;
+    const find = vi.spyOn(h.repo, "findDuplicate");
+    const fact = await handleCreateConversation(create(h.cookie, makePayload(0, "fact")), h.deps);
+    const warm = await handleCreateConversation(create(h.cookie, makePayload(0, "warm")), h.deps);
+    expect([fact.status, warm.status]).toEqual([202, 202]);
+    expect((warm.body as { id: string }).id).not.toBe((fact.body as { id: string }).id);
+    expect(find.mock.calls.map(([a]) => a.tone)).toEqual(["fact", "warm"]);
+    expect(find.mock.calls[1][0]).toEqual({
+      inviteId: expect.any(String),
+      payloadSha256: await sha256Hex(JSON.stringify(makePayload(0, "warm"))),
+      concept: "couple",
+      tone: "warm",
+      promptVersion: PROMPT_VERSION,
+    });
+    expect((await h.repo.getConversation((warm.body as { id: string }).id))!.tone).toBe("warm");
   });
 
   it("countTokens에는 1편 요청의 model·system·messages·thinking·output_config만 보낸다", async () => {
@@ -118,8 +112,7 @@ describe("POST /api/conversations", () => {
     expect(again.body).toEqual(first.body);
     expect(later.body).toEqual(first.body);
     expect(h.counts).toHaveLength(1);
-    expect(h.streams.filter((s) => s.n === 1)).toHaveLength(1);
-    expect(h.streams).toHaveLength(4);
+    expect(h.streams).toHaveLength(1);
   });
 
   it("429 enforced_spend_limit_reached → 정지, 다음 POST는 423, Anthropic 재호출 0번(생성·countTokens 모두) (Review Focus 3)", async () => {
@@ -135,15 +128,7 @@ describe("POST /api/conversations", () => {
     expect(h.counts).toHaveLength(1);
     const { id } = res.body as { id: string };
     const status = await handleStatus(statusOf(h.cookie, id), h.deps, id);
-    expect(status.body).toEqual({
-      episodes: [
-        { n: 1, status: "failed", progress: null, errorCode: "limit" },
-        { n: 2, status: "queued", progress: null, errorCode: null },
-        { n: 3, status: "queued", progress: null, errorCode: null },
-        { n: 4, status: "queued", progress: null, errorCode: null },
-      ],
-      paused: true,
-    });
+    expect(status.body).toEqual({ report: { status: "failed", progress: null, errorCode: "limit" }, paused: true });
 
     const claim = vi.spyOn(h.repo, "claim");
     const next = await handleCreateConversation(create(h.cookie, makePayload(1)), h.deps);
@@ -151,7 +136,7 @@ describe("POST /api/conversations", () => {
     expect(next).toEqual({ status: 423, body: { error: "paused" } });
     expect(h.counts).toHaveLength(1);
     expect(h.streams).toHaveLength(1);
-    expect(h.internal).toHaveLength(0);
+    expect(h.fetches).toHaveLength(0);
     expect(claim).not.toHaveBeenCalled();
   });
 
@@ -220,21 +205,6 @@ describe("POST /api/conversations", () => {
     });
   });
 
-  it("내부 fetch가 401이면 2~4편은 failed(dispatch), 1편은 그대로 done", async () => {
-    const h = await harness({ internal: async () => new Response(null, { status: 401 }) });
-    const res = await handleCreateConversation(create(h.cookie, makePayload()), h.deps);
-    await h.settle();
-    const { id } = res.body as { id: string };
-    const status = await handleStatus(statusOf(h.cookie, id), h.deps, id);
-    expect((status.body as { episodes: unknown[] }).episodes).toEqual([
-      { n: 1, status: "done", progress: null, errorCode: null },
-      { n: 2, status: "failed", progress: null, errorCode: "dispatch" },
-      { n: 3, status: "failed", progress: null, errorCode: "dispatch" },
-      { n: 4, status: "failed", progress: null, errorCode: "dispatch" },
-    ]);
-    expect(h.streams).toHaveLength(1);
-  });
-
   it("월 1건 코드: POST → DELETE → 같은 payload로 POST → 429 invite_limit (claim 원장은 남는다)", async () => {
     const h = await harness({ monthlyLimit: 1 });
     const payload = makePayload();
@@ -248,13 +218,12 @@ describe("POST /api/conversations", () => {
   });
 
   it("2번째 섹션 뒤에서 끊긴 SSE(마감) → DB content는 섹션 1개, status partial", async () => {
-    const h = await harness({ reply: (n) => cut(cutInSecondSection(n)), deadlineMs: 150, internal: async () => new Response(null, { status: 202 }) });
+    const h = await harness({ reply: (n) => cut(cutInSecondSection(n)), deadlineMs: 150 });
     const res = await handleCreateConversation(create(h.cookie, makePayload()), h.deps);
     await h.settle();
-    const row = await h.repo.getConversation((res.body as { id: string }).id);
-    const first = row!.episodes[0];
-    expect(first.status).toBe("partial");
-    expect(first.content?.sections.map((s) => s.title)).toEqual(["저녁의 리듬"]);
+    const { report } = (await h.repo.getConversation((res.body as { id: string }).id))!;
+    expect(report.status).toBe("partial");
+    expect(report.content?.sections.map((s) => s.title)).toEqual(["저녁의 리듬"]);
   });
 
   it("countTokens가 예산 × 1.05를 넘으면 413 {maxTokens}: (본문+통계+프롬프트 몫) 단위. claim·생성 없음", async () => {
@@ -320,6 +289,7 @@ describe("POST /api/conversations", () => {
       payloadSha256: await sha256Hex(JSON.stringify(payload)),
       meta: {
         prompt_version: PROMPT_VERSION,
+        tone: "fact",
         kind: "pair",
         period_start: payload.period.start,
         period_end: payload.period.end,
@@ -331,9 +301,9 @@ describe("POST /api/conversations", () => {
       },
       estCost: DEFAULT_EST_COST_USD,
     });
-    // 만든 직후 1편은 running이고 작업이 하나 예약된다
+    // 만든 직후 리포트는 running이고 작업이 하나 예약된다
     const row = await h.repo.getConversation(((await claim.mock.results[0].value) as { id: string }).id);
-    expect(row!.episodes.map((e) => e.status)).toEqual(["running", "queued", "queued", "queued"]);
+    expect(row!.report.status).toBe("running");
     expect(h.queued).toHaveLength(1);
   });
 
@@ -366,15 +336,10 @@ describe("POST /api/conversations", () => {
     expect(h.counts).toHaveLength(0);
   });
 
-  it("Anthropic 키(client)나 내부 서명 비밀값이 없으면 503. 가짜 클라이언트로 돌지 않는다", async () => {
+  it("Anthropic 키(client)가 없으면 503. 가짜 클라이언트로 돌지 않는다", async () => {
     const h = await harness();
     const noClient = await handleCreateConversation(create(h.cookie, makePayload()), { ...h.deps, client: null });
     expect(noClient).toEqual({ status: 503, body: { error: "not_ready" } });
-    const noSecret = await handleCreateConversation(create(h.cookie, makePayload()), {
-      ...h.deps,
-      secrets: { ...h.deps.secrets, internal: "" },
-    });
-    expect(noSecret.status).toBe(503);
     expect(h.counts).toHaveLength(0);
   });
 });

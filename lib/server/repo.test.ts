@@ -1,4 +1,5 @@
-// memoryRepo 는 sideinfra 마이그레이션(20261123063000_analytalk_core.sql)의 규칙을 그대로 재현한다.
+// memoryRepo 는 sideinfra 마이그레이션(20261123063000_analytalk_core.sql + 20261126090000_analytalk_v2.sql)의 규칙을 그대로 재현한다.
+// v2: 대화당 리포트 한 행(episodes n = 1), 중복 키에 tone.
 // 시각은 Date 만 가짜로 돌려 주기 경계·24시간·30일 창을 확인한다.
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +16,7 @@ const USAGE: Usage = { input_tokens: 1000, output_tokens: 100, cache_creation_in
 
 const meta = (over: Record<string, unknown> = {}) => ({
   prompt_version: "v1",
+  tone: "fact",
   kind: "group",
   period_start: "2026-01-01",
   period_end: "2026-06-30",
@@ -50,13 +52,11 @@ async function created(result: Promise<ClaimResult>): Promise<string> {
 function finish(
   repo: AppRepo,
   id: string,
-  n: number,
   status: string,
   o: { errorCode?: string | null; cost?: number; usage?: Usage | null; content?: unknown } = {},
 ) {
-  return repo.finishEpisode({
+  return repo.finishReport({
     id,
-    n,
     status,
     content: o.content ?? null,
     model: "claude-opus-5-5",
@@ -110,17 +110,28 @@ describe("memoryRepo claim 판정 순서", () => {
     const first = await claim(repo, one, { sha: "same" });
     expect(first.outcome).toBe("created");
     expect(await claim(repo, one, { sha: "same" })).toEqual({ id: first.id, outcome: "duplicate" });
-    expect(await repo.findDuplicate({ inviteId: one, payloadSha256: "same", concept: "group", promptVersion: "v1" })).toBe(first.id);
+    expect(await repo.findDuplicate({ inviteId: one, payloadSha256: "same", concept: "group", tone: "fact", promptVersion: "v1" })).toBe(first.id);
   });
 
-  it("코드·컨셉·프롬프트 버전·payload 중 하나라도 다르면 중복이 아니다", async () => {
+  it("코드·컨셉·말투·프롬프트 버전·payload 중 하나라도 다르면 중복이 아니다", async () => {
     const { repo, one, two } = await fixture();
     await created(claim(repo, one, { sha: "same" }));
-    const base = { inviteId: one, payloadSha256: "same", concept: "group", promptVersion: "v1" };
+    const base = { inviteId: one, payloadSha256: "same", concept: "group", tone: "fact", promptVersion: "v1" };
+    expect(await repo.findDuplicate(base)).not.toBeNull();
     expect(await repo.findDuplicate({ ...base, inviteId: two })).toBeNull();
     expect(await repo.findDuplicate({ ...base, concept: "couple" })).toBeNull();
+    expect(await repo.findDuplicate({ ...base, tone: "warm" })).toBeNull();
     expect(await repo.findDuplicate({ ...base, promptVersion: "v2" })).toBeNull();
     expect(await repo.findDuplicate({ ...base, payloadSha256: "other" })).toBeNull();
+  });
+
+  it("claim도 p_meta의 tone으로 중복을 본다: 같은 sha·다른 tone은 새 대화", async () => {
+    const { repo, two } = await fixture();
+    const fact = await created(claim(repo, two, { sha: "same" }));
+    const warm = await created(claim(repo, two, { sha: "same", meta: meta({ tone: "warm" }) }));
+    expect(warm).not.toBe(fact);
+    expect((await repo.getConversation(warm))!.tone).toBe("warm");
+    expect(await claim(repo, two, { sha: "same", meta: meta({ tone: "warm" }) })).toEqual({ id: warm, outcome: "duplicate" });
   });
 
   it("월 2건 코드의 세 번째는 invite_limit", async () => {
@@ -167,21 +178,25 @@ describe("memoryRepo claim 판정 순서", () => {
     for (const estCost of [0, -1, Number.NaN]) await expect(claim(repo, many, { estCost })).rejects.toThrow();
   });
 
-  it("display_names·stats·prompt_version이 없으면 거부하고 아무것도 만들지 않는다", async () => {
+  it("display_names·stats·prompt_version·tone이 없거나 tone이 fact·warm·show 밖이면 거부하고 아무것도 만들지 않는다", async () => {
     const { repo, one } = await fixture();
-    for (const key of ["display_names", "stats", "prompt_version"]) {
+    for (const key of ["display_names", "stats", "prompt_version", "tone"]) {
       await expect(claim(repo, one, { meta: meta({ [key]: null }) })).rejects.toThrow();
     }
+    const { tone: _, ...noTone } = meta();
+    await expect(claim(repo, one, { meta: noTone })).rejects.toThrow("[memoryRepo] tone check");
+    await expect(claim(repo, one, { meta: meta({ tone: "loud" }) })).rejects.toThrow("[memoryRepo] tone check");
     await created(claim(repo, one));
   });
 
-  it("만든 대화는 메타와 queued 4편을 갖고 30일 뒤 만료된다", async () => {
+  it("만든 대화는 메타와 queued 리포트 한 행을 갖고 30일 뒤 만료된다", async () => {
     const { repo, many } = await fixture();
-    const id = await created(claim(repo, many, { sha: "abc", concept: "couple", meta: meta({ kind: "pair" }) }));
+    const id = await created(claim(repo, many, { sha: "abc", concept: "couple", meta: meta({ kind: "pair", tone: "show" }) }));
     expect(await repo.getConversation(id)).toEqual({
       id,
       inviteId: many,
       concept: "couple",
+      tone: "show",
       kind: "pair",
       periodStart: "2026-01-01",
       periodEnd: "2026-06-30",
@@ -192,10 +207,8 @@ describe("memoryRepo claim 판정 순서", () => {
       stats: { messages: 1000 },
       payloadSha256: "abc",
       shareTokenHash: null,
-      shareScope: null,
-      shareHidden: [],
       expiresAt: new Date(kst("2026-12-30T10:00:00")).toISOString(),
-      episodes: [1, 2, 3, 4].map((n) => ({ n, status: "queued", content: null, progress: null, errorCode: null, finishedAt: null })),
+      report: { status: "queued", content: null, progress: null, errorCode: null },
     });
   });
 
@@ -204,7 +217,7 @@ describe("memoryRepo claim 판정 순서", () => {
     const id = await created(claim(repo, many, { sha: "same" }));
     at("2026-12-30T10:00:00");
     expect(await repo.getConversation(id)).toBeNull();
-    expect(await repo.findDuplicate({ inviteId: many, payloadSha256: "same", concept: "group", promptVersion: "v1" })).toBeNull();
+    expect(await repo.findDuplicate({ inviteId: many, payloadSha256: "same", concept: "group", tone: "fact", promptVersion: "v1" })).toBeNull();
     expect(await created(claim(repo, many, { sha: "same" }))).not.toBe(id);
   });
 });
@@ -218,39 +231,32 @@ describe("memoryRepo claim 원장 (Task 2 claims)", () => {
     expect(await claim(repo, one)).toEqual({ id: null, outcome: "invite_limit" });
   });
 
-  it("1편이 refused인 대화는 세지 않는다", async () => {
+  it("리포트가 refused인 대화는 세지 않는다", async () => {
     const { repo, one } = await fixture();
     const id = await created(claim(repo, one));
-    await finish(repo, id, 1, "refused");
+    await finish(repo, id, "refused");
     await created(claim(repo, one));
   });
 
-  it("2편 refused는 센다", async () => {
+  it("리포트에 limit 오류가 있으면 세지 않는다", async () => {
     const { repo, one } = await fixture();
     const id = await created(claim(repo, one));
-    await finish(repo, id, 2, "refused");
-    expect((await claim(repo, one)).outcome).toBe("invite_limit");
-  });
-
-  it("어느 편이든 limit 오류가 있으면 세지 않는다", async () => {
-    const { repo, one } = await fixture();
-    const id = await created(claim(repo, one));
-    await finish(repo, id, 3, "failed", { errorCode: "limit" });
+    await finish(repo, id, "failed", { errorCode: "limit" });
     await created(claim(repo, one));
   });
 
-  it("limit 오류 편을 다시 쓰기 시작하면 다시 센다", async () => {
+  it("limit 오류 리포트를 다시 쓰기 시작하면 다시 센다", async () => {
     const { repo, one } = await fixture();
     const id = await created(claim(repo, one));
-    await finish(repo, id, 3, "failed", { errorCode: "limit" });
-    expect(await repo.startEpisode(id, 3)).toBe(true);
+    await finish(repo, id, "failed", { errorCode: "limit" });
+    expect(await repo.startReport(id)).toBe(true);
     expect((await claim(repo, one)).outcome).toBe("invite_limit");
   });
 
   it("세지 않던 대화는 지운 뒤에도 세지 않는다", async () => {
     const { repo, one } = await fixture();
     const id = await created(claim(repo, one));
-    await finish(repo, id, 1, "refused");
+    await finish(repo, id, "refused");
     await repo.deleteConversation(id, one);
     await created(claim(repo, one));
   });
@@ -270,15 +276,14 @@ describe("memoryRepo claim 원장 (Task 2 claims)", () => {
     // 주기 초에 88달러를 써 둔다(7일 전이라 주간 차단에는 안 잡힌다)
     at("2026-11-01T10:00:00");
     const early = await created(claim(repo, many));
-    await finish(repo, early, 1, "done", { cost: 88 });
-    for (const n of [2, 3, 4]) await finish(repo, early, n, "done");
+    await finish(repo, early, "done", { cost: 88 });
 
     // 마지막 날: 남은 예산 2달러 ÷ 1일 ÷ 1달러 → 하루 2건
     at("2026-11-30T10:00:00");
     const a = await created(claim(repo, many));
-    await finish(repo, a, 1, "failed", { errorCode: "overloaded" });
+    await finish(repo, a, "failed", { errorCode: "overloaded" });
     const b = await created(claim(repo, many));
-    await finish(repo, b, 1, "failed", { errorCode: "overloaded" });
+    await finish(repo, b, "failed", { errorCode: "overloaded" });
     expect(await claim(repo, many)).toEqual({ id: null, outcome: "daily_limit" });
 
     await repo.deleteConversation(a, many);
@@ -290,8 +295,7 @@ describe("memoryRepo claim 원장 (Task 2 claims)", () => {
     const { repo, many } = await fixture();
     at("2026-11-01T10:00:00");
     const early = await created(claim(repo, many));
-    await finish(repo, early, 1, "done", { cost: 88 });
-    for (const n of [2, 3, 4]) await finish(repo, early, n, "done");
+    await finish(repo, early, "done", { cost: 88 });
     at("2026-11-30T10:00:00");
     // 진행 중 1건(1달러 예약) → (2 − 1) ÷ 1일 ÷ 1달러 = 1건, 오늘 이미 1건
     await created(claim(repo, many));
@@ -302,11 +306,10 @@ describe("memoryRepo claim 원장 (Task 2 claims)", () => {
     const { repo, many } = await fixture();
     at("2026-11-01T10:00:00");
     const early = await created(claim(repo, many));
-    await finish(repo, early, 1, "done", { cost: 86 });
-    for (const n of [2, 3, 4]) await finish(repo, early, n, "done");
+    await finish(repo, early, "done", { cost: 86 });
     const failedClaim = async () => {
       const id = await created(claim(repo, many));
-      await finish(repo, id, 1, "failed", { errorCode: "overloaded" });
+      await finish(repo, id, "failed", { errorCode: "overloaded" });
     };
     // 29일 23시(UTC로는 같은 날 14시): 남은 예산 4달러 ÷ 2일 → 하루 2건
     at("2026-11-29T23:00:00");
@@ -336,40 +339,25 @@ describe("memoryRepo 진행 중 대화 (주간 차단의 예약)", () => {
     expect((await claim(repo, many, { estCost: 7.5 })).outcome).toBe("global_limit");
   });
 
-  it("1편 failed + 2~4편 queued인 대화는 예약하지 않는다", async () => {
+  it("failed 리포트는 예약하지 않는다", async () => {
     const { repo, many } = await fixture();
     const a = await created(claim(repo, many, { estCost: EST }));
     await created(claim(repo, many, { estCost: EST }));
-    await finish(repo, a, 1, "failed", { errorCode: "overloaded" });
+    await finish(repo, a, "failed", { errorCode: "overloaded" });
     await created(claim(repo, many, { estCost: EST }));
   });
 
   const cases: [string, (repo: AppRepo, id: string) => Promise<unknown>, boolean][] = [
-    ["1편 queued 그대로(24시간 지남)", async () => {}, false],
-    ["1편 running", (repo, id) => repo.startEpisode(id, 1), true],
-    ["1편 done + 2~4편 queued", (repo, id) => finish(repo, id, 1, "done"), true],
-    ["1편 partial + 2~4편 queued", (repo, id) => finish(repo, id, 1, "partial"), true],
-    [
-      "1편 done + 2편 running",
-      async (repo, id) => {
-        await finish(repo, id, 1, "done");
-        await repo.startEpisode(id, 2);
-      },
-      true,
-    ],
-    ["1편 failed", (repo, id) => finish(repo, id, 1, "failed", { errorCode: "overloaded" }), false],
-    ["1편 refused", (repo, id) => finish(repo, id, 1, "refused"), false],
-    ["1편 safety", (repo, id) => finish(repo, id, 1, "safety"), false],
-    [
-      "4편 모두 끝남",
-      async (repo, id) => {
-        for (const n of [1, 2, 3, 4]) await finish(repo, id, n, "done");
-      },
-      false,
-    ],
+    ["queued 그대로(24시간 지남)", async () => {}, false],
+    ["running", (repo, id) => repo.startReport(id), true],
+    ["done", (repo, id) => finish(repo, id, "done"), false],
+    ["partial", (repo, id) => finish(repo, id, "partial"), false],
+    ["failed", (repo, id) => finish(repo, id, "failed", { errorCode: "overloaded" }), false],
+    ["refused", (repo, id) => finish(repo, id, "refused"), false],
+    ["safety", (repo, id) => finish(repo, id, "safety"), false],
   ];
 
-  it.each(cases)("어제 만든 대화가 %s → 예약 %s", async (_label, act, reserved) => {
+  it.each(cases)("어제 만든 대화의 리포트가 %s → 예약 %s", async (_label, act, reserved) => {
     const { repo, many } = await fixture();
     at("2026-11-29T09:00:00");
     const a = await created(claim(repo, many, { estCost: EST }));
@@ -384,18 +372,18 @@ describe("memoryRepo 진행 중 대화 (주간 차단의 예약)", () => {
     at("2026-10-30T10:00:00");
     const a = await created(claim(repo, many, { estCost: EST }));
     at("2026-11-30T10:00:00");
-    expect(await repo.startEpisode(a, 1)).toBe(true);
+    expect(await repo.startReport(a)).toBe(true);
     await created(claim(repo, many, { estCost: EST }));
     await created(claim(repo, many, { estCost: EST }));
   });
 
-  it("최근 7일 원가를 더한다. 지운 대화에서 나중에 끝난 편의 원가도 남는다", async () => {
+  it("최근 7일 원가를 더한다. 지운 대화에서 나중에 끝난 리포트의 원가도 남는다", async () => {
     const { repo, many } = await fixture();
     at("2026-11-23T10:00:00");
     const a = await created(claim(repo, many, { estCost: EST }));
-    await repo.startEpisode(a, 1);
+    await repo.startReport(a);
     await repo.deleteConversation(a, many);
-    await finish(repo, a, 1, "done", { cost: 15 });
+    await finish(repo, a, "done", { cost: 15 });
     // 15 + (0 + 1) × 10 = 25 > 22.5
     expect((await claim(repo, many, { estCost: EST })).outcome).toBe("global_limit");
     at("2026-11-30T09:59:59");
@@ -408,28 +396,25 @@ describe("memoryRepo 진행 중 대화 (주간 차단의 예약)", () => {
   it("usage가 null이면 원가를 남기지 않는다", async () => {
     const { repo, many } = await fixture();
     const a = await created(claim(repo, many, { estCost: EST }));
-    await finish(repo, a, 1, "failed", { cost: 15, usage: null });
+    await finish(repo, a, "failed", { cost: 15, usage: null });
     await created(claim(repo, many, { estCost: EST }));
   });
 });
 
 describe("memoryRepo 평균 원가", () => {
-  /** days마다 대화 하나를 만들고 1편 원가 20달러로 4편을 끝낸다. 4편 상태는 last */
-  async function seedFinished(repo: AppRepo, inviteId: string, days: string[], last = "done", cost = 20) {
+  /** days마다 대화 하나를 만들고 원가 cost달러로 리포트를 status로 끝낸다 */
+  async function seedFinished(repo: AppRepo, inviteId: string, days: string[], status = "done", cost = 20) {
     for (const day of days) {
       at(`${day}T10:00:00`);
       const id = await created(claim(repo, inviteId));
-      await finish(repo, id, 1, "done", { cost, usage: USAGE });
-      await finish(repo, id, 2, "done");
-      await finish(repo, id, 3, "done");
-      await finish(repo, id, 4, last);
+      await finish(repo, id, status, { cost, usage: USAGE });
     }
     at("2026-11-30T10:00:00");
   }
   // 7일보다 오래돼 주간 원가에는 안 잡히고, 30일 안이라 표본이 된다
   const DAYS = ["2026-11-01", "2026-11-09", "2026-11-17"];
 
-  it("최근 30일에 4편이 다 끝난 대화가 3건 이상이면 그 평균(20달러)으로 예약한다", async () => {
+  it("최근 30일에 리포트가 끝난 대화가 3건 이상이면 그 평균(20달러)으로 예약한다", async () => {
     const { repo, many } = await fixture();
     await seedFinished(repo, many, DAYS);
     await created(claim(repo, many, { estCost: 1 }));
@@ -437,9 +422,9 @@ describe("memoryRepo 평균 원가", () => {
     expect((await claim(repo, many, { estCost: 1 })).outcome).toBe("global_limit");
   });
 
-  it.each(["refused", "safety", "partial"])("4편이 %s여도 끝난 대화로 센다", async (last) => {
+  it.each(["done", "partial", "refused", "safety"])("리포트가 %s면 끝난 대화로 센다", async (status) => {
     const { repo, many } = await fixture();
-    await seedFinished(repo, many, DAYS, last);
+    await seedFinished(repo, many, DAYS, status);
     await created(claim(repo, many, { estCost: 1 }));
     expect((await claim(repo, many, { estCost: 1 })).outcome).toBe("global_limit");
   });
@@ -451,7 +436,7 @@ describe("memoryRepo 평균 원가", () => {
     await created(claim(repo, many, { estCost: 1 }));
   });
 
-  it("failed 편이 있는 대화는 표본이 아니다", async () => {
+  it("failed 리포트는 표본이 아니다", async () => {
     const { repo, many } = await fixture();
     await seedFinished(repo, many, DAYS.slice(0, 1), "failed");
     await seedFinished(repo, many, DAYS.slice(1));
@@ -475,7 +460,7 @@ describe("memoryRepo 평균 원가", () => {
   });
 });
 
-describe("memoryRepo 편 상태 (Task 2 start_episode·save_progress·finish_episode)", () => {
+describe("memoryRepo 리포트 상태 (start_episode·save_progress·finish_episode, n = 1)", () => {
   it.each([
     ["queued", true],
     ["failed", true],
@@ -484,138 +469,139 @@ describe("memoryRepo 편 상태 (Task 2 start_episode·save_progress·finish_epi
     ["done", false],
     ["refused", false],
     ["safety", false],
-  ])("%s 편을 시작하면 %s", async (status, ok) => {
+  ])("%s 리포트를 시작하면 %s", async (status, ok) => {
     const { repo, many } = await fixture();
     const id = await created(claim(repo, many));
-    if (status === "running") await repo.startEpisode(id, 2);
-    else if (status !== "queued") await finish(repo, id, 2, status);
-    expect(await repo.startEpisode(id, 2)).toBe(ok);
-    expect((await repo.getConversation(id))!.episodes[1].status).toBe(ok ? "running" : status);
+    if (status === "running") await repo.startReport(id);
+    else if (status !== "queued") await finish(repo, id, status);
+    expect(await repo.startReport(id)).toBe(ok);
+    expect((await repo.getConversation(id))!.report.status).toBe(ok ? "running" : status);
   });
 
-  it("시작하면 error_code·progress·finished_at을 비우고 content는 둔다", async () => {
+  it("시작하면 error_code·progress를 비우고 content는 둔다", async () => {
     const { repo, many } = await fixture();
     const id = await created(claim(repo, many));
-    await repo.startEpisode(id, 1);
-    await repo.saveProgress(id, 1, [{ range: "01-01~01-31", note: "읽는 중" }]);
-    await finish(repo, id, 1, "partial", { errorCode: "timeout", content: { headline: "첫 편" } });
-    expect(await repo.startEpisode(id, 1)).toBe(true);
-    expect((await repo.getConversation(id))!.episodes[0]).toEqual({
-      n: 1,
+    await repo.startReport(id);
+    await repo.saveProgress(id, [{ range: "01-01~01-31", note: "읽는 중" }]);
+    await finish(repo, id, "partial", { errorCode: "timeout", content: { headline: "첫 편" } });
+    expect(await repo.startReport(id)).toBe(true);
+    expect((await repo.getConversation(id))!.report).toEqual({
       status: "running",
       content: { headline: "첫 편" },
       progress: null,
       errorCode: null,
-      finishedAt: null,
     });
   });
 
-  it("없는 대화나 편은 시작하지 않는다", async () => {
-    const { repo, many } = await fixture();
-    const id = await created(claim(repo, many));
-    expect(await repo.startEpisode(randomUUID(), 1)).toBe(false);
-    expect(await repo.startEpisode(id, 5)).toBe(false);
-    expect(await repo.startEpisode("not-a-uuid", 1)).toBe(false);
+  it("없는 대화는 시작하지 않는다", async () => {
+    const { repo } = await fixture();
+    expect(await repo.startReport(randomUUID())).toBe(false);
+    expect(await repo.startReport("not-a-uuid")).toBe(false);
   });
 
-  it("saveProgress는 running 편에만 쓴다", async () => {
+  it("saveProgress는 running 리포트에만 쓴다", async () => {
     const { repo, many } = await fixture();
     const id = await created(claim(repo, many));
     const notes = [{ range: "01-01~01-31", note: "읽는 중" }];
-    await repo.saveProgress(id, 1, notes);
-    expect((await repo.getConversation(id))!.episodes[0].progress).toBeNull();
-    await repo.startEpisode(id, 1);
-    await repo.saveProgress(id, 1, notes);
-    expect((await repo.getConversation(id))!.episodes[0].progress).toEqual(notes);
-    await finish(repo, id, 1, "done");
-    await repo.saveProgress(id, 1, [{ range: "02-01~02-28", note: "늦게 온 메모" }]);
-    expect((await repo.getConversation(id))!.episodes[0].progress).toEqual(notes);
+    await repo.saveProgress(id, notes);
+    expect((await repo.getConversation(id))!.report.progress).toBeNull();
+    await repo.startReport(id);
+    await repo.saveProgress(id, notes);
+    expect((await repo.getConversation(id))!.report.progress).toEqual(notes);
+    await finish(repo, id, "done");
+    await repo.saveProgress(id, [{ range: "02-01~02-28", note: "늦게 온 메모" }]);
+    expect((await repo.getConversation(id))!.report.progress).toEqual(notes);
   });
 
-  it("finishEpisode는 지금 상태와 상관없이 덮어쓰고 끝난 시각을 남긴다 (앞의 글이 없을 때)", async () => {
+  it("finishReport는 지금 상태와 상관없이 덮어쓴다 (앞의 글이 없을 때)", async () => {
     const { repo, many } = await fixture();
     const id = await created(claim(repo, many));
-    await finish(repo, id, 3, "failed", { errorCode: "dispatch" });
-    expect((await repo.getConversation(id))!.episodes[2]).toMatchObject({
-      status: "failed",
-      errorCode: "dispatch",
-      finishedAt: new Date(kst("2026-11-30T10:00:00")).toISOString(),
-    });
+    await finish(repo, id, "failed", { errorCode: "timeout" });
+    expect((await repo.getConversation(id))!.report).toMatchObject({ status: "failed", errorCode: "timeout", content: null });
+    await finish(repo, id, "done", { content: { headline: "다시" } });
+    expect((await repo.getConversation(id))!.report).toMatchObject({ status: "done", errorCode: null, content: { headline: "다시" } });
   });
 
   it("모르는 상태로는 끝내지 않는다", async () => {
     const { repo, many } = await fixture();
     const id = await created(claim(repo, many));
-    await expect(finish(repo, id, 1, "bogus")).rejects.toThrow();
-    expect((await repo.getConversation(id))!.episodes[0].status).toBe("queued");
+    await expect(finish(repo, id, "bogus")).rejects.toThrow();
+    expect((await repo.getConversation(id))!.report.status).toBe("queued");
   });
 });
 
 describe("memoryRepo 다시 쓰기 판정 (retry_episode)", () => {
-  const retry = (repo: AppRepo, id: string, n: number, maxRuns = 3) => repo.retryEpisode({ id, n, estCost: 1.31, maxRuns });
+  const retry = (repo: AppRepo, id: string, maxRuns = 3) => repo.retryReport({ id, estCost: 1.2, maxRuns });
 
-  it("정지 중이면 paused, 시작할 수 없는 편이면 not_startable", async () => {
+  it("정지 중이면 paused, 시작할 수 없는 리포트면 not_startable", async () => {
     const { repo, many } = await fixture();
-    const id = await created(claim(repo, many));
-    await finish(repo, id, 3, "done");
-    expect(await retry(repo, id, 3)).toBe("not_startable");
-    expect(await retry(repo, randomUUID(), 1)).toBe("not_startable");
+    const done = await created(claim(repo, many));
+    const failed = await created(claim(repo, many));
+    await finish(repo, done, "done");
+    expect(await retry(repo, done)).toBe("not_startable");
+    expect(await retry(repo, randomUUID())).toBe("not_startable");
     await repo.setPaused(new Date(Date.now() + 60_000));
-    await finish(repo, id, 2, "failed", { errorCode: "retryable" });
-    expect(await retry(repo, id, 2)).toBe("paused");
-    expect((await repo.getConversation(id))!.episodes[1].status).toBe("failed");
+    await finish(repo, failed, "failed", { errorCode: "retryable" });
+    expect(await retry(repo, failed)).toBe("paused");
+    expect((await repo.getConversation(failed))!.report.status).toBe("failed");
   });
 
-  it("그 편의 유료 실행이 상한에 닿으면 retry_limit. 원가 없는 실패는 세지 않는다", async () => {
+  it("리포트의 유료 실행이 상한에 닿으면 retry_limit. 원가 없는 실패는 세지 않는다", async () => {
     const { repo, many } = await fixture();
     const id = await created(claim(repo, many));
     // 응답 전 실패 2번(usage 없음) + 유료 실행 3번
-    for (let i = 0; i < 2; i++) await finish(repo, id, 2, "failed", { errorCode: "retryable", usage: null });
-    for (let i = 0; i < 3; i++) await finish(repo, id, 2, "partial", { cost: 0.2, content: { headline: "앞의 글" } });
-    expect(await retry(repo, id, 2)).toBe("retry_limit");
-    expect((await repo.getConversation(id))!.episodes[1].status).toBe("partial");
-    expect(await retry(repo, id, 2, 4)).toBe("started");
-    expect((await repo.getConversation(id))!.episodes[1]).toMatchObject({ status: "running", content: { headline: "앞의 글" } });
-    expect(await retry(repo, id, 2, 4)).toBe("not_startable");
+    for (let i = 0; i < 2; i++) await finish(repo, id, "failed", { errorCode: "retryable", usage: null });
+    for (let i = 0; i < 3; i++) await finish(repo, id, "partial", { cost: 0.2, content: { headline: "앞의 글" } });
+    expect(await retry(repo, id)).toBe("retry_limit");
+    expect((await repo.getConversation(id))!.report.status).toBe("partial");
+    expect(await retry(repo, id, 4)).toBe("started");
+    expect((await repo.getConversation(id))!.report).toMatchObject({ status: "running", content: { headline: "앞의 글" } });
+    expect(await retry(repo, id, 4)).toBe("not_startable");
   });
 
-  it("주간 상한: 최근 7일 원가 + 이번 실행 몫(1편이면 따라 도는 queued 편까지)이 22.5달러를 넘으면 global_limit", async () => {
+  it("주간 상한: 최근 7일 원가 + 평균 원가 전체(따라 도는 편 없음)가 22.5달러를 넘으면 global_limit", async () => {
     const { repo, many } = await fixture();
     const id = await created(claim(repo, many));
     const other = await created(claim(repo, many));
-    await finish(repo, id, 1, "failed", { errorCode: "retryable", usage: null });
-    await finish(repo, id, 2, "failed", { errorCode: "retryable", usage: null });
-    // 다른 대화의 원가로 최근 7일 합을 21.6달러로 만든다
-    await finish(repo, other, 4, "done", { cost: 21.6 });
-    expect(await retry(repo, id, 1)).toBe("global_limit"); // 21.6 + 1.31 × 3/4 (1편 + queued 3·4편) = 22.58
-    expect((await repo.getConversation(id))!.episodes[0].status).toBe("failed");
-    expect(await retry(repo, id, 2)).toBe("started"); // 21.6 + 1.31/4 = 21.93
+    await finish(repo, id, "failed", { errorCode: "retryable", usage: null });
+    // 다른 대화의 원가로 최근 7일 합을 21.4달러로 만든다
+    await finish(repo, other, "done", { cost: 21.4 });
+    expect(await retry(repo, id)).toBe("global_limit"); // 21.4 + 1.2 = 22.6
+    expect((await repo.getConversation(id))!.report.status).toBe("failed");
+
+    const f = await fixture();
+    const a = await created(claim(f.repo, f.many));
+    const b = await created(claim(f.repo, f.many));
+    await finish(f.repo, a, "failed", { errorCode: "retryable", usage: null });
+    await finish(f.repo, b, "done", { cost: 20 });
+    expect(await retry(f.repo, a)).toBe("started"); // 20 + 1.2 = 21.2
   });
 });
 
 describe("memoryRepo partial 다시 쓰기가 실패해도 앞의 글을 남긴다", () => {
-  it("content가 있는 편이 failed로 끝나면 partial·content 그대로·error_code만 바뀐다. 원가는 남긴다", async () => {
+  it("content가 있는 리포트가 failed로 끝나면 partial·content 그대로·error_code만 바뀐다. 원가는 남긴다", async () => {
     const { repo, many } = await fixture();
     const id = await created(claim(repo, many));
-    await finish(repo, id, 2, "partial", { content: { headline: "앞의 글" } });
-    await repo.startEpisode(id, 2);
-    await finish(repo, id, 2, "failed", { errorCode: "invalid_output", cost: 0.4 });
-    expect((await repo.getConversation(id))!.episodes[1]).toMatchObject({
+    await finish(repo, id, "partial", { content: { headline: "앞의 글" } });
+    await repo.startReport(id);
+    await finish(repo, id, "failed", { errorCode: "invalid_output", cost: 0.4 });
+    expect((await repo.getConversation(id))!.report).toMatchObject({
       status: "partial",
       content: { headline: "앞의 글" },
       errorCode: "invalid_output",
     });
-    expect(await repo.retryEpisode({ id, n: 2, estCost: 1.31, maxRuns: 1 })).toBe("retry_limit");
+    expect(await repo.retryReport({ id, estCost: 1.2, maxRuns: 1 })).toBe("retry_limit");
   });
 
   it("content가 없으면 failed 그대로, safety·refused는 덮어쓴다", async () => {
     const { repo, many } = await fixture();
-    const id = await created(claim(repo, many));
-    await finish(repo, id, 3, "failed", { errorCode: "dispatch" });
-    expect((await repo.getConversation(id))!.episodes[2]).toMatchObject({ status: "failed", content: null });
-    await finish(repo, id, 2, "partial", { content: { headline: "앞의 글" } });
-    await finish(repo, id, 2, "safety");
-    expect((await repo.getConversation(id))!.episodes[1]).toMatchObject({ status: "safety", content: null });
+    const a = await created(claim(repo, many));
+    await finish(repo, a, "failed", { errorCode: "timeout" });
+    expect((await repo.getConversation(a))!.report).toMatchObject({ status: "failed", content: null });
+    const b = await created(claim(repo, many));
+    await finish(repo, b, "partial", { content: { headline: "앞의 글" } });
+    await finish(repo, b, "safety");
+    expect((await repo.getConversation(b))!.report).toMatchObject({ status: "safety", content: null });
   });
 });
 
@@ -633,33 +619,32 @@ describe("memoryRepo 삭제·공유·피드백", () => {
   it("공유는 같은 코드만 설정하고, 토큰 해시로 읽고, null로 끈다", async () => {
     const { repo, many, two } = await fixture();
     const id = await created(claim(repo, many));
-    const share = { tokenHash: "hash-1", scope: "first" as const, hidden: [3] };
+    const share = { tokenHash: "hash-1" };
     expect(await repo.setShare(id, two, share)).toBe(false);
     expect(await repo.getByShareHash("hash-1")).toBeNull();
     expect(await repo.setShare(id, many, share)).toBe(true);
-    expect(await repo.getByShareHash("hash-1")).toMatchObject({ id, shareTokenHash: "hash-1", shareScope: "first", shareHidden: [3] });
-    expect(await repo.setShare(id, many, { tokenHash: null, scope: "all", hidden: [] })).toBe(true);
+    expect(await repo.getByShareHash("hash-1")).toMatchObject({ id, shareTokenHash: "hash-1" });
+    expect(await repo.setShare(id, many, { tokenHash: null })).toBe(true);
     expect(await repo.getByShareHash("hash-1")).toBeNull();
-    expect(await repo.getConversation(id)).toMatchObject({ shareTokenHash: null, shareScope: "all", shareHidden: [] });
+    expect(await repo.getConversation(id)).toMatchObject({ shareTokenHash: null });
   });
 
   it("expectHash가 지금 해시와 다르면 공유 설정을 쓰지 않는다", async () => {
     const { repo, many } = await fixture();
     const id = await created(claim(repo, many));
-    const base = { scope: "all" as const, hidden: [] };
-    expect(await repo.setShare(id, many, { ...base, tokenHash: "h1", expectHash: "x" })).toBe(false);
-    expect(await repo.setShare(id, many, { ...base, tokenHash: "h1", expectHash: null })).toBe(true);
-    expect(await repo.setShare(id, many, { ...base, tokenHash: "h2", expectHash: null })).toBe(false);
-    expect(await repo.setShare(id, many, { ...base, tokenHash: "h1", scope: "first", expectHash: "h1" })).toBe(true);
-    await repo.setShare(id, many, { ...base, tokenHash: null });
-    expect(await repo.setShare(id, many, { ...base, tokenHash: "h1", expectHash: "h1" })).toBe(false);
+    expect(await repo.setShare(id, many, { tokenHash: "h1", expectHash: "x" })).toBe(false);
+    expect(await repo.setShare(id, many, { tokenHash: "h1", expectHash: null })).toBe(true);
+    expect(await repo.setShare(id, many, { tokenHash: "h2", expectHash: null })).toBe(false);
+    expect(await repo.setShare(id, many, { tokenHash: "h1", expectHash: "h1" })).toBe(true);
+    await repo.setShare(id, many, { tokenHash: null });
+    expect(await repo.setShare(id, many, { tokenHash: "h1", expectHash: "h1" })).toBe(false);
     expect((await repo.getConversation(id))!.shareTokenHash).toBeNull();
   });
 
   it("만료된 대화는 공유 링크로도 읽히지 않는다", async () => {
     const { repo, many } = await fixture();
     const id = await created(claim(repo, many));
-    await repo.setShare(id, many, { tokenHash: "hash-1", scope: "all", hidden: [] });
+    await repo.setShare(id, many, { tokenHash: "hash-1" });
     at("2026-12-30T10:00:00");
     expect(await repo.getByShareHash("hash-1")).toBeNull();
   });
@@ -668,16 +653,16 @@ describe("memoryRepo 삭제·공유·피드백", () => {
     const { repo, many } = await fixture();
     const a = await created(claim(repo, many));
     const b = await created(claim(repo, many));
-    await repo.setShare(a, many, { tokenHash: "hash-1", scope: "all", hidden: [] });
-    await expect(repo.setShare(b, many, { tokenHash: "hash-1", scope: "all", hidden: [] })).rejects.toThrow();
+    await repo.setShare(a, many, { tokenHash: "hash-1" });
+    await expect(repo.setShare(b, many, { tokenHash: "hash-1" })).rejects.toThrow();
   });
 
   it("피드백은 정해진 이유로, 있는 대화에만 남긴다", async () => {
     const { repo, many } = await fixture();
     const id = await created(claim(repo, many));
-    await expect(repo.addFeedback({ id, n: 1, paragraphKey: "s1p1", reason: "tone" })).resolves.toBeUndefined();
-    await expect(repo.addFeedback({ id, n: 1, paragraphKey: "s1p1", reason: "boring" })).rejects.toThrow();
-    await expect(repo.addFeedback({ id: randomUUID(), n: 1, paragraphKey: "s1p1", reason: "tone" })).rejects.toThrow();
+    await expect(repo.addFeedback({ id, paragraphKey: "s1p1", reason: "tone" })).resolves.toBeUndefined();
+    await expect(repo.addFeedback({ id, paragraphKey: "s1p1", reason: "boring" })).rejects.toThrow();
+    await expect(repo.addFeedback({ id: randomUUID(), paragraphKey: "s1p1", reason: "tone" })).rejects.toThrow();
   });
 
   it("돌려준 값을 고쳐도 저장된 값은 그대로다", async () => {
@@ -685,17 +670,17 @@ describe("memoryRepo 삭제·공유·피드백", () => {
     const id = await created(claim(repo, many));
     const row = (await repo.getConversation(id))!;
     row.displayNames.push("X");
-    row.episodes[0].status = "done";
+    row.report.status = "done";
     expect((await repo.getConversation(id))!.displayNames).toEqual(["나", "P2", "P3"]);
-    expect((await repo.getConversation(id))!.episodes[0].status).toBe("queued");
+    expect((await repo.getConversation(id))!.report.status).toBe("queued");
   });
 });
 
 describe("getRepo", () => {
-  const g = globalThis as { analytalkRepoV3?: AppRepo; analytalkDevRepoV3?: AppRepo };
+  const g = globalThis as { analytalkRepoV4?: AppRepo; analytalkDevRepoV4?: AppRepo };
   afterEach(() => {
-    delete g.analytalkRepoV3;
-    delete g.analytalkDevRepoV3;
+    delete g.analytalkRepoV4;
+    delete g.analytalkDevRepoV4;
   });
 
   it("E2E 모드는 키가 있어도 고정 초대 코드(월 99건)가 든 memoryRepo를 전역에 하나 둔다", async () => {
@@ -705,7 +690,7 @@ describe("getRepo", () => {
     vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_test");
     const repo = getRepo();
     expect(getRepo()).toBe(repo);
-    expect(g.analytalkRepoV3).toBe(repo);
+    expect(g.analytalkRepoV4).toBe(repo);
     const invite = await repo.findInvite(hashCode(E2E_INVITE_CODE));
     expect(await repo.getInvite(invite!.id)).toMatchObject({ revoked: false, monthlyLimit: 99 });
   });
@@ -766,5 +751,141 @@ describe("getRepo", () => {
     expect(new Headers(fetch.mock.calls[0][1]?.headers).get("accept-profile")).toBe("analytalk");
     expect(await repo.getPausedUntil()).toBeNull();
     await expect(repo.getPausedUntil()).rejects.toThrow("[repo] getPausedUntil 실패 (42501)");
+  });
+});
+
+describe("supabaseRepo (PostgREST 요청·응답 흉내, Review Focus 4)", () => {
+  const ID = "0b6c3f1e-2a4d-4c5b-9e8f-7a6b5c4d3e2f";
+  const INVITE = "1c7d4f2e-3b5e-4d6c-8f9a-8b7c6d5e4f3a";
+
+  /** replies를 차례로 돌려주는 fetch로 Supabase 저장소를 만든다 */
+  function supabase(...replies: Response[]) {
+    vi.stubEnv("ANALYTALK_E2E", "");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_test");
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => replies.shift() ?? Response.json(null));
+    vi.stubGlobal("fetch", fetch);
+    const calls = () =>
+      fetch.mock.calls.map(([url, init]) => ({
+        url: new URL(String(url)),
+        method: init?.method,
+        body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+      }));
+    return { repo: getRepo(), calls };
+  }
+
+  /** v1 앱이 남긴 대화 행(편 4행 임베드, share_scope·share_hidden은 select하지 않는다) */
+  const dbRow = (episodes: object[]) => ({
+    id: ID,
+    invite_id: INVITE,
+    concept: "group",
+    tone: "fact",
+    kind: "group",
+    period_start: "2026-01-01",
+    period_end: "2026-06-30",
+    cutoff_at: "2026-06-30T03:00:00+00:00",
+    msg_total: 1000,
+    msg_sent: 800,
+    display_names: ["P1", "P2"],
+    stats: { messages: 1000 },
+    payload_sha256: "abc",
+    share_token_hash: null,
+    expires_at: "2026-12-30T01:00:00+00:00",
+    episodes,
+  });
+  const ep = (n: number, status: string) => ({ n, status, content: { headline: `${n}편` }, progress: null, error_code: n === 1 ? null : "dispatch" });
+
+  it("getConversation: 임베드에 편 4행이 와도 report는 n = 1 행. select에 tone이 있고 share_scope·share_hidden·finished_at은 없다", async () => {
+    const { repo, calls } = supabase(Response.json([dbRow([ep(3, "failed"), ep(1, "done"), ep(2, "queued"), ep(4, "failed")])]));
+    const row = await repo.getConversation(ID);
+    expect(row).toEqual({
+      id: ID,
+      inviteId: INVITE,
+      concept: "group",
+      tone: "fact",
+      kind: "group",
+      periodStart: "2026-01-01",
+      periodEnd: "2026-06-30",
+      cutoffAt: "2026-06-30T03:00:00.000Z",
+      msgTotal: 1000,
+      msgSent: 800,
+      displayNames: ["P1", "P2"],
+      stats: { messages: 1000 },
+      payloadSha256: "abc",
+      shareTokenHash: null,
+      expiresAt: "2026-12-30T01:00:00.000Z",
+      report: { status: "done", content: { headline: "1편" }, progress: null, errorCode: null },
+    });
+    const select = calls()[0].url.searchParams.get("select")!;
+    expect(select).toMatch(/\btone\b/);
+    expect(select).not.toMatch(/share_scope|share_hidden|finished_at/);
+    expect(select).toContain("episodes(n,status,content,progress,error_code)");
+  });
+
+  it("n = 1 행이 없으면 getConversation·getByShareHash는 null", async () => {
+    const { repo } = supabase(Response.json([dbRow([ep(2, "queued")])]), Response.json([dbRow([])]));
+    expect(await repo.getConversation(ID)).toBeNull();
+    expect(await repo.getByShareHash("hash-1")).toBeNull();
+  });
+
+  it("RPC 본문: find_duplicate에 p_tone, 리포트 함수는 p_n = 1", async () => {
+    const { repo, calls } = supabase(
+      Response.json(null),
+      Response.json(true),
+      Response.json("started"),
+      Response.json(null),
+      Response.json(null),
+    );
+    await repo.findDuplicate({ inviteId: INVITE, payloadSha256: "abc", concept: "group", tone: "warm", promptVersion: "v2" });
+    await repo.startReport(ID);
+    await repo.retryReport({ id: ID, estCost: 1.2, maxRuns: 3 });
+    await repo.saveProgress(ID, [{ range: "01-01~01-31", note: "읽는 중" }]);
+    await repo.finishReport({
+      id: ID,
+      status: "done",
+      content: { headline: "리포트" },
+      model: "claude-sonnet-5-5",
+      stopReason: "end_turn",
+      errorCode: null,
+      usage: USAGE,
+      cost: 0.5,
+    });
+    const rpc = calls().map((c) => [c.url.pathname.replace("/rest/v1/rpc/", ""), c.body]);
+    expect(rpc).toEqual([
+      ["find_duplicate", { p_invite_id: INVITE, p_payload_sha256: "abc", p_concept: "group", p_tone: "warm", p_prompt_version: "v2" }],
+      ["start_episode", { p_id: ID, p_n: 1 }],
+      ["retry_episode", { p_id: ID, p_n: 1, p_est_cost: 1.2, p_max_runs: 3 }],
+      ["save_progress", { p_id: ID, p_n: 1, p_notes: [{ range: "01-01~01-31", note: "읽는 중" }] }],
+      [
+        "finish_episode",
+        {
+          p_id: ID,
+          p_n: 1,
+          p_status: "done",
+          p_content: { headline: "리포트" },
+          p_model: "claude-sonnet-5-5",
+          p_stop_reason: "end_turn",
+          p_error_code: null,
+          p_usage: USAGE,
+          p_cost: 0.5,
+        },
+      ],
+    ]);
+  });
+
+  it("공유 발급은 scope 'all'·hidden []도 써 두고(v1 코드로 되돌려도 링크가 산다), 폐기는 해시만 비운다. 피드백은 n = 1", async () => {
+    const { repo, calls } = supabase(Response.json([{ id: ID }]), Response.json([{ id: ID }]), new Response(null, { status: 201 }));
+    expect(await repo.setShare(ID, INVITE, { tokenHash: "hash-1", expectHash: null })).toBe(true);
+    expect(await repo.setShare(ID, INVITE, { tokenHash: null })).toBe(true);
+    await repo.addFeedback({ id: ID, paragraphKey: "s1.p1", reason: "tone" });
+    const [issue, revoke, feedback] = calls();
+    expect([issue.method, issue.body]).toEqual(["PATCH", { share_token_hash: "hash-1", share_scope: "all", share_hidden: [] }]);
+    expect(issue.url.searchParams.get("share_token_hash")).toBe("is.null");
+    expect([revoke.method, revoke.body]).toEqual(["PATCH", { share_token_hash: null }]);
+    expect([feedback.url.pathname, feedback.body]).toEqual([
+      "/rest/v1/feedback",
+      { conversation_id: ID, n: 1, paragraph_key: "s1.p1", reason: "tone" },
+    ]);
   });
 });

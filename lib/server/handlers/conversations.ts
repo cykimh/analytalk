@@ -1,5 +1,5 @@
-// POST /api/conversations 본체: 초대 코드 → 페이로드 재검사 → 중복 → 정지 → 입력 토큰 → claim → 1편 예약.
-// 중복이거나 정지 중이면 Claude를 부르지 않는다(중복은 기존 id, 정지는 423). 1편은 after()에서 돌고, 응답이 시작되면 2~4편을 띄운다.
+// POST /api/conversations 본체: 초대 코드 → 페이로드 재검사 → 중복 → 정지 → 입력 토큰 → claim → 리포트 예약.
+// 중복이거나 정지 중이면 Claude를 부르지 않는다(중복은 기존 id, 정지는 423). 리포트는 after()에서 이 함수 호출 안에서 한 번 돈다.
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { MessageCountTokensParams } from "@anthropic-ai/sdk/resources/messages";
@@ -10,7 +10,7 @@ import { modelSettings } from "@/lib/llm/settings";
 import { type Payload, payloadTokens } from "@/lib/payload/build";
 import { sha256Hex } from "@/lib/payload/hash";
 import { validatePayload } from "@/lib/payload/validate";
-import { jobDeps, limitLiftsAt, runEpisodeJob } from "@/lib/server/jobs";
+import { limitLiftsAt, runReportJob } from "@/lib/server/jobs";
 import { isPaused } from "@/lib/server/repo";
 import { fail, type HandlerDeps, type HandlerResult, readJson } from "@/lib/server/route";
 import { requireInvite } from "./invite";
@@ -19,7 +19,7 @@ import { requireInvite } from "./invite";
 const BUDGET_TOLERANCE = 1.05;
 
 /**
- * 1편 요청의 입력 토큰. 모델이 읽는 부분만 보낸다(betas·fallbacks·max_tokens 제외).
+ * 리포트 요청의 입력 토큰. 모델이 읽는 부분만 보낸다(betas·fallbacks·max_tokens 제외).
  * buildRequest는 GA 모양(텍스트 블록·mid-conversation system·adaptive thinking·json_schema)만 만들어
  * 베타가 아닌 countTokens에 그대로 보낼 수 있다. 베타 타입이 더 넓어서 두 필드만 좁힌다
  */
@@ -38,6 +38,7 @@ async function countInputTokens(client: Anthropic, p: Payload): Promise<number> 
 /** conversations 열 이름을 키로 한 저장 값. 페이로드 중 transcript·anchors·me·maskCounts는 넣지 않는다 */
 const conversationMeta = (p: Payload) => ({
   prompt_version: PROMPT_VERSION,
+  tone: p.tone,
   kind: p.kind,
   period_start: p.period.start,
   period_end: p.period.end,
@@ -53,7 +54,7 @@ export async function handleCreateConversation(req: Request, deps: HandlerDeps):
   if (!("inviteId" in auth)) return fail(401, "unauthorized");
   const { client } = deps;
   // 키가 없으면 개발에서도 가짜 클라이언트 없이 503이다
-  if (!client || !deps.secrets.internal) return fail(503, "not_ready");
+  if (!client) return fail(503, "not_ready");
 
   const checked = validatePayload(await readJson(req));
   if (!checked.ok) return { status: 400, body: { error: "bad_payload", reason: checked.error } };
@@ -62,7 +63,7 @@ export async function handleCreateConversation(req: Request, deps: HandlerDeps):
   const { inviteId } = auth;
   const settings = modelSettings();
 
-  const duplicate = await deps.repo.findDuplicate({ inviteId, payloadSha256, concept: p.concept, promptVersion: PROMPT_VERSION });
+  const duplicate = await deps.repo.findDuplicate({ inviteId, payloadSha256, concept: p.concept, tone: p.tone, promptVersion: PROMPT_VERSION });
   if (duplicate) return { status: 200, body: { id: duplicate } };
   // claim도 정지를 보지만(중복 다음), 그 전에 countTokens로 Anthropic을 부르지 않게 먼저 본다
   if (await isPaused(deps.repo, deps.now())) return fail(423, "paused");
@@ -97,10 +98,7 @@ export async function handleCreateConversation(req: Request, deps: HandlerDeps):
   switch (claim.outcome) {
     case "created": {
       const { id } = claim;
-      if (await deps.repo.startEpisode(id, 1)) {
-        const job = jobDeps(deps, req.url);
-        deps.schedule(() => runEpisodeJob(job, { id, n: 1, payload: p }));
-      }
+      if (await deps.repo.startReport(id)) deps.schedule(() => runReportJob(deps, { id, payload: p }));
       return { status: 202, body: { id } };
     }
     case "duplicate":

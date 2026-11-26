@@ -7,160 +7,158 @@ import { handleStatus } from "./status";
 afterEach(() => vi.restoreAllMocks());
 
 const retry = (cookie: string | null, body: unknown) => request("POST", "/api/episodes/retry", cookie, body);
-const accepted = async () => new Response(null, { status: 202 });
+const unavailable = { status: 503, error: { type: "api_error", message: "unavailable" } };
+const OTHER_ID = "0b6c3f1e-2a4d-4c5b-9e8f-7a6b5c4d3e2f";
 
-async function statuses(h: Awaited<ReturnType<typeof harness>>, id: string) {
+async function reportOf(h: Awaited<ReturnType<typeof harness>>, id: string) {
   const res = await handleStatus(request("GET", `/api/conversations/${id}/status`, h.cookie), h.deps, id);
-  return (res.body as { episodes: { status: string; errorCode: string | null }[] }).episodes.map((e) => [e.status, e.errorCode]);
+  const { status, errorCode } = (res.body as { report: { status: string; errorCode: string | null } }).report;
+  return [status, errorCode];
 }
 
-describe("POST /api/episodes/retry", () => {
-  it("1편이 HTTP 503을 두 번 냄 → 1편 failed, 내부 fetch 0번, 2~4편 queued. retry(n=1)가 성공하면 그때 3번 (Review Focus 2)", async () => {
-    const h = await harness({
-      reply: (n, call) =>
-        n === 1 && call <= 2 ? { status: 503, error: { type: "api_error", message: "unavailable" } } : whole(JSON.stringify(episodeJson(n))),
-    });
-    const payload = makePayload();
-    const res = await handleCreateConversation(request("POST", "/api/conversations", h.cookie, payload), h.deps);
-    await h.settle();
-    const { id } = res.body as { id: string };
-    expect(await statuses(h, id)).toEqual([
-      ["failed", "retryable"],
-      ["queued", null],
-      ["queued", null],
-      ["queued", null],
-    ]);
-    expect(h.streams.map((s) => s.n)).toEqual([1, 1]);
-    expect(h.internal).toHaveLength(0);
+/** 대화 하나를 만들고 리포트 작업이 끝날 때까지 기다린다 */
+async function created(h: Awaited<ReturnType<typeof harness>>, payload = makePayload()) {
+  const res = await handleCreateConversation(request("POST", "/api/conversations", h.cookie, payload), h.deps);
+  await h.settle();
+  return { payload, id: (res.body as { id: string }).id };
+}
 
-    const again = await handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps);
-    expect(again.status).toBe(202);
-    await h.settle();
-    expect(h.internal.map((c) => c.body.n).sort()).toEqual([2, 3, 4]);
-    expect(await statuses(h, id)).toEqual(Array(4).fill(["done", null]));
+/** 다른 대화의 원가로 최근 7일 원가 합을 cost달러로 만든다 */
+const spend = (h: Awaited<ReturnType<typeof harness>>, cost: number) =>
+  h.repo.finishReport({
+    id: OTHER_ID,
+    status: "done",
+    content: null,
+    model: "claude-opus-5-5",
+    stopReason: "end_turn",
+    errorCode: null,
+    usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+    cost,
   });
 
-  it("partial 편을 동시에 두 번 다시 쓰면 하나는 202·running, 하나는 409", async () => {
-    const h = await harness({ reply: (n) => cut(cutInSecondSection(n)), deadlineMs: 150, internal: accepted });
-    const payload = makePayload();
-    const res = await handleCreateConversation(request("POST", "/api/conversations", h.cookie, payload), h.deps);
+describe("POST /api/episodes/retry", () => {
+  it("리포트가 HTTP 503을 두 번 냄 → failed(retryable). retry가 202 → done, fetch 0번 (Review Focus 2)", async () => {
+    const h = await harness({ reply: (n, call) => (call <= 2 ? unavailable : whole(JSON.stringify(episodeJson(n)))) });
+    const { id, payload } = await created(h);
+    expect(await reportOf(h, id)).toEqual(["failed", "retryable"]);
+    expect(h.streams).toHaveLength(2);
+
+    const again = await handleRetry(retry(h.cookie, { id, payload }), h.deps);
+    expect(again.status).toBe(202);
     await h.settle();
-    const { id } = res.body as { id: string };
-    expect((await statuses(h, id))[0]).toEqual(["partial", null]);
+    expect(await reportOf(h, id)).toEqual(["done", null]);
+    expect(h.streams).toHaveLength(3);
+    expect(h.fetches).toHaveLength(0);
+  });
+
+  it("옛 본문 {id, n, payload}도 받는다(n은 버린다)", async () => {
+    const h = await harness({ reply: (n, call) => (call <= 2 ? unavailable : whole(JSON.stringify(episodeJson(n)))) });
+    const { id, payload } = await created(h);
+    expect((await handleRetry(retry(h.cookie, { id, n: 3, payload }), h.deps)).status).toBe(202);
+    await h.settle();
+    expect(await reportOf(h, id)).toEqual(["done", null]);
+  });
+
+  it("partial 리포트를 동시에 두 번 다시 쓰면 하나는 202·running, 하나는 409", async () => {
+    const h = await harness({ reply: (n) => cut(cutInSecondSection(n)), deadlineMs: 150 });
+    const { id, payload } = await created(h);
+    expect(await reportOf(h, id)).toEqual(["partial", null]);
 
     h.state.manual = true;
     const both = await Promise.all([
-      handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps),
-      handleRetry(retry(h.cookie, { id, n: 1, payload: JSON.parse(JSON.stringify(payload)) }), h.deps),
+      handleRetry(retry(h.cookie, { id, payload }), h.deps),
+      handleRetry(retry(h.cookie, { id, payload: JSON.parse(JSON.stringify(payload)) }), h.deps),
     ]);
     expect(both.map((r) => r.status).sort()).toEqual([202, 409]);
-    expect((await statuses(h, id))[0]).toEqual(["running", null]);
+    expect(await reportOf(h, id)).toEqual(["running", null]);
     expect(h.queued).toHaveLength(1);
   });
 
-  it("다른 invite·다른 payload·없는 대화·이미 done인 편은 409", async () => {
-    // 2~4편은 dispatch 실패(failed)라 다시 쓸 수 있는 상태다
-    const h = await harness({ internal: async () => new Response(null, { status: 401 }) });
-    const payload = makePayload();
-    const res = await handleCreateConversation(request("POST", "/api/conversations", h.cookie, payload), h.deps);
-    await h.settle();
-    const { id } = res.body as { id: string };
+  it("다른 invite·다른 payload·없는 대화는 409 payload_mismatch, done 리포트는 409 not_startable", async () => {
+    const h = await harness({ reply: () => ({ status: 400, error: { type: "invalid_request_error", message: "bad" } }) });
+    const { id, payload } = await created(h);
+    expect(await reportOf(h, id)).toEqual(["failed", "fatal"]);
     h.state.manual = true;
-    expect((await handleRetry(retry(h.otherCookie, { id, n: 2, payload }), h.deps)).status).toBe(409);
-    expect((await handleRetry(retry(h.cookie, { id, n: 2, payload: makePayload(1) }), h.deps)).status).toBe(409);
-    const missing = "0b6c3f1e-2a4d-4c5b-9e8f-7a6b5c4d3e2f";
-    expect((await handleRetry(retry(h.cookie, { id: missing, n: 2, payload }), h.deps)).status).toBe(409);
-    expect((await handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps)).status).toBe(409);
+    expect(await handleRetry(retry(h.otherCookie, { id, payload }), h.deps)).toEqual({ status: 409, body: { error: "payload_mismatch" } });
+    expect((await handleRetry(retry(h.cookie, { id, payload: makePayload(1) }), h.deps)).status).toBe(409);
+    expect((await handleRetry(retry(h.cookie, { id: OTHER_ID, payload }), h.deps)).status).toBe(409);
     expect(h.queued).toHaveLength(0);
     // 같은 코드·같은 payload면 받는다
-    expect((await handleRetry(retry(h.cookie, { id, n: 2, payload }), h.deps)).status).toBe(202);
+    expect((await handleRetry(retry(h.cookie, { id, payload }), h.deps)).status).toBe(202);
     expect(h.queued).toHaveLength(1);
+
+    const done = await harness();
+    const d = await created(done);
+    expect(await handleRetry(retry(done.cookie, { id: d.id, payload: d.payload }), done.deps)).toEqual({
+      status: 409,
+      body: { error: "not_startable" },
+    });
   });
 
-  it("정지 중이면 423: 편을 시작하지 않고 Anthropic을 부르지 않는다. 정지가 풀리면 받는다", async () => {
-    const h = await harness({
-      reply: (n, call) =>
-        n === 1 && call <= 2 ? { status: 503, error: { type: "api_error", message: "unavailable" } } : whole(JSON.stringify(episodeJson(n))),
-    });
-    const payload = makePayload();
-    const res = await handleCreateConversation(request("POST", "/api/conversations", h.cookie, payload), h.deps);
-    await h.settle();
-    const { id } = res.body as { id: string };
-    expect((await statuses(h, id))[0]).toEqual(["failed", "retryable"]);
+  it("정지 중이면 423: 리포트를 시작하지 않고 Anthropic을 부르지 않는다. 정지가 풀리면 받는다", async () => {
+    const h = await harness({ reply: (n, call) => (call <= 2 ? unavailable : whole(JSON.stringify(episodeJson(n)))) });
+    const { id, payload } = await created(h);
+    expect(await reportOf(h, id)).toEqual(["failed", "retryable"]);
 
     await h.repo.setPaused(new Date(Date.now() + 3_600_000));
-    expect(await handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps)).toEqual({ status: 423, body: { error: "paused" } });
+    expect(await handleRetry(retry(h.cookie, { id, payload }), h.deps)).toEqual({ status: 423, body: { error: "paused" } });
     await h.settle();
     expect(h.queued).toHaveLength(0);
-    expect((await statuses(h, id))[0]).toEqual(["failed", "retryable"]);
+    expect(await reportOf(h, id)).toEqual(["failed", "retryable"]);
     expect(h.streams).toHaveLength(2);
 
     await h.repo.setPaused(new Date(Date.now() - 1));
-    expect((await handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps)).status).toBe(202);
+    expect((await handleRetry(retry(h.cookie, { id, payload }), h.deps)).status).toBe(202);
     await h.settle();
-    expect(await statuses(h, id)).toEqual(Array(4).fill(["done", null]));
+    expect(await reportOf(h, id)).toEqual(["done", null]);
   });
 
-  it("한 편의 유료 실행은 3번까지: 늘 partial로 끝나는 편을 계속 다시 쓰면 세 번째 다시 쓰기부터 429 retry_limit", async () => {
-    const h = await harness({ reply: (n) => cut(cutInSecondSection(n)), deadlineMs: 150, internal: accepted });
-    const payload = makePayload();
-    const res = await handleCreateConversation(request("POST", "/api/conversations", h.cookie, payload), h.deps);
-    await h.settle();
-    const { id } = res.body as { id: string };
+  it("리포트의 유료 실행은 3번까지: 늘 partial로 끝나는 리포트를 계속 다시 쓰면 세 번째 다시 쓰기부터 429 retry_limit", async () => {
+    const h = await harness({ reply: (n) => cut(cutInSecondSection(n)), deadlineMs: 150 });
+    const { id, payload } = await created(h);
     for (let i = 0; i < 2; i++) {
-      expect((await handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps)).status).toBe(202);
+      expect((await handleRetry(retry(h.cookie, { id, payload }), h.deps)).status).toBe(202);
       await h.settle();
-      expect((await statuses(h, id))[0]).toEqual(["partial", null]);
+      expect(await reportOf(h, id)).toEqual(["partial", null]);
     }
-    expect(await handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps)).toEqual({ status: 429, body: { reason: "retry_limit" } });
+    expect(await handleRetry(retry(h.cookie, { id, payload }), h.deps)).toEqual({ status: 429, body: { reason: "retry_limit" } });
     await h.settle();
-    expect(h.streams.filter((s) => s.n === 1)).toHaveLength(3);
-    expect((await statuses(h, id))[0]).toEqual(["partial", null]);
+    expect(h.streams).toHaveLength(3);
+    expect(await reportOf(h, id)).toEqual(["partial", null]);
   });
 
-  it("최근 7일 원가 + 이번 몫이 주간 상한을 넘으면 429 global_limit: 편을 시작하지 않는다", async () => {
-    const h = await harness({ internal: async () => new Response(null, { status: 401 }) });
-    const payload = makePayload();
-    const res = await handleCreateConversation(request("POST", "/api/conversations", h.cookie, payload), h.deps);
-    await h.settle();
-    const { id } = res.body as { id: string };
-    expect((await statuses(h, id))[1]).toEqual(["failed", "dispatch"]);
-    // 다른 사용자의 원가로 최근 7일 합이 22.4달러가 됐다
-    await h.repo.finishEpisode({
-      id: "0b6c3f1e-2a4d-4c5b-9e8f-7a6b5c4d3e2f",
-      n: 1,
-      status: "done",
-      content: null,
-      model: "claude-opus-5-5",
-      stopReason: "end_turn",
-      errorCode: null,
-      usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
-      cost: 22.4,
-    });
+  it("주간 상한: 최근 7일 원가 + 이번 몫(평균 원가 전체 1.2)이 22.5를 넘으면 429 global_limit, 리포트를 시작하지 않는다", async () => {
+    const h = await harness({ reply: (n, call) => (call <= 2 ? unavailable : whole(JSON.stringify(episodeJson(n)))) });
+    const { id, payload } = await created(h);
+    expect(await reportOf(h, id)).toEqual(["failed", "retryable"]);
+    // 21.4 + 1.2 = 22.6 > 22.5
+    await spend(h, 21.4);
     const streams = h.streams.length;
-    expect(await handleRetry(retry(h.cookie, { id, n: 2, payload }), h.deps)).toEqual({ status: 429, body: { reason: "global_limit" } });
+    expect(await handleRetry(retry(h.cookie, { id, payload }), h.deps)).toEqual({ status: 429, body: { reason: "global_limit" } });
     await h.settle();
     expect(h.streams).toHaveLength(streams);
-    expect((await statuses(h, id))[1]).toEqual(["failed", "dispatch"]);
+    expect(await reportOf(h, id)).toEqual(["failed", "retryable"]);
+
+    // 20.0 + 1.2 = 21.2 ≤ 22.5
+    const ok = await harness({ reply: (n, call) => (call <= 2 ? unavailable : whole(JSON.stringify(episodeJson(n)))) });
+    const c = await created(ok);
+    await spend(ok, 20);
+    expect((await handleRetry(retry(ok.cookie, { id: c.id, payload: c.payload }), ok.deps)).status).toBe(202);
   });
 
-  it("partial 편의 다시 쓰기가 응답 전에 실패해도(529 두 번) 앞의 글은 남는다: partial·content 그대로, 오류 코드만 남긴다", async () => {
+  it("partial 리포트의 다시 쓰기가 응답 전에 실패해도(529 두 번) 앞의 글은 남는다: partial·content 그대로, 오류 코드만 남긴다", async () => {
     const h = await harness({
       reply: (n, call) => (call === 1 ? cut(cutInSecondSection(n)) : { status: 529, error: { type: "overloaded_error", message: "busy" } }),
       deadlineMs: 150,
-      internal: accepted,
     });
-    const payload = makePayload();
-    const res = await handleCreateConversation(request("POST", "/api/conversations", h.cookie, payload), h.deps);
-    await h.settle();
-    const { id } = res.body as { id: string };
-    const before = (await h.repo.getConversation(id))!.episodes[0];
+    const { id, payload } = await created(h);
+    const before = (await h.repo.getConversation(id))!.report;
     expect(before.status).toBe("partial");
     expect(before.content).not.toBeNull();
 
-    expect((await handleRetry(retry(h.cookie, { id, n: 1, payload }), h.deps)).status).toBe(202);
+    expect((await handleRetry(retry(h.cookie, { id, payload }), h.deps)).status).toBe(202);
     await h.settle();
-    const after = (await h.repo.getConversation(id))!.episodes[0];
+    const after = (await h.repo.getConversation(id))!.report;
     expect(after).toMatchObject({ status: "partial", errorCode: "retryable" });
     expect(after.content).toEqual(before.content);
   });
@@ -168,11 +166,15 @@ describe("POST /api/episodes/retry", () => {
   it("본문이 틀리면 400, 쿠키가 없으면 401, client가 없으면 503", async () => {
     const h = await harness();
     const payload = makePayload();
-    const id = "0b6c3f1e-2a4d-4c5b-9e8f-7a6b5c4d3e2f";
-    expect((await handleRetry(retry(h.cookie, { id, n: 5, payload }), h.deps)).status).toBe(400);
-    expect((await handleRetry(retry(h.cookie, { id, payload }), h.deps)).status).toBe(400);
-    expect((await handleRetry(retry(h.cookie, { id, n: 1, payload: { ...payload, transcript: "<x>" } }), h.deps)).status).toBe(400);
-    expect((await handleRetry(retry(null, { id, n: 1, payload }), h.deps)).status).toBe(401);
-    expect((await handleRetry(retry(h.cookie, { id, n: 1, payload }), { ...h.deps, client: null })).status).toBe(503);
+    const id = OTHER_ID;
+    expect((await handleRetry(retry(h.cookie, { id }), h.deps)).status).toBe(400);
+    expect((await handleRetry(retry(h.cookie, { payload }), h.deps)).status).toBe(400);
+    expect((await handleRetry(retry(h.cookie, { id: "", payload }), h.deps)).status).toBe(400);
+    expect(await handleRetry(retry(h.cookie, { id, payload: { ...payload, transcript: "<x>" } }), h.deps)).toMatchObject({
+      status: 400,
+      body: { error: "bad_payload" },
+    });
+    expect((await handleRetry(retry(null, { id, payload }), h.deps)).status).toBe(401);
+    expect((await handleRetry(retry(h.cookie, { id, payload }), { ...h.deps, client: null })).status).toBe(503);
   });
 });

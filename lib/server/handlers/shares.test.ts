@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import nextConfig from "@/next.config";
 import { harness, makePayload, request } from "@/test/generation";
 import { handleCreateConversation } from "./conversations";
@@ -12,14 +12,16 @@ async function created() {
   return { h, id: (res.body as { id: string }).id };
 }
 
+afterEach(() => vi.restoreAllMocks());
+
 const post = (cookie: string | null, body: unknown) => request("POST", "/api/shares", cookie, body);
 const del = (cookie: string | null, body: unknown) => request("DELETE", "/api/shares", cookie, body);
 const tokenOf = (url: string) => url.split("/s/")[1];
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
-async function shared(scope: "first" | "all" = "all", hidden: number[] = []) {
+async function shared() {
   const c = await created();
-  const res = await handleCreateShare(post(c.h.cookie, { id: c.id, scope, hidden }), c.h.deps);
+  const res = await handleCreateShare(post(c.h.cookie, { id: c.id }), c.h.deps);
   return { ...c, res, token: tokenOf((res.body as { url: string }).url) };
 }
 
@@ -32,7 +34,13 @@ describe("POST /api/shares", () => {
     const row = await h.repo.getConversation(id);
     expect(row!.shareTokenHash).toBe(sha(token));
     expect(row!.shareTokenHash).not.toBe(token);
-    expect(row!.shareScope).toBe("all");
+  });
+
+  it("옛 본문(scope·hidden 포함)도 받는다", async () => {
+    const { h, id } = await created();
+    const res = await handleCreateShare(post(h.cookie, { id, scope: "first", hidden: [1, 9] }), h.deps);
+    expect(res).toMatchObject({ status: 200, body: { shared: true } });
+    expect(await loadSharedView(h.repo, tokenOf((res.body as { url: string }).url))).not.toBeNull();
   });
 
   it("응답은 캐시하지 않는다", async () => {
@@ -42,26 +50,27 @@ describe("POST /api/shares", () => {
 
   it("다른 invite는 404이고 공유되지 않는다. 쿠키가 없으면 401, 잘못된 본문은 400", async () => {
     const { h, id } = await created();
-    expect((await handleCreateShare(post(h.otherCookie, { id, scope: "all", hidden: [] }), h.deps)).status).toBe(404);
+    expect((await handleCreateShare(post(h.otherCookie, { id }), h.deps)).status).toBe(404);
     expect((await h.repo.getConversation(id))!.shareTokenHash).toBeNull();
-    expect((await handleCreateShare(post(null, { id, scope: "all", hidden: [] }), h.deps)).status).toBe(401);
-    expect((await handleCreateShare(post(h.cookie, { id, scope: "some", hidden: [] }), h.deps)).status).toBe(400);
-    expect((await handleCreateShare(post(h.cookie, { id, scope: "all", hidden: [5] }), h.deps)).status).toBe(400);
+    expect((await handleCreateShare(post(null, { id }), h.deps)).status).toBe(401);
+    expect((await handleCreateShare(post(h.cookie, {}), h.deps)).status).toBe(400);
+    expect((await handleCreateShare(post(h.cookie, { id: "" }), h.deps)).status).toBe(400);
   });
 
-  it("이미 공유 중이면 토큰은 그대로 두고 범위만 바꾼다(url은 null)", async () => {
-    const { h, id, token } = await shared("all", []);
-    const res = await handleCreateShare(post(h.cookie, { id, scope: "first", hidden: [2] }), h.deps);
-    expect(res).toMatchObject({ status: 200, body: { url: null, shared: true } });
-    const row = await h.repo.getConversation(id);
-    expect(row!.shareTokenHash).toBe(sha(token));
-    expect([row!.shareScope, row!.shareHidden]).toEqual(["first", [2]]);
+  it("이미 공유 중이면 쓰지 않는다: url은 null, 토큰 그대로, setShare 0번", async () => {
+    const { h, id, token } = await shared();
+    const setShare = vi.spyOn(h.repo, "setShare");
+    const res = await handleCreateShare(post(h.cookie, { id }), h.deps);
+    expect(res).toEqual({ status: 200, body: { url: null, shared: true }, headers: { "cache-control": "no-store" } });
+    expect(setShare).not.toHaveBeenCalled();
+    expect((await h.repo.getConversation(id))!.shareTokenHash).toBe(sha(token));
+    expect(await loadSharedView(h.repo, token)).not.toBeNull();
   });
 
   it("폐기한 뒤 다시 공유하면 새 토큰이 나온다", async () => {
     const { h, id, token } = await shared();
     await handleRevokeShare(del(h.cookie, { id }), h.deps);
-    const res = await handleCreateShare(post(h.cookie, { id, scope: "all", hidden: [] }), h.deps);
+    const res = await handleCreateShare(post(h.cookie, { id }), h.deps);
     const next = tokenOf((res.body as { url: string }).url);
     expect(next).not.toBe(token);
     expect(await loadSharedView(h.repo, token)).toBeNull();
@@ -70,7 +79,7 @@ describe("POST /api/shares", () => {
 });
 
 describe("POST/DELETE 동시 요청", () => {
-  it("범위 변경이 읽은 뒤 폐기와 겹치면 폐기가 살아 있다(409)", async () => {
+  it("공유 중인 대화의 POST가 읽은 뒤 폐기와 겹쳐도 쓰지 않으므로 폐기가 살아 있다", async () => {
     const { h, id, token } = await shared();
     const real = h.deps.repo.getConversation.bind(h.deps.repo);
     let first = true;
@@ -82,8 +91,8 @@ describe("POST/DELETE 동시 요청", () => {
       }
       return row;
     };
-    const res = await handleCreateShare(post(h.cookie, { id, scope: "first", hidden: [] }), h.deps);
-    expect(res.status).toBe(409);
+    const res = await handleCreateShare(post(h.cookie, { id }), h.deps);
+    expect(res).toMatchObject({ status: 200, body: { url: null } });
     expect(await loadSharedView(h.repo, token)).toBeNull();
     expect((await real(id))!.shareTokenHash).toBeNull();
   });
@@ -96,12 +105,12 @@ describe("POST/DELETE 동시 요청", () => {
       const row = await real(cid);
       if (!nested) {
         nested = true;
-        const inner = await handleCreateShare(post(c.h.cookie, { id: c.id, scope: "all", hidden: [] }), c.h.deps);
+        const inner = await handleCreateShare(post(c.h.cookie, { id: c.id }), c.h.deps);
         expect(inner.status).toBe(200);
       }
       return row;
     };
-    const res = await handleCreateShare(post(c.h.cookie, { id: c.id, scope: "all", hidden: [] }), c.h.deps);
+    const res = await handleCreateShare(post(c.h.cookie, { id: c.id }), c.h.deps);
     expect(res.status).toBe(409);
     expect((await real(c.id))!.shareTokenHash).not.toBeNull();
   });
@@ -125,22 +134,22 @@ describe("DELETE /api/shares", () => {
 });
 
 describe("공유 화면 읽기(loadSharedView)", () => {
-  it("범위 all은 내용이 있는 편 4개를 보여 준다", async () => {
-    const { h, token } = await shared("all");
+  it("공유 중이면 리포트 한 편과 컨셉·tone을 보여 준다", async () => {
+    const { h, id, token } = await shared();
     const view = await loadSharedView(h.repo, token);
-    expect(view!.episodes.map((e) => e.n)).toEqual([1, 2, 3, 4]);
-    expect(view!.concept).toBe("couple");
+    expect(view!.report).toEqual((await h.repo.getConversation(id))!.report.content);
+    expect(view!.report!.sections).toHaveLength(2);
+    expect([view!.concept, view!.tone]).toEqual(["couple", "fact"]);
   });
 
-  it("범위 first면 2편 이후가 없다", async () => {
-    const { h, token } = await shared("first");
-    expect((await loadSharedView(h.repo, token))!.episodes.map((e) => e.n)).toEqual([1]);
-  });
-
-  it("hidden을 [3]으로 바꾼 직후 3편이 없다", async () => {
-    const { h, id, token } = await shared("all");
-    await handleCreateShare(post(h.cookie, { id, scope: "all", hidden: [3] }), h.deps);
-    expect((await loadSharedView(h.repo, token))!.episodes.map((e) => e.n)).toEqual([1, 2, 4]);
+  it("리포트 내용이 없으면(쓰는 중·실패) report는 null", async () => {
+    const h = await harness();
+    h.state.manual = true;
+    const res = await handleCreateConversation(request("POST", "/api/conversations", h.cookie, makePayload()), h.deps);
+    const share = await handleCreateShare(post(h.cookie, { id: (res.body as { id: string }).id }), h.deps);
+    const view = await loadSharedView(h.repo, tokenOf((share.body as { url: string }).url));
+    expect(view).not.toBeNull();
+    expect(view!.report).toBeNull();
   });
 
   it("대화를 삭제하면 바로 없다", async () => {
@@ -166,11 +175,10 @@ describe("공유 화면 읽기(loadSharedView)", () => {
     expect(await loadSharedView(h.repo, "x".repeat(22))).toBeNull();
   });
 
-  it("실제 이름·원문 대화·앵커 같은 열은 넘기지 않는다(표시 이름·통계·편 내용만)", async () => {
+  it("원문 대화·앵커·토큰 해시 같은 열은 넘기지 않는다(컨셉·tone·표시 이름·통계·리포트 내용만)", async () => {
     const { h, token } = await shared();
     const view = await loadSharedView(h.repo, token);
-    expect(Object.keys(view!).sort()).toEqual(["concept", "displayNames", "episodes", "stats"]);
-    expect(Object.keys(view!.episodes[0]).sort()).toEqual(["content", "n"]);
+    expect(Object.keys(view!).sort()).toEqual(["concept", "displayNames", "report", "stats", "tone"]);
   });
 });
 

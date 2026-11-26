@@ -6,7 +6,7 @@ import { SharedReport } from "@/components/episode/SharedReport";
 import { loadSharedView } from "@/lib/server/handlers/shares";
 import { getRepo } from "@/lib/server/repo";
 
-// 캐시하지 않는다. 요청마다 공유 상태를 다시 읽어 폐기·범위 변경·삭제가 바로 반영된다
+// 캐시하지 않는다. 요청마다 공유 상태를 다시 읽어 폐기·삭제가 바로 반영된다
 export const dynamic = "force-dynamic";
 
 type Props = { params: Promise<{ token: string }> };
@@ -33,5 +33,6 @@ export default async function SharedPage({ params }: Props) {
   const view = await loadSharedView(getRepo(), token);
   if (!view) notFound();
 
-  return <SharedReport view={view} />;
+  // 화면은 Task 7에서 리포트 한 편으로 바뀐다. 그때까지 옛 모양(편 목록)으로 맞춰 넘긴다
+  return <SharedReport view={{ ...view, episodes: view.report ? [{ n: 1, content: view.report }] : [] }} />;
 }
