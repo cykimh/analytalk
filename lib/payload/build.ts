@@ -356,7 +356,8 @@ function fairShares(need: number[], total: number): number[] {
  * 1. 최근 구간: 마지막 메시지부터 거꾸로 budget × SAMPLE_TAIL_SHARE까지(마지막 메시지는 늘 넣는다)
  * 2. 가장 활발했던 날들: 그날 첫 메시지부터 이어서, budget × SAMPLE_BUSY_SHARE를 날짜끼리 공평하게
  * 3. 달마다: 남은 몫을 (최근 구간 앞의) 달끼리 공평하게 나누고, 달 몫은 달 안에 고르게 띄운 연속 덩어리
- *    SAMPLE_CHUNKS_PER_MONTH개 이하로 쓴다. 덩어리는 대화가 시작하는 곳에서 시작한다(없으면 그 자리에서)
+ *    SAMPLE_CHUNKS_PER_MONTH개 이하로 쓴다. 덩어리는 대화가 시작하는 곳에서 시작한다(없으면 그 자리에서).
+ *    시작 줄 하나가 덩어리 몫보다 길면 몫에 들어가는 다음 줄(달 안)에서 시작한다
  * 4. 합치고 남은 몫(겹침·자투리)으로 최근 구간을 더 거꾸로 늘린다
  * 구간마다 따로 센 비용(날짜 헤더 포함)의 합은 합친 덩어리의 비용 이상이라, 몫의 합이 budget 이하면 합친 덩어리도 budget 이하다
  * (합친 덩어리의 헤더는 이웃한 두 줄의 날짜가 다를 때나 구간 첫머리에만 생기고, 그 자리는 어느 구간에서든 이미 헤더로 셌다)
@@ -444,13 +445,17 @@ function sampleRanges({ chars, days, sessionStart, busyDays }: SampleInput, budg
       const slotEnd = a + Math.floor(((j + 1) * (b - a)) / chunks);
       let start = Math.max(a + Math.floor((j * (b - a)) / chunks), prevEnd);
       if (start >= b) break;
-      // 자리 안에서 대화가 시작하는 첫 곳. 없으면 자리 첫머리
+      // 자리 안에서 대화가 시작하는 첫 곳(그 줄이 덩어리 몫에 들어갈 때만). 없으면 자리 첫머리.
+      // 고른 줄 하나조차 몫보다 길면(붙여 넣은 긴 공지 등) 달 끝까지 몫에 들어가는 다음 줄로 옮긴다. 안 그러면 덩어리가 통째로 빈다
+      const fits = (i: number) => cost(i, i + 1) <= each;
       for (let i = start; i < slotEnd; i++) {
-        if (sessionStart[i]) {
+        if (sessionStart[i] && fits(i)) {
           start = i;
           break;
         }
       }
+      while (start < b && !fits(start)) start++;
+      if (start >= b) break;
       const end = growForward(start, b, each);
       if (end > start) {
         picked.push([start, end]);

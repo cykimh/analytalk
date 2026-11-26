@@ -300,6 +300,29 @@ describe("buildPayload: 대화가 예산보다 길면 전체 기간에서 고르
     }
   });
 
+  it("달마다 첫 메시지가 덩어리 몫보다 길어도(긴 공지) 그 달이 비지 않는다: 들어가는 다음 줄부터 고른다", () => {
+    // 60개월, 달마다 1일 09:00에 4,000자 공지 한 줄 + 짧은 말 300개(같은 대화). 달 몫이 공지 한 줄보다 작은 예산
+    const rows: Raw[] = [];
+    const notice = "공지 사항을 길게 붙여 넣었다 ".repeat(300).slice(0, 4000);
+    const monthKeys: string[] = [];
+    for (let k = 0; k < 60; k++) {
+      const y = 2021 + Math.floor(k / 12);
+      const mo = (k % 12) + 1;
+      monthKeys.push(`${y}-${String(mo).padStart(2, "0")}`);
+      rows.push(["P1", kst(y, mo, 1, 9), notice]);
+      for (let i = 0; i < 300; i++) rows.push([i % 2 ? "P1" : "P2", kst(y, mo, 1, 9, 1) + i * 20_000, `짧은 대답 ${i}`]);
+    }
+    const long = chat(rows);
+    for (const budget of [150_000, 60_000]) {
+      const p = build(long, budget);
+      const sent = sentLines(p.transcript);
+      expect([budget, payloadTokens(p, 1).text <= budget]).toEqual([budget, true]);
+      expect([budget, [...new Set(sent.map((l) => l.day.slice(0, 7)))]]).toEqual([budget, monthKeys]);
+      expect(validatePayload(p).ok).toBe(true);
+      expect(sent.at(-1)!.id).toBe(long.length - 1);
+    }
+  });
+
   it("작은 대화는 예산이 넉넉하면 전부 보낸다(3년 치도)", () => {
     const all = build(messages, 1_000_000);
     expect(all.msgSent).toBe(all.msgTotal);
