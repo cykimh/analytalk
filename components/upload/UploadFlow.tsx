@@ -205,7 +205,6 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
     body = (
       <ReviewStep
         payload={built.payload}
-        messages={built.input.messages}
         excluded={excluded}
         safetyDropped={built.safetyDropped}
         busy={busy}

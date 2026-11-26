@@ -118,8 +118,8 @@ export function formatAt(iso: string): string {
   return `${kstDate(ts)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
 }
 
-/** 읽은 범위 "YYYY-MM-DD 이후 N개" */
-export const readRange = (cutoffAt: string, msgSent: number) => `${kstDay(cutoffAt)} 이후 ${formatCount(msgSent)}개`;
+/** 읽은 범위 "전체 기간에서 N개". 대화가 길면 처음부터 끝까지 고르게 골라 보낸다(lib/payload/build). N은 보낸 메시지 수 */
+export const readRange = (msgSent: number) => `전체 기간에서 ${formatCount(msgSent)}개`;
 
 /**
  * 편 카드의 버튼: 내용이 있으면 [읽기], failed·partial이면 [다시 쓰기](정지 중이면 마감 안내).

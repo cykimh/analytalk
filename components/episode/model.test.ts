@@ -94,9 +94,8 @@ describe("reportAction (카드의 버튼)", () => {
 });
 
 describe("날짜·시각 (KST)", () => {
-  it("readRange: transcript 첫 메시지의 KST 날짜와 보낸 메시지 수", () => {
-    // 2026-09-30 15:00Z = 2026-10-01 00:00 KST
-    expect(readRange("2026-09-30T15:00:00.000Z", 6240)).toBe("2026-10-01 이후 6,240개");
+  it("readRange: 전체 기간에서 보낸 메시지 수", () => {
+    expect(readRange(6240)).toBe("전체 기간에서 6,240개");
   });
 
   it("kstDay·formatAt", () => {

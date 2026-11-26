@@ -1,8 +1,7 @@
 // 업로드 흐름의 순수 로직(화면 상태 → 이름 맵·확인 문구). DOM 없이 테스트한다.
-import { ANCHOR_FIRST_N } from "@/lib/config";
-import { legendText, memberCodes, type Payload, readBlock } from "@/lib/payload/build";
+import { legendText, memberCodes, type Payload } from "@/lib/payload/build";
 import { checkNameMap, defaultNames, isBotOrUnknown, type NameError, type NameMap } from "@/lib/payload/names";
-import type { ChatMessage, ParseResult } from "@/lib/parse/parse";
+import type { ParseResult } from "@/lib/parse/parse";
 
 export type Kind = Payload["kind"];
 
@@ -107,12 +106,8 @@ export interface SendSummary {
   period: string;
   /** 넣은 멤버의 전체 메시지 수 */
   total: number;
-  /** transcript 첫 메시지의 KST 날짜 */
-  since: string;
+  /** 보낼 메시지 수. 대화가 길면 전체 기간에서 고른 것이다 */
   sent: number;
-  /** anchors 중 첫 대화(시스템 메시지를 뺀 처음 ANCHOR_FIRST_N개)와 가장 활발했던 날 메시지 수 */
-  first: number;
-  busy: number;
   masked: number;
   /** 뺀 멤버(카톡 이름과 메시지 수). 화면에만 있고 페이로드에는 없다 */
   excluded: { name: string; count: number }[];
@@ -121,30 +116,13 @@ export interface SendSummary {
   preview: string[];
 }
 
-/** 보낼 내용 확인 화면의 숫자. messages는 페이로드를 만든 메시지(이름 정리 뒤) */
-export function sendSummary(p: Payload, messages: ChatMessage[], excluded: { name: string; count: number }[]): SendSummary {
-  const firstIds = new Set(
-    messages
-      .filter((m) => m.sender !== null && m.kind !== "system")
-      .map((m) => m.id)
-      .sort((a, b) => a - b)
-      .slice(0, ANCHOR_FIRST_N),
-  );
-  let first = 0;
-  let busy = 0;
-  for (const line of readBlock(p.anchors)) {
-    if (line.type !== "message") continue;
-    if (firstIds.has(line.id)) first++;
-    else busy++;
-  }
+/** 보낼 내용 확인 화면의 숫자 */
+export function sendSummary(p: Payload, excluded: { name: string; count: number }[]): SendSummary {
   const codes = memberCodes(p.members);
   return {
     period: `${p.period.start} ~ ${p.period.end}`,
     total: p.msgTotal,
-    since: p.cutoffAt.slice(0, 10),
     sent: p.msgSent,
-    first,
-    busy,
     masked: Object.values(p.maskCounts).reduce((a, b) => a + b, 0),
     excluded,
     legend: p.members.map((name, i) => ({ code: codes[i], name })),

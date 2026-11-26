@@ -347,7 +347,7 @@ test.describe("AI 리포트", () => {
     const again = await context.newPage();
     await again.goto(`/c/${ID}`);
     await expect(reportCard(again)).toContainText("쓰는 중");
-    await expect(again.getByText("2026-10-01 이후 6개")).toBeVisible();
+    await expect(again.getByText("전체 기간에서 6개")).toBeVisible();
     await expect(again.getByText("2026-12-24 (30일 보관)")).toBeVisible();
     await expect(again.getByText("AI 생성, 재미·참고용")).toBeVisible();
 

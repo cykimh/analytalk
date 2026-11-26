@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { Payload } from "@/lib/payload/build";
-import type { ChatMessage } from "@/lib/parse/parse";
 import {
   conceptFor,
   defaultKind,
@@ -128,39 +127,32 @@ describe("확인 화면", () => {
 });
 
 describe("sendSummary", () => {
-  const chat = (id: number, kind: ChatMessage["kind"] = "text"): ChatMessage => ({
-    id,
-    ts: 0,
-    sender: kind === "system" ? null : "민지",
-    kind,
-    text: "x",
-    line: id + 1,
-  });
-  // id 5가 시스템 메시지라 첫 대화 100개는 id 0~4, 6~100이다
-  const messages = Array.from({ length: 130 }, (_, id) => chat(id, id === 5 ? "system" : "text"));
-  const transcript = ["# 2024-03-15", ...Array.from({ length: 24 }, (_, i) => `m${106 + i}|09:00|A|줄 ${i}`)].join("\n");
+  const transcript = ["# 2024-03-01", "m0|00:05|A|첫", "# 2024-03-15", ...Array.from({ length: 23 }, (_, i) => `m${106 + i}|09:00|A|줄 ${i}`)].join("\n");
   const payload = {
     members: ["민지", "철수"],
     period: { start: "2024-03-01", end: "2024-03-15" },
     msgTotal: 130,
-    cutoffAt: "2024-03-15T09:00:00+09:00",
+    cutoffAt: "2024-03-01T00:05:00+09:00",
     msgSent: 24,
-    anchors: ["# 2024-03-14", "m0|00:05|A|첫", "m100|00:06|A|백", "# 2024-03-15", "m101|08:00|A|활발"].join("\n"),
+    anchors: "",
     transcript,
     maskCounts: { phone: 1, email: 0, account: 0, rrn: 0, url: 2 },
   } as unknown as Payload;
   const excluded = [{ name: "영희", count: 3 }];
 
   it("보낼 범위·가린 수·뺀 멤버·범례·미리보기(범례 다음 20줄)", () => {
-    const s = sendSummary(payload, messages, excluded);
-    expect(s).toMatchObject({ period: "2024-03-01 ~ 2024-03-15", total: 130, since: "2024-03-15", sent: 24, first: 2, busy: 1, masked: 3 });
-    expect(s.excluded).toEqual([{ name: "영희", count: 3 }]);
-    expect(s.legend[0]).toEqual({ code: "A", name: "민지" });
-    expect(s.legend[1]).toEqual({ code: "B", name: "철수" });
-    expect(s.preview).toEqual(["A=민지", "B=철수", ...transcript.split("\n").slice(0, 20)]);
-  });
-
-  it("anchors가 비면(대화 전체가 transcript) 첫 대화·활발한 날은 0", () => {
-    expect(sendSummary({ ...payload, anchors: "" }, messages, [])).toMatchObject({ first: 0, busy: 0, excluded: [] });
+    const s = sendSummary(payload, excluded);
+    expect(s).toEqual({
+      period: "2024-03-01 ~ 2024-03-15",
+      total: 130,
+      sent: 24,
+      masked: 3,
+      excluded: [{ name: "영희", count: 3 }],
+      legend: [
+        { code: "A", name: "민지" },
+        { code: "B", name: "철수" },
+      ],
+      preview: ["A=민지", "B=철수", ...transcript.split("\n").slice(0, 20)],
+    });
   });
 });

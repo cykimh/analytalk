@@ -2,11 +2,20 @@
 
 // 편 생성 (서버)
 export const EPISODE_DEADLINE_MS = 270_000; // 편당 마감 (maxDuration = 300)
-export const MAX_PAYLOAD_BYTES = 4_000_000; // 페이로드 상한 4MB
+/**
+ * 페이로드 JSON 상한 4MB. Vercel 함수의 요청 본문 한도 4.5MB(4,500,000바이트로 어림) 안에 들어가는지 셈:
+ * - 요청 본문은 페이로드 JSON(POST /api/conversations) 또는 { id, payload }(다시 쓰기, id 64자 이하)라 페이로드 밖 몫은 100바이트 안팎이다
+ * - Sonnet 입력 예산 600,000토큰 × TOKENS_PER_CHAR 1.0 → 대화 본문은 60만 자 이하(프롬프트·통계·범례 몫을 빼면 더 적다).
+ *   한글은 UTF-8로 글자당 3바이트(서로게이트 쌍 이모지는 UTF-16 2자에 4바이트)라 본문은 1.8MB 이하
+ * - 전체 stats JSON(날짜별 수·달별·사람별 표)은 몇 년 치 단톡방도 수백 KB라, 페이로드는 보통 2.5MB 안쪽이다
+ * - buildPayloadForBudget은 본문 글자 수를 (4MB × 0.9 − stats 바이트) ÷ 3으로도 묶어, 예산을 더 올려도 페이로드가 약 3.6MB를 넘지 않는다
+ * 그래서 4MB를 그대로 두고 4.5MB까지 약 0.5MB(JSON 이스케이프·요청의 다른 필드) 여유를 둔다. 4.5MB에 가깝게 올리지 않는다
+ */
+export const MAX_PAYLOAD_BYTES = 4_000_000;
 export const TOKENS_PER_CHAR = 1.0;
 /** 모델별 입력 예산(토큰). 표 밖의 모델은 FALLBACK. 서버의 INPUT_TOKEN_BUDGET env가 이 값을 덮어쓴다 */
 export const INPUT_TOKEN_BUDGET_BY_MODEL: readonly (readonly [string, number])[] = [
-  ["claude-sonnet-5-5", 400_000],
+  ["claude-sonnet-5-5", 600_000],
   ["claude-opus-5-5", 128_000],
 ];
 export const FALLBACK_INPUT_TOKEN_BUDGET = 128_000;
@@ -38,11 +47,14 @@ export const RECOGNITION_WARN = 0.98; // 줄 인식률 경고 기준
 export const NOTE_MAX_CHARS = 60;
 export const MAX_READING_NOTES = 20; // 저장·표시하는 reading_notes 개수 상한
 
-// 통계·앵커
-export const ANCHOR_FIRST_N = 100;
-export const ANCHOR_BUSY_DAYS = 3;
-// buildPayload tokenBudget(anchors+transcript) 중 anchors 상한. PRD의 anchors 약 10K / (anchors+transcript) 약 120K
-export const ANCHOR_BUDGET_SHARE = 0.08;
+// 보낼 메시지 고르기(대화 전체가 buildPayload tokenBudget에 안 들어갈 때). 몫은 tokenBudget에 대한 비율이다
+export const SAMPLE_TAIL_SHARE = 0.2; // 마지막 메시지까지 이어지는 최근 구간. 다 고르고 남은 몫도 여기에 더한다
+export const SAMPLE_BUSY_SHARE = 0.1; // 가장 활발했던 날들(그날 첫 메시지부터). 다 담고 남으면 달 몫으로 간다
+export const SAMPLE_BUSY_DAYS = 3;
+export const SAMPLE_CHUNKS_PER_MONTH = 3; // 달 몫을 나눌 연속 덩어리 수 상한(달 안에서 고르게 띄운다)
+export const SAMPLE_MIN_CHUNK_CHARS = 1500; // 덩어리 하나의 최소 몫(글자). 달 몫이 작으면 덩어리 수를 줄인다
+
+// 통계
 export const SILENCE_GAP_MS = 21_600_000; // 6시간
 export const NIGHT_START = 22;
 export const NIGHT_END = 5;

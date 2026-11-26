@@ -12,8 +12,18 @@ function payload(): Payload {
     const sender = i % 2 ? "P2" : "P1";
     messages.push({ id: i, ts: kst(1 + Math.floor(i / 10), 10, i), sender, kind: "text", text: `메시지 ${i} https://a.kr`, line: i + 1 });
   }
-  // anchors도 채우려고 anchors 몫을 넉넉히 준다
-  return buildPayload({ messages, tone: "fact", concept: "couple", kind: "pair", tokenBudget: 400, tokensPerChar: 1, anchorShare: 0.5 });
+  // 예전 형식(v2.0: 앞 시기 발췌 anchors + 최근 구간 transcript)도 받아야 한다(이 브라우저의 예전 사본으로 [다시 쓰기]).
+  // 전부 보낸 페이로드에서 앞 이틀을 anchors로 옮겨 그 모양을 만든다
+  const p = buildPayload({ messages, tone: "fact", concept: "couple", kind: "pair", tokenBudget: 1_000_000, tokensPerChar: 1 });
+  const lines = p.transcript.split("\n");
+  const cut = lines.indexOf("# 2026-10-03");
+  const transcript = lines.slice(cut);
+  return {
+    ...p,
+    anchors: lines.slice(0, cut).join("\n"),
+    transcript: transcript.join("\n"),
+    msgSent: transcript.filter((l) => l.startsWith("m")).length,
+  };
 }
 
 /** transcript 끝에 같은 시각·다음 msg_id로 줄 하나를 붙이고 msgSent도 늘린다 */

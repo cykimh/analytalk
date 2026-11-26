@@ -1,6 +1,15 @@
 // AI용 페이로드를 만들고 읽는다. 이름 정리(applyDisplayNames)를 거친 메시지만 받는다. DOM 없이 브라우저(Worker)·node 공용.
 // 줄 형식(KST): 날짜가 바뀌면 `# YYYY-MM-DD`, 메시지는 `m<id>|HH:mm|<기호>|<본문>`. 기호(A, B, … AA)는 범례(legendText)로 표시 이름과 짝지어진다
-import { ANCHOR_BUDGET_SHARE, ANCHOR_BUSY_DAYS, ANCHOR_FIRST_N, MAX_PAYLOAD_BYTES, PROMPT_RESERVE_TOKENS } from "@/lib/config";
+import {
+  MAX_PAYLOAD_BYTES,
+  PROMPT_RESERVE_TOKENS,
+  SAMPLE_BUSY_DAYS,
+  SAMPLE_BUSY_SHARE,
+  SAMPLE_CHUNKS_PER_MONTH,
+  SAMPLE_MIN_CHUNK_CHARS,
+  SAMPLE_TAIL_SHARE,
+  SILENCE_GAP_MS,
+} from "@/lib/config";
 import type { Tone } from "@/lib/llm/concepts";
 import type { ChatMessage, MsgKind } from "@/lib/parse/parse";
 import { type ChatStats, computeStats } from "@/lib/stats/compute";
@@ -17,20 +26,24 @@ export interface Payload {
   members: string[];
   /** 첫·마지막 메시지의 KST 날짜 YYYY-MM-DD */
   period: { start: string; end: string };
-  /** transcript 첫 메시지 시각(ISO +09:00) */
+  /** transcript 첫 메시지 시각(ISO +09:00). 고르게 고르면 보통 대화 첫 메시지 근처다 */
   cutoffAt: string;
   /** 시스템 메시지를 뺀 전체 메시지 수 */
   msgTotal: number;
-  /** transcript에 담은 메시지 수(anchors 제외) */
+  /** transcript에 담은 메시지 수(anchors 제외). 화면의 "전체 기간에서 N개" */
   msgSent: number;
   /** 전체 통계. 서버의 자리표시자 해석이 쓴다. 모델에게는 statsForPrompt로 줄여 보낸다 */
   stats: ChatStats;
   /**
-   * transcript 앞의 메시지 중 첫 ANCHOR_FIRST_N개와 메시지 수 상위 ANCHOR_BUSY_DAYS일. tokenBudget × anchorShare 안에서
-   * 묶음마다 앞에서부터 담는다. 대화 전체가 tokenBudget에 들어가면 빈 문자열이다
+   * 예전 형식(v2.0)의 발췌: transcript보다 앞 시기의 첫 대화와 활발했던 날. 지금 만드는 페이로드에서는 늘 빈 문자열이다.
+   * 이 브라우저에 둔 예전 사본으로 [다시 쓰기]를 할 수 있게 검증·프롬프트는 아직 받는다
    */
   anchors: string;
-  /** 마지막 메시지까지 이어지는 최근 구간. 1건 이상이고, 가장 최근 메시지가 예산보다 길면 그 본문을 자른(끝에 …) 한 줄이다 */
+  /**
+   * 보낸 메시지 전부(시간순). 대화 전체가 tokenBudget에 들어가면 전부이고, 아니면 처음부터 끝까지 전체 기간에서 고른 것이다:
+   * 달마다 연속 덩어리, 가장 활발했던 날들, 마지막 메시지까지 이어지는 최근 구간(조금 더 많이). 1건 이상이고 늘 마지막 메시지로 끝난다.
+   * 가장 최근 메시지가 예산보다 길면 그 본문을 자른(끝에 …) 한 줄이다
+   */
   transcript: string;
   /** anchors·transcript에서 가린 개수. 키: phone·email·account·rrn·url */
   maskCounts: Record<string, number>;
@@ -106,7 +119,7 @@ const promptStatsTokens = (stats: ChatStats, tokensPerChar: number) =>
 
 /**
  * 페이로드의 추정 토큰(글자 수 × tokensPerChar).
- * - text: anchors + transcript. buildPayload가 tokenBudget 안으로 맞추는 몫이다
+ * - text: anchors + transcript. buildPayload가 tokenBudget 안으로 맞추는 몫이다(새 페이로드의 anchors는 비어 있다)
  * - total: text + 모델에게 보이는 stats(statsForPrompt) + 범례(legendText). system 프롬프트와 지시는 들어 있지 않다
  */
 export function payloadTokens(
@@ -196,8 +209,6 @@ export type BuildInput = {
   tone: Tone;
   tokenBudget: number;
   tokensPerChar: number;
-  /** anchors가 tokenBudget에서 쓸 수 있는 비율. 기본 ANCHOR_BUDGET_SHARE */
-  anchorShare?: number;
 };
 
 /** buildPayloadForBudget이 anchors + transcript에 남겨야 하는 최소 몫 */
@@ -212,11 +223,10 @@ function chatLines(messages: ChatMessage[]): ChatLine[] {
 
 /**
  * 표시 이름으로 바뀐 메시지로 페이로드를 만든다. stats는 시스템 메시지를 뺀 전체 메시지로 계산한다.
- * tokenBudget은 anchors + transcript 몫이다(payloadTokens(p).text ≤ tokenBudget, 줄바꿈과 날짜 헤더 포함).
+ * tokenBudget은 transcript 몫이다(payloadTokens(p).text ≤ tokenBudget, 줄바꿈과 날짜 헤더 포함). anchors는 늘 비어 있다.
  * stats·system 프롬프트 몫은 호출하는 쪽이 빼고 넘긴다(buildPayloadForBudget). 예산을 줄여 다시 만들면 이 몫도 그만큼 줄어든다.
- * - 대화 전체가 tokenBudget에 들어가면 모두 transcript이고 anchors는 비어 있다
- * - 아니면 anchors 몫(tokenBudget × anchorShare)을 떼어 두고, transcript를 마지막 메시지부터 거꾸로 채운다.
- *   anchors는 첫 N개와 상위 날짜를 묶음마다 공평하게 나눠 담고, anchors가 남긴 몫은 transcript가 마저 쓴다
+ * - 대화 전체가 tokenBudget에 들어가면 전부 보낸다
+ * - 아니면 전체 기간에서 고른다(sampleRanges): 최근 구간, 가장 활발했던 날들, 달마다 고르게 띄운 연속 덩어리. 남은 몫은 최근 구간이 마저 쓴다
  * - 가장 최근 메시지 한 줄조차 tokenBudget보다 길면 그 본문을 잘라(끝에 …) 넣는다. transcript는 늘 1건 이상이다
  * 시스템 메시지를 뺀 메시지가 없거나, 잘라도 날짜 헤더와 줄 머리조차 안 들어가는 tokenBudget이면 던진다.
  */
@@ -245,108 +255,47 @@ export function buildPayloadForBudget(input: Omit<BuildInput, "tokenBudget"> & {
 }
 
 function assemble(chat: ChatLine[], stats: ChatStats, input: BuildInput): Payload {
-  const { concept, kind, tone, tokenBudget, tokensPerChar, anchorShare = ANCHOR_BUDGET_SHARE } = input;
+  const { concept, kind, tone, tokenBudget, tokensPerChar } = input;
   const members = [...new Set(chat.map((m) => m.sender))];
   const codes = new Map(memberCodes(members).map((c, i) => [members[i], c]));
+  const rendered = chat.map((m) => render(m, codes.get(m.sender)!));
 
-  const cache = new Map<number, Rendered>();
-  const rendered = (i: number): Rendered => {
-    let r = cache.get(i);
-    if (!r) cache.set(i, (r = render(chat[i], codes.get(chat[i].sender)!)));
-    return r;
-  };
-  const lineCost = (r: Rendered) => (r.line.length + 1) * tokensPerChar;
-  const HEADER_COST = ("# YYYY-MM-DD".length + 1) * tokensPerChar;
+  // 예산은 글자 단위 정수로 센다(줄마다 글자 수 + 줄바꿈 1). 글자 × tokensPerChar ≤ tokenBudget이 되게 내림하고,
+  // 소수점 오차로 넘치면 한 글자씩 줄인다
+  let budget = Math.floor(tokenBudget / tokensPerChar);
+  while (budget > 0 && budget * tokensPerChar > tokenBudget) budget--;
+  const lineChars = (r: Rendered) => r.line.length + 1;
 
-  // 가장 최근 메시지 한 줄(과 날짜 헤더)조차 예산보다 길면 본문을 잘라 둔다. 아래 채우기는 잘린 줄을 쓴다.
-  // 본문 글자 수 n은 예산에서 헤더·줄 머리·…·줄바꿈을 뺀 값이고, 소수점 오차로 넘치면 한 글자씩 줄인다
+  // 가장 최근 메시지 한 줄(과 날짜 헤더)조차 예산보다 길면 본문을 잘라 둔다. 아래 고르기는 잘린 줄을 쓴다.
+  // 본문 글자 수 n은 예산에서 헤더·줄 머리·…·줄바꿈을 뺀 값이다
   const lastIdx = chat.length - 1;
-  const fitsAlone = (r: Rendered) => lineCost(r) + HEADER_COST <= tokenBudget;
-  const newest = rendered(lastIdx);
+  const fitsAlone = (r: Rendered) => lineChars(r) + HEADER_CHARS <= budget;
+  const newest = rendered[lastIdx];
   if (!fitsAlone(newest)) {
-    let n = Math.floor((tokenBudget - HEADER_COST) / tokensPerChar) - 1 - newest.head.length - "…".length;
+    let n = budget - HEADER_CHARS - 1 - newest.head.length - "…".length;
     while (n >= 0 && !fitsAlone(cutLine(newest, n))) n--;
     if (n < 0) throw new Error("예산이 모자라다: 날짜 헤더와 줄 머리조차 들어가지 않는다");
-    cache.set(lastIdx, cutLine(newest, n));
+    rendered[lastIdx] = cutLine(newest, n);
   }
 
-  // transcript = chat[start..]. 거꾸로 늘리며, 날짜가 바뀌면 헤더 줄 몫도 센다(used는 transcript의 blockTokens와 같다)
-  let start = chat.length;
-  let used = 0;
-  let day: string | null = null;
-  const extend = (limit: number) => {
-    for (let i = start - 1; i >= 0; i--) {
-      const r = rendered(i);
-      const c = lineCost(r) + (r.day === day ? 0 : HEADER_COST);
-      if (used + c > limit) break;
-      used += c;
-      start = i;
-      day = r.day;
-    }
-  };
-
-  extend(tokenBudget);
-  let anchorIdx: number[] = [];
-  if (start > 0) {
-    // 다 들어가지 않는다: anchors 몫을 떼어 두고 다시 채운다. 그 몫으로 마지막 메시지조차 못 넣으면 전체 예산으로 넣는다
-    const anchorBudget = Math.floor(tokenBudget * anchorShare);
-    start = chat.length;
-    used = 0;
-    day = null;
-    extend(tokenBudget - anchorBudget);
-    if (start === chat.length) extend(tokenBudget);
-    anchorIdx = pickAnchors(start, Math.min(anchorBudget, tokenBudget - used));
-    // anchors가 남긴 몫으로 transcript를 마저 늘리고, transcript와 겹친 anchors는 뺀다(뒤쪽만 빠져서 anchors 몫은 줄기만 한다)
-    extend(tokenBudget - blockTokens(joinBlock(anchorIdx.map(rendered)), tokensPerChar));
-    anchorIdx = anchorIdx.filter((i) => i < start);
-  }
-
-  /**
-   * chat[0..limit) 중 anchors를 고른다. 묶음은 첫 ANCHOR_FIRST_N개와 상위 날짜(메시지 수, 동률이면 이른 날짜)마다 하나다.
-   * 예산은 묶음끼리 공평하게 나눈다(다 담아도 남는 묶음의 몫은 나머지가 나눠 갖는다). 묶음마다 시간순 앞에서부터 담는다
-   */
-  function pickAnchors(limit: number, budget: number): number[] {
-    const firstN = Math.min(ANCHOR_FIRST_N, limit);
-    const busy = Object.entries(stats.dailyCounts)
-      .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1))
-      .slice(0, ANCHOR_BUSY_DAYS)
-      .map(([d]) => d);
-    const byDay = new Map(busy.map((d) => [d, [] as number[]]));
-    for (let i = firstN; i < limit; i++) byDay.get(kst(chat[i].ts).day)?.push(i);
-    const groups = [Array.from({ length: firstN }, (_, i) => i), ...busy.map((d) => byDay.get(d)!)];
-
-    // 묶음 안에서 앞에서부터 담을 때의 누적 비용
-    const prefixCost = (idx: number[], cap: number): { cost: number; n: number } => {
-      let cost = 0;
-      let d: string | null = null;
-      let n = 0;
-      for (const i of idx) {
-        const r = rendered(i);
-        const c = lineCost(r) + (r.day === d ? 0 : HEADER_COST);
-        if (cost + c > cap) break;
-        cost += c;
-        d = r.day;
-        n++;
-      }
-      return { cost, n };
-    };
-    const need = groups.map((g) => prefixCost(g, Infinity).cost);
-    const share = new Array<number>(groups.length).fill(0);
-    let left = budget;
-    [...groups.keys()]
-      .sort((a, b) => need[a] - need[b])
-      .forEach((k, j, order) => {
-        share[k] = Math.min(need[k], left / (order.length - j));
-        left -= share[k];
-      });
-    // 서로 다른 묶음은 날짜가 겹치지 않거나(상위 날짜끼리) 첫 N개 뒤에 이어져서, 합친 덩어리의 비용은 묶음 비용의 합 이하다
-    return groups.flatMap((g, k) => g.slice(0, prefixCost(g, share[k]).n)).sort((a, b) => a - b);
-  }
-  const sentIdx = Array.from({ length: chat.length - start }, (_, k) => start + k);
+  const busyDays = Object.entries(stats.dailyCounts)
+    .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1))
+    .slice(0, SAMPLE_BUSY_DAYS)
+    .map(([d]) => d);
+  const ranges = sampleRanges(
+    {
+      chars: rendered.map(lineChars),
+      days: rendered.map((r) => r.day),
+      sessionStart: chat.map((m, i) => i === 0 || m.ts - chat[i - 1].ts >= SILENCE_GAP_MS),
+      busyDays,
+    },
+    budget,
+  );
+  const sentIdx = ranges.flatMap(([a, b]) => Array.from({ length: b - a }, (_, k) => a + k));
 
   const maskCounts: Record<string, number> = { phone: 0, email: 0, account: 0, rrn: 0, url: 0 };
-  for (const i of [...anchorIdx, ...sentIdx]) {
-    const r = rendered(i);
+  for (const i of sentIdx) {
+    const r = rendered[i];
     if (r.masked) for (const k of MASK_KINDS) maskCounts[k] += r.masked[k];
   }
 
@@ -364,12 +313,181 @@ function assemble(chat: ChatLine[], stats: ChatStats, input: BuildInput): Payloa
     tone,
     members,
     period: { start: kst(first).day, end: kst(last).day },
-    cutoffAt: kst(chat[start].ts).iso,
+    cutoffAt: kst(chat[sentIdx[0]].ts).iso,
     msgTotal: stats.total,
     msgSent: sentIdx.length,
     stats,
-    anchors: joinBlock(anchorIdx.map(rendered)),
-    transcript: joinBlock(sentIdx.map(rendered)),
+    anchors: "",
+    transcript: joinBlock(sentIdx.map((i) => rendered[i])),
     maskCounts,
   };
+}
+
+/** 날짜 헤더 한 줄 `# YYYY-MM-DD`(+ 줄바꿈)의 글자 수 */
+const HEADER_CHARS = "# YYYY-MM-DD".length + 1;
+
+interface SampleInput {
+  /** 메시지마다 줄 글자 수 + 1(줄바꿈) */
+  chars: number[];
+  /** 메시지마다 KST 날짜 YYYY-MM-DD */
+  days: string[];
+  /** 메시지마다 대화가 시작하는 곳인가(첫 메시지이거나 앞 메시지와 SILENCE_GAP_MS 이상 떨어짐) */
+  sessionStart: boolean[];
+  /** 메시지가 가장 많은 날들(많은 순) */
+  busyDays: string[];
+}
+
+/** 몫을 공평하게 나눈다: 적게 필요한 쪽부터 다 주고, 남은 몫은 나머지가 똑같이 나눠 갖는다. 정수로 내린다 */
+function fairShares(need: number[], total: number): number[] {
+  const share = need.map(() => 0);
+  let left = Math.max(0, total);
+  [...need.keys()]
+    .sort((a, b) => need[a] - need[b])
+    .forEach((k, j, order) => {
+      share[k] = Math.min(need[k], Math.floor(left / (order.length - j)));
+      left -= share[k];
+    });
+  return share;
+}
+
+/**
+ * 보낼 메시지 번호 구간 [a, b)들(시간순, 겹치거나 붙은 것은 합침). 구간을 이어 joinBlock한 덩어리는 budget 글자를 넘지 않는다.
+ * 대화 전체가 들어가면 [[0, n)]. 아니면:
+ * 1. 최근 구간: 마지막 메시지부터 거꾸로 budget × SAMPLE_TAIL_SHARE까지(마지막 메시지는 늘 넣는다)
+ * 2. 가장 활발했던 날들: 그날 첫 메시지부터 이어서, budget × SAMPLE_BUSY_SHARE를 날짜끼리 공평하게
+ * 3. 달마다: 남은 몫을 (최근 구간 앞의) 달끼리 공평하게 나누고, 달 몫은 달 안에 고르게 띄운 연속 덩어리
+ *    SAMPLE_CHUNKS_PER_MONTH개 이하로 쓴다. 덩어리는 대화가 시작하는 곳에서 시작한다(없으면 그 자리에서)
+ * 4. 합치고 남은 몫(겹침·자투리)으로 최근 구간을 더 거꾸로 늘린다
+ * 구간마다 따로 센 비용(날짜 헤더 포함)의 합은 합친 덩어리의 비용 이상이라, 몫의 합이 budget 이하면 합친 덩어리도 budget 이하다
+ * (합친 덩어리의 헤더는 이웃한 두 줄의 날짜가 다를 때나 구간 첫머리에만 생기고, 그 자리는 어느 구간에서든 이미 헤더로 셌다)
+ */
+function sampleRanges({ chars, days, sessionStart, busyDays }: SampleInput, budget: number): [number, number][] {
+  const n = chars.length;
+  // pre[i] = chars[0..i) 합, change[i] = 1..i 중 앞 줄과 날짜가 다른 줄 수
+  const pre = new Array<number>(n + 1).fill(0);
+  const change = new Array<number>(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    pre[i + 1] = pre[i] + chars[i];
+    if (i > 0) change[i] = change[i - 1] + (days[i] !== days[i - 1] ? 1 : 0);
+  }
+  /** [a, b)만 joinBlock했을 때의 글자 수 */
+  const cost = (a: number, b: number) => (a >= b ? 0 : pre[b] - pre[a] + HEADER_CHARS * (1 + change[b - 1] - change[a]));
+  /** a부터 앞으로 늘려 cap 안에 드는 가장 먼 끝(lim 이하). 비용은 b에 대해 커지기만 해서 이분 탐색한다 */
+  const growForward = (a: number, lim: number, cap: number) => {
+    let lo = a;
+    let hi = lim;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (cost(a, mid) <= cap) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+
+  if (cost(0, n) <= budget) return [[0, n]];
+
+  // 1. 최근 구간 [tail, n)
+  const tailCap = Math.max(Math.floor(budget * SAMPLE_TAIL_SHARE), cost(n - 1, n));
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (cost(mid, n) <= tailCap) hi = mid;
+    else lo = mid + 1;
+  }
+  const tail = lo;
+  const picked: [number, number][] = [[tail, n]];
+  let left = budget - cost(tail, n);
+
+  // 2. 가장 활발했던 날들. 날짜가 이어진 구간(최근 구간 앞까지)마다 앞에서부터
+  const dayRange = (d: string): [number, number] | null => {
+    const a = days.indexOf(d);
+    if (a < 0 || a >= tail) return null;
+    let b = a;
+    while (b < tail && days[b] === d) b++;
+    return [a, b];
+  };
+  const busy = busyDays.map(dayRange).filter((r): r is [number, number] => r !== null);
+  const busyShares = fairShares(
+    busy.map(([a, b]) => cost(a, b)),
+    Math.min(Math.floor(budget * SAMPLE_BUSY_SHARE), left),
+  );
+  busy.forEach(([a, b], k) => {
+    const end = growForward(a, b, busyShares[k]);
+    if (end > a) {
+      picked.push([a, end]);
+      left -= cost(a, end);
+    }
+  });
+
+  // 3. 달마다(최근 구간 앞). 날짜가 앞뒤로 섞인 대화도 있어 같은 달이 이어진 구간마다 한 몫이다
+  const months: [number, number][] = [];
+  for (let i = 0; i < tail; i++) {
+    const last = months.at(-1);
+    if (last && days[i].slice(0, 7) === days[last[1] - 1].slice(0, 7)) last[1] = i + 1;
+    else months.push([i, i + 1]);
+  }
+  const monthShares = fairShares(
+    months.map(([a, b]) => cost(a, b)),
+    left,
+  );
+  months.forEach(([a, b], k) => {
+    const share = monthShares[k];
+    if (share >= cost(a, b)) {
+      picked.push([a, b]);
+      return;
+    }
+    const chunks = Math.max(1, Math.min(SAMPLE_CHUNKS_PER_MONTH, Math.floor(share / SAMPLE_MIN_CHUNK_CHARS)));
+    const each = Math.floor(share / chunks);
+    let prevEnd = a;
+    for (let j = 0; j < chunks; j++) {
+      const slotEnd = a + Math.floor(((j + 1) * (b - a)) / chunks);
+      let start = Math.max(a + Math.floor((j * (b - a)) / chunks), prevEnd);
+      if (start >= b) break;
+      // 자리 안에서 대화가 시작하는 첫 곳. 없으면 자리 첫머리
+      for (let i = start; i < slotEnd; i++) {
+        if (sessionStart[i]) {
+          start = i;
+          break;
+        }
+      }
+      const end = growForward(start, b, each);
+      if (end > start) {
+        picked.push([start, end]);
+        prevEnd = end;
+      }
+    }
+  });
+
+  // 합친다(겹치거나 붙은 구간)
+  picked.sort((x, y) => x[0] - y[0]);
+  const merged: [number, number][] = [];
+  for (const [a, b] of picked) {
+    const last = merged.at(-1);
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else merged.push([a, b]);
+  }
+  // 합친 덩어리의 실제 글자 수: 구간마다의 비용에서, 앞 구간 끝과 날짜가 같아 생략되는 헤더를 뺀다
+  const headerAt = (i: number, prev: number | null) => (prev === null || days[prev] !== days[i] ? HEADER_CHARS : 0);
+  let used = 0;
+  merged.forEach(([a, b], k) => {
+    used += cost(a, b) - HEADER_CHARS + headerAt(a, k > 0 ? merged[k - 1][1] - 1 : null);
+  });
+
+  // 4. 남은 몫으로 최근 구간을 거꾸로 늘린다. 앞 구간에 닿으면 합친다
+  const last = merged[merged.length - 1];
+  while (last[0] > 0) {
+    const i = last[0] - 1;
+    const prevRange = merged.length > 1 ? merged[merged.length - 2] : null;
+    const p = prevRange ? prevRange[1] - 1 : null;
+    const delta = chars[i] + headerAt(i, p) + headerAt(last[0], i) - headerAt(last[0], p);
+    if (used + delta > budget) break;
+    used += delta;
+    last[0] = i;
+    if (prevRange && prevRange[1] === i) {
+      last[0] = prevRange[0];
+      merged.splice(merged.length - 2, 1);
+    }
+  }
+  return merged;
 }

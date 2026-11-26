@@ -198,7 +198,7 @@ export function ConversationHomeView({
           <CoverStickers tone={c.tone} names={c.displayNames} dailyCounts={c.stats.dailyCounts} />
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 pt-1 text-base">
             <dt className="text-ink-soft">읽은 범위</dt>
-            <dd className="tabular-nums">{readRange(c.cutoffAt, c.msgSent)}</dd>
+            <dd className="tabular-nums">{readRange(c.msgSent)}</dd>
             <dt className="text-ink-soft">삭제 예정일</dt>
             <dd className="tabular-nums">{kstDay(c.expiresAt)} (30일 보관)</dd>
           </dl>

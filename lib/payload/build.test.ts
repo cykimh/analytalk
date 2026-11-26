@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/lib/parse/parse";
-import { ANCHOR_BUDGET_SHARE, MAX_PAYLOAD_BYTES, PROMPT_RESERVE_TOKENS } from "@/lib/config";
+import { MAX_PAYLOAD_BYTES, PROMPT_RESERVE_TOKENS, SAMPLE_CHUNKS_PER_MONTH } from "@/lib/config";
 import { computeStats } from "@/lib/stats/compute";
 import { statsForPrompt } from "@/lib/stats/view";
 import { syntheticGroupChat } from "@/test/syntheticChat";
@@ -46,8 +46,8 @@ function named(): ChatMessage[] {
   return r.messages;
 }
 
-const build = (messages: ChatMessage[], tokenBudget = 1_000_000, anchorShare?: number) =>
-  buildPayload({ messages, tone: "warm", concept: "couple", kind: "pair", tokenBudget, tokensPerChar: 1, anchorShare });
+const build = (messages: ChatMessage[], tokenBudget = 1_000_000, tokensPerChar = 1) =>
+  buildPayload({ messages, tone: "warm", concept: "couple", kind: "pair", tokenBudget, tokensPerChar });
 /** 덩어리 하나의 추정 토큰(tokensPerChar 1). 구현과 같은 정의: 줄마다 글자 수 + 1 */
 const tokens = (block: string) => lines(block).reduce((sum, l) => sum + l.length + 1, 0);
 
@@ -172,76 +172,139 @@ describe("buildPayload", () => {
     expect(exact.anchors).toBe("");
   });
 
-  it("anchors: 첫 메시지 100개 + 메시지 수 상위 3일, transcript와 겹치는 것은 뺀다", () => {
-    // 날짜별 개수. 상위 3일은 10일(90), 5일(80), 7일(60)
-    const perDay: Record<number, number> = { 1: 30, 2: 50, 3: 30, 4: 10, 5: 80, 6: 10, 7: 60, 8: 10, 9: 10, 10: 90 };
-    const rows: Raw[] = [];
-    const byDay: Record<number, number[]> = {};
-    for (const [day, n] of Object.entries(perDay)) {
-      for (let i = 0; i < n; i++) {
-        (byDay[Number(day)] ??= []).push(rows.length);
-        rows.push([i % 2 ? "P1" : "P2", kst(2026, 10, Number(day), 10) + i * MIN, "ㅇㅇ"]);
-      }
-    }
-    // anchors 몫을 넉넉히 줘서 고르는 범위만 본다(예산 상한은 아래 테스트)
-    const p = build(chat(rows), 6000, 0.95);
-    const sent = new Set(ids(p.transcript));
-    const anchored = ids(p.anchors);
+  it("시스템 메시지뿐이면 던진다", () => {
+    expect(() => build(chat([[null, kst(2026, 10, 1, 8), "P1님이 들어왔습니다."]]))).toThrow("보낼 메시지가 없다");
+  });
+});
 
-    expect(sent.size).toBeGreaterThan(0);
-    expect(sent.size).toBeLessThan(perDay[10]);
-    const expected = [...Array(100).keys()]
-      .concat(byDay[5], byDay[7], byDay[10])
-      .filter((id, i, all) => all.indexOf(id) === i && !sent.has(id))
-      .sort((a, b) => a - b);
-    expect(anchored).toEqual(expected);
-    expect(lines(p.anchors).filter((l) => l.startsWith("# "))).toEqual([
-      "# 2026-10-01",
-      "# 2026-10-02",
-      "# 2026-10-03",
-      "# 2026-10-05",
-      "# 2026-10-07",
-      "# 2026-10-10",
-    ]);
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+const BUSIEST = "2024-07-14";
+/** 3년 치(2023-01-01~2025-12-31) 매일 아침 8개 + 가장 활발한 날 하루 600개. 날마다 09:00에 대화를 시작한다(전날과 6시간 넘게 쉼) */
+function threeYears(): ChatMessage[] {
+  const rows: Raw[] = [];
+  for (let t = kst(2023, 1, 1); t < kst(2026, 1, 1); t += DAY) {
+    const n = new Date(t + 9 * HOUR).toISOString().slice(0, 10) === BUSIEST ? 600 : 8;
+    for (let i = 0; i < n; i++) rows.push([i % 2 ? "P1" : "P2", t + 9 * HOUR + i * MIN, `${i}번째 이야기를 이어서 해 보자`]);
+  }
+  return chat(rows);
+}
+/** transcript 메시지 줄들의 msg_id·KST 날짜·시각 */
+const sentLines = (block: string) =>
+  readBlock(block).flatMap((l) => (l.type === "message" ? [{ id: l.id, day: l.header!, time: l.time }] : []));
+/** 이어진 msg_id 덩어리들(시간순) */
+function runsOf(idList: number[]): number[][] {
+  const runs: number[][] = [];
+  for (const id of idList) {
+    const last = runs.at(-1);
+    if (last && last.at(-1)! + 1 === id) last.push(id);
+    else runs.push([id]);
+  }
+  return runs;
+}
+
+describe("buildPayload: 대화가 예산보다 길면 전체 기간에서 고르게 고른다", () => {
+  const messages = threeYears();
+  const months = [2023, 2024, 2025].flatMap((y) => Array.from({ length: 12 }, (_, m) => `${y}-${String(m + 1).padStart(2, "0")}`));
+
+  it("3년 치, 빠듯한 예산 20,000: 해마다·달마다·가장 활발한 날의 메시지가 있고 마지막 메시지로 끝난다", () => {
+    const p = build(messages, 20_000);
+    const sent = sentLines(p.transcript);
+    expect(p.msgSent).toBeLessThan(p.msgTotal / 10);
+    expect(p.anchors).toBe("");
+    expect(new Set(sent.map((l) => l.day.slice(0, 4)))).toEqual(new Set(["2023", "2024", "2025"]));
+    expect([...new Set(sent.map((l) => l.day.slice(0, 7)))]).toEqual(months);
+    expect(sent.some((l) => l.day === BUSIEST)).toBe(true);
+    expect(sent.at(-1)!.id).toBe(messages.length - 1);
+    // 시간순(msg_id가 커지기만)이고 msg_id로 되찾을 수 있다
+    expect(sent.map((l) => l.id)).toEqual([...sent.map((l) => l.id)].sort((a, b) => a - b));
+    expect(payloadIndex(p).size).toBe(p.msgSent);
+    expect(validatePayload(p).ok).toBe(true);
+    expect(p.cutoffAt).toBe(iso(messages[sent[0].id].ts));
   });
 
-  it("활발한 단톡방: anchors는 예산 × ANCHOR_BUDGET_SHARE 안에서 묶음마다 담고, 예산을 줄이면 전체도 줄어든다", () => {
+  it("달 몫은 달마다 연속 덩어리 몇 개이고, 덩어리는 대화가 시작하는 곳(09:00)에서 시작한다", () => {
+    for (const budget of [20_000, 200_000]) {
+      const p = build(messages, budget);
+      const sent = sentLines(p.transcript);
+      const byId = new Map(sent.map((l) => [l.id, l]));
+      const runs = runsOf(sent.map((l) => l.id));
+      const tail = runs.at(-1)!;
+      // 최근 구간 앞의 덩어리들(가장 활발한 날이 든 달은 그날 몫과 달 몫이 섞여서 뺀다)
+      const middle = runs.slice(0, -1).filter((r) => !r.some((id) => byId.get(id)!.day.startsWith(BUSIEST.slice(0, 7))));
+      expect(middle.length).toBeGreaterThan(30);
+      for (const r of middle) {
+        expect([budget, byId.get(r[0])!.time]).toEqual([budget, "09:00"]);
+        expect(r.length).toBeGreaterThan(1);
+      }
+      const perMonth = new Map<string, number>();
+      for (const r of middle) {
+        const m = byId.get(r[0])!.day.slice(0, 7);
+        perMonth.set(m, (perMonth.get(m) ?? 0) + 1);
+      }
+      for (const [m, n] of perMonth) expect([budget, m, n <= SAMPLE_CHUNKS_PER_MONTH]).toEqual([budget, m, true]);
+      expect(tail.length).toBeGreaterThan(1);
+    }
+  });
+
+  it("최근 구간을 조금 더: 마지막 달에서 고른 메시지가 보통 달의 두 배 넘게 많다", () => {
+    const p = build(messages, 60_000);
+    const count = new Map<string, number>();
+    for (const l of sentLines(p.transcript)) count.set(l.day.slice(0, 7), (count.get(l.day.slice(0, 7)) ?? 0) + 1);
+    const sorted = [...count.values()].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    expect(count.get("2025-12")!).toBeGreaterThan(median * 2);
+  });
+
+  it("예산을 넘지 않고 거의 다 쓴다(여러 예산·tokensPerChar), validatePayload를 통과한다", () => {
+    for (const tokensPerChar of [1, 0.8, 0.37]) {
+      for (const budget of [400, 1000, 3000, 7777, 20_000, 123_456]) {
+        const p = build(messages, budget, tokensPerChar);
+        const { text } = payloadTokens(p, tokensPerChar);
+        expect([tokensPerChar, budget, text <= budget]).toEqual([tokensPerChar, budget, true]);
+        expect([tokensPerChar, budget, text > budget * 0.9]).toEqual([tokensPerChar, budget, true]);
+        expect([tokensPerChar, budget, validatePayload(p).ok]).toEqual([tokensPerChar, budget, true]);
+      }
+    }
+  });
+
+  it("활발한 단톡방: 상위 3일이 모두 조금씩 들어 있고, 예산을 0.95배로 줄이면(413 재요청) 보내는 몫도 줄어든다", () => {
     // 평소 60일 × 20개 + 상위 3일 × 1,500개. 상위 날짜만 해도 예산의 몇 배다
     const rows: Raw[] = [];
     const busy = new Set([10, 30, 50]);
     for (let day = 0; day < 60; day++) {
       const n = busy.has(day) ? 1500 : 20;
       for (let i = 0; i < n; i++) {
-        rows.push([`P${(i % 4) + 1}`, kst(2026, 1, 1, 9) + day * 86_400_000 + i * 20_000, `오늘 ${day}일 ${i}번째 이야기`]);
+        rows.push([`P${(i % 4) + 1}`, kst(2026, 1, 1, 9) + day * DAY + i * 20_000, `오늘 ${day}일 ${i}번째 이야기`]);
       }
     }
-    const messages = chat(rows);
-    const dayOf = (id: number) => new Date(messages[id].ts + 9 * 3_600_000).toISOString().slice(0, 10);
-    const busyDays = [...busy].map((d) => dayOf(rows.findIndex((r) => r[1] >= kst(2026, 1, 1, 9) + d * 86_400_000)));
+    const group = chat(rows);
+    const dayOf = (id: number) => new Date(group[id].ts + 9 * HOUR).toISOString().slice(0, 10);
+    const busyDays = [...busy].map((d) => dayOf(rows.findIndex((r) => r[1] >= kst(2026, 1, 1, 9) + d * DAY)));
 
     let budget = 50_000;
     let prevText = Infinity;
     for (let round = 0; round < 3; round++) {
-      const p = buildPayload({ messages, tone: "warm", concept: "group", kind: "group", tokenBudget: budget, tokensPerChar: 1 });
+      const p = buildPayload({ messages: group, tone: "warm", concept: "group", kind: "group", tokenBudget: budget, tokensPerChar: 1 });
       const { text, total } = payloadTokens(p, 1);
       expect(text).toBeLessThanOrEqual(budget);
       expect(text).toBeGreaterThan(budget * 0.95);
-      expect(tokens(p.anchors)).toBeLessThanOrEqual(budget * ANCHOR_BUDGET_SHARE);
       expect(total).toBe(text + JSON.stringify(statsForPrompt(p.stats)).length + legendText(p.members).length + 1);
       expect(text).toBeLessThan(prevText);
-      // 첫 대화와 상위 3일이 모두 조금씩 들어 있다
-      const anchored = ids(p.anchors);
-      expect(anchored[0]).toBe(0);
-      for (const d of busyDays) expect(anchored.some((id) => dayOf(id) === d)).toBe(true);
-      expect(lines(p.transcript).at(-1)).toMatch(new RegExp(`^m${messages.length - 1}\\|`));
-      // T10의 413 재요청처럼 예산을 0.95배로 줄인다
+      const sent = ids(p.transcript);
+      for (const d of busyDays) expect(sent.some((id) => dayOf(id) === d)).toBe(true);
+      expect(new Set(sent.map((id) => dayOf(id).slice(0, 7)))).toEqual(new Set(["2026-01", "2026-02", "2026-03"]));
+      expect(sent.at(-1)).toBe(group.length - 1);
       prevText = text;
       budget = Math.floor(budget * 0.95);
     }
   });
 
-  it("시스템 메시지뿐이면 던진다", () => {
-    expect(() => build(chat([[null, kst(2026, 10, 1, 8), "P1님이 들어왔습니다."]]))).toThrow("보낼 메시지가 없다");
+  it("작은 대화는 예산이 넉넉하면 전부 보낸다(3년 치도)", () => {
+    const all = build(messages, 1_000_000);
+    expect(all.msgSent).toBe(all.msgTotal);
+    expect(all.anchors).toBe("");
+    expect(ids(all.transcript)).toEqual(messages.map((m) => m.id));
   });
 });
 
@@ -361,7 +424,7 @@ describe("payloadIndex", () => {
     expect(idx.get("m1")).toEqual({ sender: "P2", at: "2026-01-01T00:01:00+09:00", text: "새해 복 a＜b＞" });
   });
 
-  it("anchors와 transcript의 메시지를 모두 담는다", () => {
+  it("고른 메시지를 모두 담는다", () => {
     const p = build(named(), 5000);
     const idx = payloadIndex(p);
     expect(idx.size).toBe(ids(p.anchors).length + p.msgSent);

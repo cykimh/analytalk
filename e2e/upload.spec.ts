@@ -43,7 +43,7 @@ test.describe("업로드 흐름", () => {
 
     await toReview(page);
     await expect(page.getByText(/미국 Anthropic으로 가요/)).toBeVisible();
-    await expect(page.getByText(/2024-03-14 이후 11개 전부/)).toBeVisible();
+    await expect(page.getByText("전체 기간에서 11개")).toBeVisible();
     // 위험 신호가 없으면 안내 줄도 없다
     await expect(page.getByText(/위험할 수 있는 메시지/)).toHaveCount(0);
     await expect(page.getByRole("checkbox", { name: "방 사람들에게 말했어요" })).toBeVisible();

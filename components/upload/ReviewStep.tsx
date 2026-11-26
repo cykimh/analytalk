@@ -5,11 +5,11 @@
 // 직장·팀이면 버튼 대신 통계(AI는 M3)를 보인다. 단톡방이면 동의 체크 뒤에 만들 수 있다.
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { readRange } from "@/components/episode/model";
 import { formatCount } from "@/components/stats/format";
 import { StatsDashboard } from "@/components/stats/StatsDashboard";
 import { TONES } from "@/lib/llm/concepts";
 import type { Payload } from "@/lib/payload/build";
-import type { ChatMessage } from "@/lib/parse/parse";
 import { sendSummary } from "./flow";
 import { StepFrame } from "./StepFrame";
 
@@ -26,7 +26,6 @@ const HELPLINE = "힘들 때는 109(자살예방상담전화), 지금 위험하�
 
 export function ReviewStep({
   payload,
-  messages,
   excluded,
   safetyDropped,
   busy,
@@ -34,8 +33,6 @@ export function ReviewStep({
   onCreate,
 }: {
   payload: Payload;
-  /** 페이로드를 만든 메시지(이름 정리 뒤) */
-  messages: ChatMessage[];
   /** 분석에서 뺀 멤버(카톡 이름·메시지 수). 화면에만 보이고 보내지 않는다 */
   excluded: { name: string; count: number }[];
   /** 위험 신호(자해·폭력) 때문에 빼고 보내는 메시지 수 */
@@ -45,12 +42,8 @@ export function ReviewStep({
   onCreate: () => void;
 }) {
   const [told, setTold] = useState(false);
-  const s = sendSummary(payload, messages, excluded);
+  const s = sendSummary(payload, excluded);
   const masked = Object.entries(payload.maskCounts).filter(([, n]) => n > 0);
-  const extra = [s.first > 0 && `첫 대화 ${formatCount(s.first)}개`, s.busy > 0 && `가장 활발했던 날 ${formatCount(s.busy)}개`]
-    .filter(Boolean)
-    .map((t) => ` + ${t}`)
-    .join("");
   const group = payload.kind === "group";
   const work = payload.kind === "work";
   const note = work
@@ -76,9 +69,7 @@ export function ReviewStep({
         </div>
         <div className="grid gap-0.5">
           <dt className="text-muted-foreground">읽을 범위</dt>
-          <dd>
-            {s.since} 이후 {formatCount(s.sent)}개 전부{extra}
-          </dd>
+          <dd>{readRange(s.sent)}</dd>
         </div>
         <div className="grid gap-0.5">
           <dt className="text-muted-foreground">뺀 멤버</dt>

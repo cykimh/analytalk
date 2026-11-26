@@ -13,7 +13,7 @@ import { modelSettings } from "./settings";
 /** KST 벽시계 → UTC epoch ms */
 const kst = (d: number, h: number, mi: number) => Date.UTC(2026, 9, d, h, mi) - 9 * 3_600_000;
 
-/** 철수·민지의 사흘 대화. 예산이 넉넉해 전부 보낸다(anchors 없음) */
+/** 철수·민지의 사흘 대화. 예산이 넉넉해 전부 보낸다 */
 function payload(concept: Payload["concept"] = "couple", tone: Tone = "fact"): Payload {
   const rows: [string, number, string][] = [];
   for (let d = 1; d <= 3; d++) {
@@ -35,7 +35,7 @@ const text = (content: BetaMessageStreamParams["messages"][number]["content"]) =
 const instructionOf = (r: BetaMessageStreamParams) => text(r.messages[1].content);
 const systemOf = (r: BetaMessageStreamParams) => r.system as string;
 
-/** 40명 × 60개월 단톡: 예산이 작아 앞부분 발췌(anchors)와 최근 구간만 보낸다 */
+/** 40명 × 60개월 단톡: 예산이 작아 전체 기간에서 골라 보낸다 */
 const bigPayload = (tone: Tone = "fact") =>
   buildPayload({ messages: syntheticGroupChat(40, 60), tone, concept: "group", kind: "group", tokenBudget: 20_000, tokensPerChar: 1 });
 
@@ -61,7 +61,7 @@ describe("CONCEPTS·TONES", () => {
 
 describe("buildRequest", () => {
   it("PROMPT_VERSION", () => {
-    expect(PROMPT_VERSION).toBe("2026-11-report-1");
+    expect(PROMPT_VERSION).toBe("2026-11-report-2");
   });
 
   it("기본값: Sonnet 5.5, max_tokens 32000, effort medium, adaptive thinking, 서버 측 fallback, 데이터 블록에 cache_control 없음", () => {
@@ -178,27 +178,40 @@ describe("buildRequest", () => {
     expect(body).toMatch(/- characters 「멤버 캐릭터 카드」: 섹션 1~2개[^\n]*상위 6명을 한 사람에 한 문단씩/);
   });
 
-  it("전부 보낸 대화는 '대화 전체 N개', 일부만 보냈으면 전체 중 최근 몇 개와 발췌", () => {
+  it("전부 보낸 대화는 '대화 전체 N개', 일부만 보냈으면 전체 중 몇 개를 고르게 골랐다고 알린다", () => {
     const p = payload();
     expect(p.anchors).toBe("");
     expect(instructionOf(buildRequest(p))).toContain(`기간: ${p.period.start}~${p.period.end}. 대화 전체 ${p.msgTotal}개를 보냈다.`);
     const big = bigPayload();
-    expect(big.anchors).not.toBe("");
+    expect(big.anchors).toBe("");
     const body = instructionOf(buildRequest(big));
     expect(body).not.toContain("대화 전체");
-    expect(body).toContain(`전체 ${big.msgTotal}개 중 최근 ${big.msgSent}개와 발췌를 보냈다.`);
+    expect(body).toContain(`전체 ${big.msgTotal}개 중 ${big.msgSent}개를 처음부터 끝까지 고르게 골라 보냈다.`);
+    // 예전 사본(anchors + 최근 구간)은 예전 문구
+    const old = instructionOf(buildRequest({ ...big, anchors: "# 2021-01-01\nm0|09:00|A|첫" }));
+    expect(old).toContain(`전체 ${big.msgTotal}개 중 최근 ${big.msgSent}개와 발췌를 보냈다.`);
   });
 
-  it("messages[0]: members·stats·anchors·conversation 한 블록", () => {
+  it("system의 데이터 계약: <conversation>은 전체 기간에서 고른 시간순 메시지다", () => {
+    const system = systemOf(buildRequest(payload()));
+    expect(system).toContain("처음부터 끝까지 전체 기간에서 고르게 골랐다");
+    expect(system).toContain("가장 활발했던 날들");
+    expect(system).toContain("최근 구간을 조금 더");
+    expect(system).not.toContain("마지막 메시지까지 이어지는 최근 구간이다");
+  });
+
+  it("messages[0]: members·stats·conversation 한 블록, 예전 사본이면 anchors도", () => {
     const p = payload();
     const first = buildRequest(p).messages[0];
     expect(first.role).toBe("user");
     expect(first.content).toEqual([
       {
         type: "text",
-        text: `<members>${legendText(p.members)}</members><stats>${JSON.stringify(statsForPrompt(p.stats))}</stats><anchors>${p.anchors}</anchors><conversation>${p.transcript}</conversation>`,
+        text: `<members>${legendText(p.members)}</members><stats>${JSON.stringify(statsForPrompt(p.stats))}</stats><conversation>${p.transcript}</conversation>`,
       },
     ]);
+    const anchors = "# 2026-10-01\nm0|20:00|A|오늘 뭐해?";
+    expect(text(buildRequest({ ...p, anchors }).messages[0].content)).toContain(`</stats><anchors>${anchors}</anchors><conversation>`);
   });
 
   it("40명 × 60개월: 데이터 블록의 stats는 요약(사람 12명, 최근 24개월)이고 지시가 그 사실을 알린다", () => {

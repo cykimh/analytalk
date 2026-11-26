@@ -15,7 +15,7 @@ describe("modelSettings", () => {
   });
 
   it.each([
-    ["claude-sonnet-5-5", 400_000],
+    ["claude-sonnet-5-5", 600_000],
     ["claude-opus-5-5-20261101", 128_000],
     ["claude-sonnet-5", 128_000],
   ])("ANTHROPIC_MODEL %s → 입력 예산 %i", (model, budget) => {
