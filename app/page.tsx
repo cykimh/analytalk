@@ -21,13 +21,17 @@ export default async function Home() {
       {isKakaoInApp(ua) && <InAppBanner />}
       {invited ? (
         <>
-          <Link href="/new" className={buttonVariants({ size: "lg" })}>
-            대화 올리기
-          </Link>
+          <section className="paper-sheet grid gap-3 bg-sheet p-5">
+            <Link href="/new" className={buttonVariants({ size: "lg" })}>
+              대화 올리기
+            </Link>
+          </section>
           <RecentSeries />
         </>
       ) : (
-        <InviteForm />
+        <section className="paper-sheet grid gap-3 bg-sheet p-5">
+          <InviteForm />
+        </section>
       )}
       <Link
         href="/about"

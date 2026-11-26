@@ -24,7 +24,7 @@ export function StepFrame({
   useEffect(() => heading.current?.focus(), []);
 
   return (
-    <section aria-labelledby="step-title" className="grid min-w-0 gap-5">
+    <section aria-labelledby="step-title" className="paper-sheet grid min-w-0 gap-5 bg-sheet p-5">
       <header className="grid gap-1">
         <h2 id="step-title" ref={heading} tabIndex={-1} className="text-[1.375rem] leading-tight font-bold outline-none tracking-tight">
           {title}

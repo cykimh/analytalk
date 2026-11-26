@@ -21,7 +21,7 @@ export function RecentSeries() {
 
   if (entries.length === 0) return null;
   return (
-    <section aria-labelledby="recent-title" className="grid gap-2">
+    <section aria-labelledby="recent-title" className="paper-sheet grid gap-2 bg-sheet p-5">
       <h2 id="recent-title" className="text-base font-bold">
         내 연재
       </h2>

@@ -76,9 +76,8 @@
     color-scheme: light;
 
     /* 종이와 잉크. 잉크는 바탕·카드 위에서 13:1, 옅은 잉크는 5:1 이상(WCAG AA) */
-    --paper: #fdfbf7;
-    --grid-line: #ede5d8;
-    --sheet: #fffdf9;
+    --paper: #f3f1ec;
+    --sheet: #ffffff;
     --ink: #2d2926;
     --ink-soft: #6a5f55;
 
@@ -105,7 +104,7 @@
     --note-line: #e9dfcd;
 
     /* 종이가 살짝 떠 보이는 옅고 따뜻한 그림자 */
-    --shadow-paper: 0 0 0 1px rgb(92 70 40 / 0.06), 0 2px 6px -2px rgb(92 70 40 / 0.12);
+    --shadow-paper: 0 1px 2px rgb(92 70 40 / 0.06);
     --shadow-sticker: 0 0 0 1px rgb(92 70 40 / 0.07), 0 1px 2px rgb(92 70 40 / 0.2);
 
     /* shadcn 변수 → 따뜻한 종이 색 */
@@ -153,10 +152,6 @@
   /* 앱 전체 바탕: 따뜻한 모눈종이(20px 칸) */
   body {
     @apply min-h-svh bg-background text-foreground;
-    background-image:
-      linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px),
-      linear-gradient(to right, var(--grid-line) 1px, transparent 1px);
-    background-size: 20px 20px;
     word-break: keep-all;
     overflow-wrap: break-word;
   }
@@ -182,7 +177,8 @@
 @layer components {
   /* 붙인 종이 한 장: 모서리는 거의 각지고, 그림자는 옅다 */
   .paper-sheet {
-    border-radius: 8px;
+    border: 1px solid rgb(92 70 40 / 0.12);
+    border-radius: 12px;
     box-shadow: var(--shadow-paper);
   }
 
