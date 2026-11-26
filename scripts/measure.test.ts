@@ -7,6 +7,7 @@ import type { ChatMessage } from "@/lib/parse/parse";
 import { syntheticGroupChat } from "@/test/syntheticChat";
 import {
   displayNames,
+  namedMessages,
   judge,
   measurePayload,
   measureReport,
@@ -68,8 +69,29 @@ describe("parseArgs", () => {
 });
 
 describe("displayNames", () => {
-  it("발신자에게 카톡 이름 그대로(금지 글자만 정리)를 준다", () => {
-    expect(displayNames({ participants: ["철수", "영희.", "a|b", ""] })).toEqual({ 철수: "철수", "영희.": "영희", "a|b": "ab" });
+  it("발신자에게 앱의 기본 이름(금지 글자 정리, 성을 뺀 이름)을 주고 봇·알 수 없음은 뺀다", () => {
+    expect(displayNames({ participants: ["철수", "영희.", "a|b", "", "김민지", "(알 수 없음)", "오픈채팅봇"] })).toEqual({
+      철수: "철수",
+      "영희.": "영희",
+      "a|b": "ab",
+      김민지: "민지",
+    });
+  });
+});
+
+describe("namedMessages", () => {
+  it("앱과 같이 봇·위험 신호 메시지를 빼고 발신자를 표시 이름으로 바꾼다", () => {
+    const at = (id: number) => Date.UTC(2026, 0, 1) + id * 60_000;
+    const messages = [
+      { id: 0, ts: at(0), sender: "김민지", kind: "text" as const, text: "안녕", line: 1 },
+      { id: 1, ts: at(1), sender: "오픈채팅봇", kind: "text" as const, text: "공지", line: 2 },
+      { id: 2, ts: at(2), sender: "철수", kind: "text" as const, text: "어제 자해 했어", line: 3 },
+      { id: 3, ts: at(3), sender: "철수", kind: "text" as const, text: "응", line: 4 },
+    ];
+    expect(namedMessages({ participants: ["김민지", "오픈채팅봇", "철수"], messages }).map((m) => [m.id, m.sender])).toEqual([
+      [0, "민지"],
+      [3, "철수"],
+    ]);
   });
 });
 

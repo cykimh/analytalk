@@ -31,7 +31,6 @@ import { type ModelSettings, modelSettings } from "../lib/llm/settings";
 import { runReport } from "../lib/llm/stream";
 import { validateReport } from "../lib/llm/validate";
 import { isBanned } from "../lib/payload/banned";
-import { applyDisplayNames } from "../lib/payload/names";
 import { type Payload, payloadIndex, payloadTokens } from "../lib/payload/build";
 import { type ParseResult, parseExport } from "../lib/parse/parse";
 import { readUploads } from "../lib/parse/uploads";
@@ -39,7 +38,7 @@ import { privilegedDb } from "../lib/server/privileged";
 import type { ChatStats } from "../lib/stats/compute";
 import { isYes } from "./invite";
 import { confirmSpend, type Db, type LedgerItem, type Rpc, recordUsage, weeklyHeadroom } from "./ledger";
-import { displayNames, measurePayload } from "./measure";
+import { measurePayload, namedMessages } from "./measure";
 
 /** --compare가 비교하는 두 모델 */
 const COMPARE_MODELS = ["claude-sonnet-5-5", "claude-opus-5-5"];
@@ -159,11 +158,10 @@ export function prepareCases(files: GoldenFile[], parsed: ParseResult[], models:
     const p = parsed[i];
     const label = `${f.concept}-${++counter[f.concept]}${f.injection ? "-injection" : ""}`;
     if (p.formatId === null) throw new Error(`형식을 알아보지 못한 파일이 있다(${label})`);
-    const named = applyDisplayNames(p.messages, { map: displayNames(p) });
-    if (!named.ok) throw new Error(`이름 부여 실패(${label}): ${named.reason}`);
+    const messages = namedMessages(p, label);
     for (const tone of tones) {
       for (const model of models) {
-        out.push({ label, concept: f.concept, injection: f.injection, tone, model, payload: measurePayload(named.messages, f.concept, tone, caseSettings(model, {})) });
+        out.push({ label, concept: f.concept, injection: f.injection, tone, model, payload: measurePayload(messages, f.concept, tone, caseSettings(model, {})) });
       }
     }
   });

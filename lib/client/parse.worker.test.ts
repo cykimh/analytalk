@@ -60,6 +60,20 @@ describe("runOp rename", () => {
     expect(r.messages.map((m) => m.id)).toEqual([0]);
   });
 
+  it("위험 신호가 있는 메시지는 빼고 뺀 개수를 돌려준다", async () => {
+    const r = await runOp({ op: "rename", input: rename({ messages: [msg(0, "김민지", "어제 자해 했어"), msg(1, "철수", "괜찮아?")] }) });
+    if (!("messages" in r)) throw new Error("ok가 아니다");
+    expect(r.messages.map((m) => m.id)).toEqual([1]);
+    expect(r.safetyDropped).toBe(1);
+  });
+
+  it("봇·알 수 없음의 메시지는 걸러 낸다", async () => {
+    const r = await runOp({ op: "rename", input: rename({ messages: [msg(0, "김민지", "안녕"), msg(1, "(알 수 없음)", "안녕"), msg(2, "철수", "응")] }) });
+    if (!("messages" in r)) throw new Error("ok가 아니다");
+    expect(r.messages.map((m) => m.id)).toEqual([0, 2]);
+    expect(r.safetyDropped).toBe(0);
+  });
+
   it("이름 정리가 실패하면 이유만 돌려준다", async () => {
     expect(await runOp({ op: "rename", input: rename({ map: { 김민지: "P1", 철수: "P1" } }) })).toEqual({ ok: false, reason: "collision" });
     expect(await runOp({ op: "rename", input: rename({ map: { 김민지: "P1", 철수: "a|b" } }) })).toEqual({ ok: false, reason: "invalid" });

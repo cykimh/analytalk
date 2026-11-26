@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/lib/parse/parse";
-import { applyDisplayNames, checkDisplayName, checkNameMap, defaultDisplayName, type NameOptions } from "./names";
+import {
+  applyDisplayNames,
+  checkDisplayName,
+  checkNameMap,
+  defaultDisplayName,
+  defaultNames,
+  isBotOrUnknown,
+  type NameOptions,
+} from "./names";
 
 let seq = 0;
 function msg(sender: string | null, text = "안녕"): ChatMessage {
@@ -56,6 +64,64 @@ describe("defaultDisplayName (Review Focus 5)", () => {
   });
 });
 
+describe("defaultDisplayName: 성을 뺀 이름", () => {
+  it.each([
+    ["김민지", "민지"],
+    ["이철수", "철수"],
+    ["박서연", "서연"],
+    ["변민수", "민수"],
+    ["독수리", "독수리"],
+    [" 김민지 ", "민지"],
+  ])("한글 3글자이고 첫 글자가 흔한 성이면 뒤 두 글자: %j → %j", (name, want) => {
+    expect(defaultDisplayName(name)).toBe(want);
+  });
+
+  it.each(["민지", "Minji", "김민지야요", "김민지수", "남궁민수", "김 민지", "김MJ", "황보민", "남궁민", "제갈량", "선우진", "독고진", "서문탁"])(
+    "다른 모양(2글자·4글자 이상·영문·공백·2글자 성 + 1글자)은 그대로: %j",
+    (name) => {
+      expect(defaultDisplayName(name)).toBe(name.trim());
+    },
+  );
+});
+
+describe("defaultNames", () => {
+  it("발신자마다 기본 표시 이름을 준다", () => {
+    expect(defaultNames(["김민지", "이철수", "Minji"])).toEqual({ 김민지: "민지", 이철수: "철수", Minji: "Minji" });
+  });
+
+  it("성을 빼서 다른 사람과 겹치면 그 사람(들)은 전체 이름으로 둔다", () => {
+    expect(defaultNames(["김민지", "이민지", "박철수"])).toEqual({ 김민지: "김민지", 이민지: "이민지", 박철수: "철수" });
+    expect(defaultNames(["김민지", "민지"])).toEqual({ 김민지: "김민지", 민지: "민지" });
+  });
+});
+
+describe("isBotOrUnknown", () => {
+  it.each([
+    "(알 수 없음)",
+    "알 수 없음",
+    "(알수없음)",
+    "오픈채팅봇",
+    "채팅봇",
+    "알림봇",
+    "로봇",
+    "MyBot",
+    "helperbot",
+    "BOT",
+    "ChatGPT",
+    "chatgpt 도우미",
+    "GPT",
+    "챗GPT",
+    "카카오톡",
+    "카카오톡 고객센터",
+  ])("봇·알 수 없음: %j", (name) => {
+    expect(isBotOrUnknown(name)).toBe(true);
+  });
+
+  it.each(["민지", "봇짱", "Bottle", "봇 민지", "김철수", "robot man"])("사람 이름: %j", (name) => {
+    expect(isBotOrUnknown(name)).toBe(false);
+  });
+});
+
 describe("checkNameMap", () => {
   it("map에 없는 이름 → unmapped, 같은 이름 → collision, 합친 묶음은 예외", () => {
     expect(checkNameMap({ 민지: "A" }, ["민지", "철수"])).toBe("unmapped");
@@ -100,6 +166,12 @@ describe("applyDisplayNames", () => {
     const msgs = [msg("민지"), msg("민지폰"), msg("철수"), msg("영희")];
     const out = apply(msgs, { map: { 철수: "철수", 영희: "영희" }, excluded: ["민지", "민지폰"], merged: [["민지", "민지폰"]] });
     expect(typeof out !== "string" && out.map((m) => m.sender)).toEqual(["철수", "영희"]);
+  });
+
+  it("봇·알 수 없음의 메시지는 excluded에 없어도 빠지고 이름도 필요 없다", () => {
+    const msgs = [msg("민지"), msg("(알 수 없음)"), msg("오픈채팅봇"), msg("철수")];
+    const out = apply(msgs, { map: { 민지: "민지", 철수: "철수" } });
+    expect(typeof out !== "string" && out.map((m) => m.sender)).toEqual(["민지", "철수"]);
   });
 
   it("입력 메시지는 바꾸지 않는다", () => {

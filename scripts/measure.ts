@@ -30,7 +30,8 @@ import { buildRequest } from "../lib/llm/prompt";
 import { type ModelSettings, modelSettings } from "../lib/llm/settings";
 import { runReport } from "../lib/llm/stream";
 import { validateReport } from "../lib/llm/validate";
-import { applyDisplayNames, defaultDisplayName, type NameMap } from "../lib/payload/names";
+import { applyDisplayNames, defaultNames, isBotOrUnknown, type NameMap } from "../lib/payload/names";
+import { dropSafetyFlagged } from "../lib/payload/safety";
 import { buildPayloadForBudget, type Payload, payloadIndex, payloadTokens } from "../lib/payload/build";
 import { type ChatMessage, parseExport } from "../lib/parse/parse";
 import { readUploads } from "../lib/parse/uploads";
@@ -108,9 +109,16 @@ export function parseArgs(argv: string[]): Args {
 
 // ── 이름·페이로드 ──
 
-/** 발신자마다 기본 표시 이름(카톡 이름에서 금지 글자만 정리한 것)을 준다. 앱의 이름 단계 기본값과 같다 */
+/** 발신자마다 기본 표시 이름(성을 뺀 카톡 이름, 봇·알 수 없음 제외)을 준다. 앱의 이름 단계 기본값과 같다 */
 export function displayNames(p: { participants: string[] }): NameMap {
-  return Object.fromEntries(p.participants.filter((n) => n !== "").map((n) => [n, defaultDisplayName(n)]));
+  return defaultNames(p.participants.filter((n) => n !== "" && !isBotOrUnknown(n)));
+}
+
+/** 앱과 같이 이름을 붙이고(뺀 봇 포함) 위험 신호 메시지를 뺀 메시지 */
+export function namedMessages(p: { participants: string[]; messages: ChatMessage[] }, label?: string): ChatMessage[] {
+  const named = applyDisplayNames(p.messages, { map: displayNames(p) });
+  if (!named.ok) throw new Error(`이름 부여 실패${label ? `(${label})` : ""}: ${named.reason}`);
+  return dropSafetyFlagged(named.messages).messages;
 }
 
 /** 입력 예산(s.inputBudget)에서 통계 요약·프롬프트 몫(PROMPT_RESERVE_TOKENS)을 빼고 맞춘 페이로드 */
@@ -353,10 +361,7 @@ async function main(): Promise<void> {
   const s = settingsFor(args);
   const parsed = parseExport(await readUploads([new File([readFileSync(args.file)], basename(args.file))]));
   if (parsed.formatId === null) throw new Error("형식을 알아보지 못했다");
-  const named = applyDisplayNames(parsed.messages, { map: displayNames(parsed) });
-  if (!named.ok) throw new Error(`이름 부여 실패: ${named.reason}`);
-
-  const payload = measurePayload(named.messages, args.concept, args.tone, s);
+  const payload = measurePayload(namedMessages(parsed), args.concept, args.tone, s);
   const est = payloadTokens(payload, TOKENS_PER_CHAR);
   console.log(`모델 ${s.model}, 예산 ${s.inputBudget}, 말투 ${args.tone}`);
   const { msgTotal, msgSent } = payload;

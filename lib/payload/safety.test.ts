@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { BANNED_PATTERNS } from "./banned";
 import { buildPayload, payloadIndex } from "./build";
-import { safetySignal, sentSafetySignal } from "./safety";
+import { dropSafetyFlagged, safetyKind } from "./safety";
 
 let seq = 0;
 function msg(text: string, sender: string | null = "P1"): ChatMessage {
@@ -10,19 +10,24 @@ function msg(text: string, sender: string | null = "P1"): ChatMessage {
   return { id, ts: Date.UTC(2026, 9, 1) + id * 60_000, sender, kind: sender === null ? "system" : "text", text, line: id + 1 };
 }
 
-describe("safetySignal", () => {
+describe("safetyKind", () => {
+  const kindOf = (text: string, sender: string | null = "P1") => safetyKind(msg(text, sender));
+
   it("자해 사전에 걸리면 self_harm", () => {
-    expect(safetySignal([msg("밥 먹었어?"), msg("요즘 너무 힘들어서 자살하고 싶어")])).toBe("self_harm");
-    expect(safetySignal([msg("어제 손목 그었어")])).toBe("self_harm");
+    expect(kindOf("요즘 너무 힘들어서 자살하고 싶어")).toBe("self_harm");
+    expect(kindOf("어제 손목 그었어")).toBe("self_harm");
+    expect(kindOf("밥 먹었어?")).toBeNull();
   });
 
   it("폭력 사전에 걸리면 violence, 둘 다면 self_harm이 먼저", () => {
-    expect(safetySignal([msg("칼로 찌른다고 협박했어")])).toBe("violence");
-    expect(safetySignal([msg("칼로 찌른다고 협박했어"), msg("자살하고 싶어")])).toBe("self_harm");
+    expect(kindOf("칼로 찌른다고 협박했어")).toBe("violence");
+    expect(kindOf("칼로 찌른다고 협박했어, 자살하고 싶어")).toBe("self_harm");
   });
 
   it("과장 표현과 시스템 메시지는 신호가 아니다", () => {
-    expect(safetySignal([msg("배고파 죽겠다 ㅋㅋ"), msg("이 노래 진짜 죽인다"), msg("자살하고 싶어", null)])).toBeNull();
+    expect(kindOf("배고파 죽겠다 ㅋㅋ")).toBeNull();
+    expect(kindOf("이 노래 진짜 죽인다")).toBeNull();
+    expect(kindOf("자살하고 싶어", null)).toBeNull();
   });
 
   it.each([
@@ -42,7 +47,7 @@ describe("safetySignal", () => {
     "폭행했대 연예인",
     "칼로 찌르는 장면 영화",
   ])("친구 대화의 농담·뉴스 이야기는 신호가 아니다: %s", (text) => {
-    expect(safetySignal([msg(text)])).toBeNull();
+    expect(kindOf(text)).toBeNull();
   });
 
   it.each([
@@ -54,28 +59,41 @@ describe("safetySignal", () => {
     ["협박당하고 있어", "violence"],
     ["성추행 당했어", "violence"],
   ])("행동·피해가 드러나면 신호다: %s", (text, kind) => {
-    expect(safetySignal([msg(text)])).toBe(kind);
+    expect(kindOf(text)).toBe(kind);
   });
 });
 
-describe("sentSafetySignal (보낼 메시지만 본다)", () => {
+describe("dropSafetyFlagged (막지 않고 그 메시지만 뺀다)", () => {
   const kst = (d: number, h: number) => Date.UTC(2026, 6, d, h) - 9 * 3_600_000;
   const rows = (texts: string[]): ChatMessage[] =>
     texts.map((text, id) => ({ id, ts: kst(1 + Math.floor(id / 4), 20) + (id % 4) * 60_000, sender: id % 2 ? "P2" : "P1", kind: "text", text, line: id + 1 }));
 
-  it("페이로드에 실리지 않은 메시지(최근 구간·발췌 밖)의 신호는 보지 않는다", () => {
-    const messages = rows(Array.from({ length: 300 }, (_, i) => (i === 150 ? "어제 자해 했어" : `평범한 이야기 ${i}`)));
-    // 최근 구간만 실리는 작은 예산
-    const p = buildPayload({ messages, tone: "fact", concept: "couple", kind: "pair", tokenBudget: 2000, tokensPerChar: 1 });
-    expect(payloadIndex(p).has("m150")).toBe(false);
-    expect(safetySignal(messages)).toBe("self_harm");
-    expect(sentSafetySignal(p, messages)).toBeNull();
+  it("걸린 메시지만 빼고 개수를 센다. 나머지의 id·순서·본문은 그대로", () => {
+    const messages = rows(["밥 먹었어?", "어제 자해 했어", "응 먹었어", "칼로 찌른다고 협박했어", "내일 봐"]);
+    const r = dropSafetyFlagged(messages);
+    expect(r.dropped).toBe(2);
+    expect(r.messages).toEqual([messages[0], messages[2], messages[4]]);
   });
 
-  it("실린 메시지에 신호가 있으면 알린다", () => {
-    const messages = rows(["밥 먹었어?", "어제 자해 했어"]);
-    const p = buildPayload({ messages, tone: "fact", concept: "couple", kind: "pair", tokenBudget: 100_000, tokensPerChar: 1 });
-    expect(sentSafetySignal(p, messages)).toBe("self_harm");
+  it("뺀 메시지는 페이로드(anchors·transcript) 어디에도 없다", () => {
+    const messages = rows(Array.from({ length: 40 }, (_, i) => (i === 7 ? "어제 자해 했어" : `평범한 이야기 ${i}`)));
+    const r = dropSafetyFlagged(messages);
+    const p = buildPayload({ messages: r.messages, tone: "fact", concept: "couple", kind: "pair", tokenBudget: 100_000, tokensPerChar: 1 });
+    expect(payloadIndex(p).has("m7")).toBe(false);
+    expect(payloadIndex(p).has("m8")).toBe(true);
+    expect(`${p.anchors}\n${p.transcript}`).not.toContain("자해");
+  });
+
+  it("시스템 메시지·미디어는 보지 않고 그대로 둔다", () => {
+    const system: ChatMessage = { id: 0, ts: 0, sender: null, kind: "system", text: "자살하고 싶어", line: 1 };
+    const photo: ChatMessage = { id: 1, ts: 0, sender: "P1", kind: "photo", text: "자살하고 싶어", line: 2 };
+    expect(dropSafetyFlagged([system, photo])).toEqual({ messages: [system, photo], dropped: 0 });
+  });
+
+  it("입력은 바꾸지 않는다", () => {
+    const messages = rows(["어제 자해 했어", "응"]);
+    dropSafetyFlagged(messages);
+    expect(messages).toHaveLength(2);
   });
 });
 

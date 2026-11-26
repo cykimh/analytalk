@@ -1,8 +1,7 @@
-// 안전 신호(자해·폭력) 사전. 보낼 메시지에서 걸리면 화면이 페이로드를 보내지 않고 도움 안내를 띄운다. DOM 없이 브라우저·node 공용.
+// 안전 신호(자해·폭력) 사전. 걸린 메시지는 페이로드에서 빼고 보낸다(막지 않는다). 화면은 뺀 개수와 상담 전화를 알린다. DOM 없이 브라우저·node 공용.
 // "배고파 죽겠다"·"죽고 싶다" 같은 과장 표현은 친구 대화에 흔해서 넣지 않고, 행동·의도가 드러나는 표현만 둔다.
 // 놓친 경우는 모델 출력의 safety 플래그가 한 번 더 막는다.
 import type { ChatMessage } from "@/lib/parse/parse";
-import { type Payload, payloadIndex } from "./build";
 
 // 한글 낱말 속(과목·발목·제목 "졸라", 사유서·시말서)에 걸리지 않게 앞에 한글이 없을 때만 본다
 const NOT_AFTER_HANGUL = "(?<![가-힣])";
@@ -30,18 +29,19 @@ const VIOLENCE: RegExp[] = [
   /성\s*(?:폭행|추행)\s*(?:을\s*)?(?:당했|당해|당하)/,
 ];
 
-/** 발신자가 있는 메시지 중 자해 신호가 있으면 self_harm, 없고 폭력 신호가 있으면 violence */
-export function safetySignal(msgs: ChatMessage[]): "self_harm" | "violence" | null {
-  const texts = msgs.filter((m) => m.sender !== null && m.kind === "text").map((m) => m.text);
-  if (texts.some((t) => SELF_HARM.some((re) => re.test(t)))) return "self_harm";
-  if (texts.some((t) => VIOLENCE.some((re) => re.test(t)))) return "violence";
+/** 발신자가 있는 글 메시지 하나의 신호. 자해 신호가 있으면 self_harm, 없고 폭력 신호가 있으면 violence */
+export function safetyKind(m: ChatMessage): "self_harm" | "violence" | null {
+  if (m.sender === null || m.kind !== "text") return null;
+  if (SELF_HARM.some((re) => re.test(m.text))) return "self_harm";
+  if (VIOLENCE.some((re) => re.test(m.text))) return "violence";
   return null;
 }
 
 /**
- * 페이로드에 실리는 메시지(anchors + transcript)만 본다. 보내지 않는 몇 년 전 메시지 때문에 AI 연재를 막지 않는다.
+ * 신호가 있는 메시지만 빼고 나머지는 그대로(id·순서·본문). 리포트 만들기는 막지 않고, 뺀 개수(dropped)는 보낼 내용 확인 화면이 알린다.
+ * 이름 정리(applyDisplayNames) 뒤, 페이로드를 만들기 전에 부른다. 뺀 메시지는 통계에도 페이로드에도 없다
  */
-export function sentSafetySignal(p: Payload, msgs: ChatMessage[]): "self_harm" | "violence" | null {
-  const sent = payloadIndex(p);
-  return safetySignal(msgs.filter((m) => sent.has(`m${m.id}`)));
+export function dropSafetyFlagged(msgs: ChatMessage[]): { messages: ChatMessage[]; dropped: number } {
+  const messages = msgs.filter((m) => safetyKind(m) === null);
+  return { messages, dropped: msgs.length - messages.length };
 }
