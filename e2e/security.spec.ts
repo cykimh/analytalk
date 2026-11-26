@@ -33,10 +33,8 @@ async function watchCsp(page: Page): Promise<string[]> {
 
 const next = (page: Page) => page.getByRole("button", { name: "다음", exact: true });
 
-/** 확인 → 나는 누구? → 이름 정리(기본 이름) → 방 종류·말투 → 보낼 내용 확인 */
+/** 확인 → 이름 정리(기본 이름) → 방 종류·말투 → 보낼 내용 확인 */
 async function toReview(page: Page) {
-  await next(page).click();
-  await page.getByRole("radio", { name: "민지", exact: true }).check();
   await next(page).click();
   await expect(page.getByRole("heading", { name: "이름 정리" })).toBeVisible();
   await next(page).click();
@@ -129,7 +127,7 @@ test.describe("CSP 위반 0건", () => {
     const res = await page.goto("/about");
     expect(nonceOf(res?.headers()["content-security-policy"])).toBeTruthy();
     await expect(page).toHaveURL(/\/about$/);
-    for (const text of [/원본 대화 파일은 이 기기/, /표시 이름.*Anthropic으로 가요/, /링크는 사이트 이름만 남겨요/, /뺀 멤버의 메시지와 이름은 Anthropic으로 보내지 않아요/, /표시 이름은 30일 보관하고 공유 링크에 보여요/, /리포트 전체 16개까지/, /30일 뒤 자동으로 지워요/, /지금 삭제/, /운영자에게 카톡/, /카카오와 무관/, /AI 생성, 재미·참고용/]) {
+    for (const text of [/원본 대화 파일은 이 기기/, /표시 이름.*Anthropic으로 가요/, /링크는 사이트 이름만 남겨요/, /뺀 멤버의 메시지와 이름은 Anthropic으로 보내지 않아요/, /봇·알 수 없음.*위험할 수 있는 메시지도 빼고 보내요/, /표시 이름은 30일 보관하고 공유 링크에 보여요/, /리포트 전체 16개까지/, /30일 뒤 자동으로 지워요/, /지금 삭제/, /운영자에게 카톡/, /카카오와 무관/, /AI 생성, 재미·참고용/]) {
       await expect(page.getByText(text).first()).toBeVisible();
     }
     expect(violations).toEqual([]);

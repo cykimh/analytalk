@@ -1,8 +1,9 @@
 "use client";
 
-// /new 흐름: 파일 → (Worker) 파싱 → 확인 → 나는 누구? → 이름 정리(+분석에서 빼기) → 방 종류·말투 → (Worker) 이름 적용·페이로드
-// → 보낼 내용 확인 → [AI 연재 만들기](페이로드만 보낸다) → /c/[id](대화 홈).
-// 원본 파일·파싱 결과·뺀 멤버의 메시지는 이 컴포넌트와 Worker(브라우저 메모리)에만 있다.
+// /new 흐름: 파일 → (Worker) 파싱 → 확인 → 이름 정리(+분석에서 빼기, 봇·알 수 없음은 목록에 없다) → 방 종류·말투
+// → (Worker) 이름 적용·위험 신호 메시지 빼기·페이로드 → 보낼 내용 확인 → [AI 연재 만들기](페이로드만 보낸다) → /c/[id](대화 홈).
+// 업로더 본인을 고르지 않는다: 리포트는 방 밖의 제3자가 본 이야기다.
+// 원본 파일·파싱 결과·뺀 멤버·봇·위험 신호 메시지는 이 컴포넌트와 Worker(브라우저 메모리)에만 있다.
 import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { savePayload, sweepPayloads } from "@/lib/client/idb";
@@ -18,7 +19,6 @@ import {
 import { TOKENS_PER_CHAR } from "@/lib/config";
 import { DEFAULT_TONE, type Tone } from "@/lib/llm/concepts";
 import type { Payload } from "@/lib/payload/build";
-import { sentSafetySignal } from "@/lib/payload/safety";
 import type { ParseResult } from "@/lib/parse/parse";
 import { ConfirmStep } from "./ConfirmStep";
 import {
@@ -29,21 +29,21 @@ import {
   initialNames,
   type Kind,
   mergedGroups,
+  NAME_PROBLEM_TEXT,
   nameMapOf,
   nameProblem,
   type NameState,
   nameTargets,
 } from "./flow";
 import { KindStep } from "./KindStep";
-import { MeStep } from "./MeStep";
 import { NamesStep } from "./NamesStep";
 import { ReviewStep } from "./ReviewStep";
 import { StepFrame } from "./StepFrame";
 import { UploadStep } from "./UploadStep";
 
-type Step = "upload" | "confirm" | "me" | "names" | "kind" | "review";
-/** 첫 페이로드를 만든 입력. 413이면 retryBuildInput(input, maxTokens)로 한 번 다시 만든다 */
-type Built = { payload: Payload; input: Extract<BuildRequest, { inputBudget: number }> };
+type Step = "upload" | "confirm" | "names" | "kind" | "review";
+/** 첫 페이로드를 만든 입력. 413이면 retryBuildInput(input, maxTokens)로 한 번 다시 만든다. safetyDropped: 위험 신호로 뺀 메시지 수 */
+type Built = { payload: Payload; input: Extract<BuildRequest, { inputBudget: number }>; safetyDropped: number };
 
 const NOT_KAKAO = "카카오톡 대화 내보내기 파일이 아닌 것 같아요. 내보낸 .txt·.csv·.zip 파일을 그대로 올려 주세요.";
 const NO_MESSAGES = "읽을 메시지가 없어요. 대화 내용이 든 파일인지 확인해 주세요.";
@@ -56,7 +56,6 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
   const [error, setError] = useState<string | null>(null);
   const [parse, setParse] = useState<ParseResult | null>(null);
   const [kind, setKind] = useState<Kind>("group");
-  const [me, setMe] = useState<string | null>(null);
   const [tone, setTone] = useState<Tone>(DEFAULT_TONE);
   const [kindChosen, setKindChosen] = useState(false);
   const [names, setNames] = useState<NameState>({ names: {}, sameAs: {}, excluded: [] });
@@ -73,8 +72,6 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
     for (const m of parse?.messages ?? []) if (m.sender !== null && m.kind !== "system") out[m.sender] = (out[m.sender] ?? 0) + 1;
     return out;
   }, [parse]);
-  /** 보낼 메시지(페이로드에 실린 것)의 안전 신호. 실리지 않는 옛 메시지는 보지 않는다 */
-  const safety = useMemo(() => (built ? sentSafetySignal(built.payload, built.input.messages) : null), [built]);
   const problem = parse ? nameProblem(names, targets) : null;
   const excluded = useMemo(
     () => excludedNames(names, targets).map((name) => ({ name, count: counts[name] ?? 0 })).filter((e) => e.count > 0),
@@ -100,10 +97,9 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
       if (r.formatId === null) throw new Error(NOT_KAKAO);
       if (!r.messages.some((m) => m.sender !== null && m.kind !== "system")) throw new Error(NO_MESSAGES);
       setParse(r);
-      setKind(defaultKind(r.participants.length));
+      setKind(defaultKind(nameTargets(r).length));
       setKindChosen(false);
       setTone(DEFAULT_TONE);
-      setMe(null);
       setNames(initialNames(nameTargets(r)));
       setBuilt(null);
       setStep("confirm");
@@ -117,7 +113,7 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
     setStep("kind");
   };
 
-  /** 방 종류·말투 [다음]: 이름을 적용하고(뺀 멤버 제외) 페이로드를 만든다 */
+  /** 방 종류·말투 [다음]: 이름을 적용하고(뺀 멤버·봇·위험 신호 메시지 제외) 페이로드를 만든다 */
   const prepare = () =>
     run(async () => {
       if (!parse) return;
@@ -136,7 +132,10 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
         tokensPerChar: TOKENS_PER_CHAR,
         inputBudget,
       };
-      setBuilt({ payload: await buildInWorker(input), input });
+      const payload = await buildInWorker(input);
+      // 위험 신호 메시지를 빼고 나니 한 사람만 남았으면 리포트를 만들 수 없다
+      if (payload.members.length < 2) throw new Error(NAME_PROBLEM_TEXT.too_few);
+      setBuilt({ payload, input, safetyDropped: r.safetyDropped });
       setStep("review");
     });
 
@@ -182,14 +181,10 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
   if (step === "upload" || !parse) {
     body = <UploadStep inApp={inApp} busy={busy} error={error} onFiles={onFiles} />;
   } else if (step === "confirm") {
-    body = <ConfirmStep parse={parse} onBack={back("upload")} onNext={back("me")} />;
-  } else if (step === "me") {
+    body = <ConfirmStep parse={parse} onBack={back("upload")} onNext={back("names")} />;
+  } else if (step === "names") {
     body = (
-      <MeStep participants={parse.participants} counts={counts} me={me} onMe={setMe} onBack={back("confirm")} onNext={back("names")} />
-    );
-  } else if (step === "names" && me) {
-    body = (
-      <NamesStep targets={targets} me={me} state={names} problem={problem} busy={busy} onChange={setNames} onBack={back("me")} onNext={toKind} />
+      <NamesStep targets={targets} state={names} problem={problem} busy={busy} onChange={setNames} onBack={back("confirm")} onNext={toKind} />
     );
   } else if (step === "kind") {
     body = (
@@ -212,8 +207,7 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
         payload={built.payload}
         messages={built.input.messages}
         excluded={excluded}
-        me={me ? (nameMapOf(names, targets)[me] ?? "") : ""}
-        safety={safety}
+        safetyDropped={built.safetyDropped}
         busy={busy}
         onBack={back("kind")}
         onCreate={create}

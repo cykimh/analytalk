@@ -1,7 +1,7 @@
 // 업로드 흐름의 순수 로직(화면 상태 → 이름 맵·확인 문구). DOM 없이 테스트한다.
 import { ANCHOR_FIRST_N } from "@/lib/config";
 import { legendText, memberCodes, type Payload, readBlock } from "@/lib/payload/build";
-import { checkNameMap, defaultDisplayName, type NameError, type NameMap } from "@/lib/payload/names";
+import { checkNameMap, defaultNames, isBotOrUnknown, type NameError, type NameMap } from "@/lib/payload/names";
 import type { ChatMessage, ParseResult } from "@/lib/parse/parse";
 
 export type Kind = Payload["kind"];
@@ -17,9 +17,9 @@ export const conceptFor = (kind: Kind): Payload["concept"] => (kind === "pair" ?
 /** 줄 인식률(%) 정수. 내려서 98% 미만이 98%로 보이지 않게 한다 */
 export const recognitionPercent = (ratio: number) => Math.floor(ratio * 100 + 1e-9);
 
-/** 이름을 정할 원래 이름: 발신자(처음 나온 순서) */
+/** 이름을 정할 원래 이름: 발신자(처음 나온 순서). 봇·알 수 없음은 목록에 없다(메시지도 applyDisplayNames가 뺀다) */
 export function nameTargets(parse: Pick<ParseResult, "participants">): string[] {
-  return parse.participants.filter((n) => n !== "");
+  return parse.participants.filter((n) => n !== "" && !isBotOrUnknown(n));
 }
 
 export interface NameState {
@@ -31,9 +31,9 @@ export interface NameState {
   excluded: string[];
 }
 
-/** 기본 표시 이름은 카톡 이름(금지 글자만 정리) */
+/** 기본 표시 이름은 성을 뺀 카톡 이름(금지 글자 정리, 성을 빼서 겹치면 전체 이름). 입력칸에서 바로 고칠 수 있다 */
 export function initialNames(targets: string[]): NameState {
-  return { names: Object.fromEntries(targets.map((t) => [t, defaultDisplayName(t)])), sameAs: {}, excluded: [] };
+  return { names: defaultNames(targets), sameAs: {}, excluded: [] };
 }
 
 /** 대표만 뺄 수 있다(합친 사람은 대표를 따른다). 이미 뺐으면 다시 넣는다 */

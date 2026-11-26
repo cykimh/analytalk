@@ -1,7 +1,8 @@
 "use client";
 
 // 보낼 내용 확인: 고지(PRD 4장) → 요약(기간·메시지·읽을 범위·뺀 멤버·말투·가린 항목) → 미리보기 20줄 → 단톡방 동의 → [AI 연재 만들기].
-// 안전 신호가 있으면 버튼 대신 도움 안내를, 직장·팀이면 버튼 대신 통계(AI는 M3)를 보인다. 단톡방이면 동의 체크 뒤에 만들 수 있다.
+// 위험 신호(자해·폭력) 메시지는 이미 빼고 만든 페이로드라 막지 않고, 뺀 개수와 상담 전화만 알린다.
+// 직장·팀이면 버튼 대신 통계(AI는 M3)를 보인다. 단톡방이면 동의 체크 뒤에 만들 수 있다.
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { formatCount } from "@/components/stats/format";
@@ -20,26 +21,14 @@ const MASK_LABEL: Record<string, string> = {
   url: "링크(사이트 이름만 남김)",
 };
 
-const HELP: Record<"self_harm" | "violence", { title: string; lines: string[] }> = {
-  self_harm: {
-    title: "혼자 견디기 힘든 이야기가 보여요",
-    lines: ["이 대화는 AI에게 보내지 않을게요.", "힘들 때는 109(자살예방상담전화, 24시간)에 전화하면 바로 이야기를 들어 줘요."],
-  },
-  violence: {
-    title: "위험한 상황에 대한 이야기가 보여요",
-    lines: [
-      "이 대화는 AI에게 보내지 않을게요.",
-      "지금 위험하다면 112, 가정·데이트 폭력 상담은 1366(여성긴급전화, 24시간)에서 도와줘요.",
-    ],
-  },
-};
+/** 위험 신호 메시지를 뺐을 때 작게 붙이는 상담 전화 */
+const HELPLINE = "힘들 때는 109(자살예방상담전화), 지금 위험하다면 112, 가정·데이트 폭력은 1366(여성긴급전화). 모두 24시간이에요.";
 
 export function ReviewStep({
   payload,
   messages,
   excluded,
-  me,
-  safety,
+  safetyDropped,
   busy,
   onBack,
   onCreate,
@@ -49,9 +38,8 @@ export function ReviewStep({
   messages: ChatMessage[];
   /** 분석에서 뺀 멤버(카톡 이름·메시지 수). 화면에만 보이고 보내지 않는다 */
   excluded: { name: string; count: number }[];
-  /** 통계 대시보드에서 강조할 표시 이름 */
-  me: string;
-  safety: "self_harm" | "violence" | null;
+  /** 위험 신호(자해·폭력) 때문에 빼고 보내는 메시지 수 */
+  safetyDropped: number;
   busy: boolean;
   onBack: () => void;
   onCreate: () => void;
@@ -122,18 +110,16 @@ export function ReviewStep({
         </pre>
       </details>
 
-      {safety && (
-        <div role="alert" className="grid gap-1 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-base">
-          <p className="font-medium">{HELP[safety].title}</p>
-          {HELP[safety].lines.map((line) => (
-            <p key={line}>{line}</p>
-          ))}
+      {safetyDropped > 0 && (
+        <div className="grid gap-1">
+          <p className="text-base tabular-nums">위험할 수 있는 메시지 {formatCount(safetyDropped)}개는 빼고 보내요</p>
+          <p className="text-sm text-muted-foreground">{HELPLINE}</p>
         </div>
       )}
-      {safety || work ? (
+      {work ? (
         <div className="grid gap-3">
-          {work && !safety && <p className="text-base text-muted-foreground">{note}</p>}
-          <StatsDashboard stats={payload.stats} kind={payload.kind} me={payload.members.includes(me) ? me : payload.members[0]} look="plain" />
+          <p className="text-base text-muted-foreground">{note}</p>
+          <StatsDashboard stats={payload.stats} kind={payload.kind} look="plain" />
         </div>
       ) : (
         <div className="grid gap-3">

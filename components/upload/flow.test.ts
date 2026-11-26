@@ -37,7 +37,13 @@ describe("이름 정리", () => {
     expect(targets).toEqual(["민지", "철수", "민지, 수아", "영희"]);
   });
 
-  it("기본 표시 이름은 카톡 이름(정리한 것)이다", () => {
+  it("봇·알 수 없음은 이름 목록에 아예 없다", () => {
+    expect(nameTargets({ participants: ["민지", "(알 수 없음)", "오픈채팅봇", "철수", "ChatGPT"] })).toEqual(["민지", "철수"]);
+  });
+
+  it("기본 표시 이름은 성을 뺀 카톡 이름(정리한 것)이다. 성을 빼서 겹치면 전체 이름", () => {
+    expect(initialNames(["김민지", "이철수", "Minji"]).names).toEqual({ 김민지: "민지", 이철수: "철수", Minji: "Minji" });
+    expect(initialNames(["김민지", "이민지"]).names).toEqual({ 김민지: "김민지", 이민지: "이민지" });
     expect(initialNames(["민지", "철수"]).names).toEqual({ 민지: "민지", 철수: "철수" });
     expect(initialNames(["민지.", "a|b"])).toEqual({ names: { "민지.": "민지", "a|b": "ab" }, sameAs: {}, excluded: [] });
     expect(nameProblem(initialNames(targets), targets)).toBeNull();

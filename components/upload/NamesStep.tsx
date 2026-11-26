@@ -1,6 +1,7 @@
 "use client";
 
-// 이름 정리: 사람마다 리포트와 공유 링크에 보일 표시 이름을 정하고(기본은 카톡 이름), 분석에서 뺄 사람을 고른다.
+// 이름 정리: 사람마다 리포트와 공유 링크에 보일 표시 이름을 정하고(기본은 성을 뺀 카톡 이름), 분석에서 뺄 사람을 고른다.
+// 봇·알 수 없음은 목록에 없다(nameTargets).
 // 한 사람의 여러 이름은 [같은 사람]으로 합친다. 쓸 수 없는 이름이면 [다음]을 막고 이유를 보여 준다.
 import { checkDisplayName } from "@/lib/payload/names";
 import { cn } from "@/lib/utils";
@@ -9,7 +10,6 @@ import { NextButton, StepFrame } from "./StepFrame";
 
 export function NamesStep({
   targets,
-  me,
   state,
   problem,
   busy,
@@ -18,7 +18,6 @@ export function NamesStep({
   onNext,
 }: {
   targets: string[];
-  me: string;
   state: NameState;
   problem: NameProblem | null;
   busy: boolean;
@@ -39,7 +38,6 @@ export function NamesStep({
         <div className="flex min-w-0 items-baseline justify-between gap-2 text-base">
           <label htmlFor={id} className="min-w-0 break-all font-medium">
             {who}
-            {who === me && <span className="ml-1 text-sm text-muted-foreground">(나)</span>}
           </label>
           {root === undefined && (
             <label className="flex shrink-0 items-center gap-2 py-2.5 text-base">
@@ -110,7 +108,7 @@ export function NamesStep({
   return (
     <StepFrame
       title="이름 정리"
-      description="리포트와 공유 링크에 보일 이름이에요. 기본은 카톡 이름이고, 대화 본문은 바꾸지 않고 그대로 보내요."
+      description="리포트와 공유 링크에 보일 이름이에요. 기본은 성을 뺀 카톡 이름이고, 대화 본문은 바꾸지 않고 그대로 보내요."
       onBack={onBack}
       busy={busy}
       action={<NextButton onClick={onNext} disabled={problem !== null || busy} describedBy={problem ? "name-problem" : undefined} />}

@@ -183,12 +183,10 @@ const hasPayload = (page: Page) =>
   );
 const reportCard = (page: Page) => page.getByRole("region", { name: "AI 리포트", exact: true });
 
-/** 이름 단계까지 간다(나는 민지). exclude에 든 사람은 분석에서 뺀다 */
+/** 이름 단계까지 간다. exclude에 든 사람은 분석에서 뺀다 */
 async function toNames(page: Page, chat = androidChat(), exclude: string[] = []) {
   await page.goto("/new");
   await page.getByLabel("대화 파일").setInputFiles(textUpload("KakaoTalkChats.txt", chat));
-  await next(page).click();
-  await page.getByRole("radio", { name: "민지", exact: true }).check();
   await next(page).click();
   await expect(page.getByRole("heading", { name: "이름 정리" })).toBeVisible();
   for (const name of exclude) await excludeMember(page, name);

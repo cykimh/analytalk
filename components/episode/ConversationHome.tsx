@@ -214,7 +214,7 @@ export function ConversationHomeView({
         <h2 id="stats-title" className="text-[1.375rem] leading-tight font-bold tracking-tight">
           <Highlight>대화 통계</Highlight>
         </h2>
-        <StatsDashboard stats={c.stats} kind={c.kind} me="" look="scrap" />
+        <StatsDashboard stats={c.stats} kind={c.kind} look="scrap" />
       </section>
 
       <DeleteBox id={id} />

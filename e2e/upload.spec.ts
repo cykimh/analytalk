@@ -18,11 +18,8 @@ async function upload(page: Page, file: Parameters<ReturnType<Page["getByLabel"]
   await page.getByLabel("대화 파일").setInputFiles(file);
 }
 
-/** 확인 → 나는 누구? → 이름 정리(기본 이름) → 방 종류·말투 → 보낼 내용 확인까지 */
+/** 확인 → 이름 정리(기본 이름) → 방 종류·말투 → 보낼 내용 확인까지 */
 async function toReview(page: Page) {
-  await next(page).click();
-  await expect(page.getByRole("heading", { name: "나는 누구?" })).toBeVisible();
-  await page.getByRole("radio", { name: "민지", exact: true }).check();
   await next(page).click();
   await expect(page.getByRole("heading", { name: "이름 정리" })).toBeVisible();
   await next(page).click();
@@ -47,6 +44,8 @@ test.describe("업로드 흐름", () => {
     await toReview(page);
     await expect(page.getByText(/미국 Anthropic으로 가요/)).toBeVisible();
     await expect(page.getByText(/2024-03-14 이후 11개 전부/)).toBeVisible();
+    // 위험 신호가 없으면 안내 줄도 없다
+    await expect(page.getByText(/위험할 수 있는 메시지/)).toHaveCount(0);
     await expect(page.getByRole("checkbox", { name: "방 사람들에게 말했어요" })).toBeVisible();
     await expect(page.getByRole("button", { name: "AI 연재 만들기" })).toBeDisabled();
     // 고유 문장은 미리보기(브라우저 안)에는 있다
@@ -66,8 +65,6 @@ test.describe("업로드 흐름", () => {
 
   test("이름 정리에서 같은 이름·빈 이름·금지 문자면 [다음]을 막고 이유를 보여 준다", async ({ page }) => {
     await upload(page, textUpload("KakaoTalkChats.txt", androidChat()));
-    await next(page).click();
-    await page.getByRole("radio", { name: "민지", exact: true }).check();
     await next(page).click();
     await expect(page.getByRole("heading", { name: "이름 정리" })).toBeVisible();
     const minji = page.getByLabel("민지의 표시 이름", { exact: true });
@@ -109,10 +106,46 @@ test.describe("업로드 흐름", () => {
     await expect(preview).toContainText("A=민지");
   });
 
+  test("업로더 본인을 고르지 않고, 봇·알 수 없음은 이름 목록과 보낼 내용 어디에도 없다. 기본 이름은 성을 뺀 이름", async ({ page }) => {
+    const sent = recordOutgoing(page);
+    const extra = [
+      "2024년 3월 15일 오전 9:10, (알 수 없음) : 탈퇴한 사람 말 3c9e",
+      "2024년 3월 15일 오전 9:11, 오픈채팅봇 : 봇 공지 3c9e",
+      "2024년 3월 15일 오전 9:12, 김수아 : 성 빼기 확인",
+    ];
+    await upload(page, textUpload("KakaoTalkChats.txt", `${androidChat().trimEnd()}\n${extra.join("\n")}\n`));
+    await next(page).click();
+    await expect(page.getByRole("heading", { name: "이름 정리" })).toBeVisible();
+    await expect(page.getByText("(나)")).toHaveCount(0);
+    await expect(page.getByLabel("김수아의 표시 이름", { exact: true })).toHaveValue("수아");
+    await expect(page.getByLabel("(알 수 없음)의 표시 이름", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("오픈채팅봇의 표시 이름", { exact: true })).toHaveCount(0);
+    await next(page).click();
+    await next(page).click();
+    await expect(page.getByRole("heading", { name: "보낼 내용 확인" })).toBeVisible({ timeout: 15_000 });
+    await page.getByText("미리보기 20줄").click();
+    const preview = page.locator("pre");
+    await expect(preview).toContainText("=수아");
+    await expect(preview).toContainText("성 빼기 확인");
+    await expect(preview).not.toContainText("3c9e");
+    await expect(preview).not.toContainText("오픈채팅봇");
+    expect(sent.filter((s) => s.includes("3c9e"))).toEqual([]);
+  });
+
+  test("위험 신호 메시지는 빼고 보낸다고 알리고, 만들기는 막지 않는다", async ({ page }) => {
+    await upload(page, textUpload("KakaoTalkChats.txt", androidChat({ bodies: ["어제 자해 했어", "괜찮아 이제"] })));
+    await toReview(page);
+    await expect(page.getByText("위험할 수 있는 메시지 1개는 빼고 보내요")).toBeVisible();
+    await expect(page.getByText(/109\(자살예방상담전화\)/)).toBeVisible();
+    await page.getByText("미리보기 20줄").click();
+    await expect(page.locator("pre")).not.toContainText("자해");
+    await expect(page.locator("pre")).toContainText("괜찮아 이제");
+    await page.getByRole("checkbox", { name: "방 사람들에게 말했어요" }).check();
+    await expect(page.getByRole("button", { name: "AI 연재 만들기" })).toBeEnabled();
+  });
+
   test("방 종류·말투 단계: 기본 말투는 팩트 일침이고 직장·팀이면 말투를 숨긴다", async ({ page }) => {
     await upload(page, textUpload("KakaoTalkChats.txt", androidChat()));
-    await next(page).click();
-    await page.getByRole("radio", { name: "민지", exact: true }).check();
     await next(page).click();
     await next(page).click();
     await expect(page.getByRole("radio", { name: /팩트 일침/ })).toBeChecked();
@@ -153,9 +186,6 @@ test.describe("업로드 흐름", () => {
       await expectNoHorizontalScroll(page);
       await page.getByLabel("대화 파일").setInputFiles(textUpload("KakaoTalkChats.txt", androidChat({ bodies: ["민지수 왔어"] })));
       await expect(page.getByText("메시지 12개")).toBeVisible();
-      await expectNoHorizontalScroll(page);
-      await next(page).click();
-      await page.getByRole("radio", { name: "민지", exact: true }).check();
       await expectNoHorizontalScroll(page);
       await next(page).click();
       await expect(page.getByRole("heading", { name: "이름 정리" })).toBeVisible();

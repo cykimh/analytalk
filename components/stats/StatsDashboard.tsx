@@ -20,14 +20,6 @@ const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 /** ㅋ 길이 막대(1 ~ 10개 이상) 아래 눈금 글자 */
 const LAUGH_TICKS = ["1", null, null, "4", null, null, "7", null, null, "10+"];
 
-function Person({ name, me }: { name: string; me: string }) {
-  return (
-    <>
-      {name}
-      {name === me && <span className="ml-1 text-sm text-muted-foreground">(나)</span>}
-    </>
-  );
-}
 
 function Tile({ label, value, sub, look, index = 0 }: { label: string; value: ReactNode; sub?: ReactNode; look: ChartLook; index?: number }) {
   if (look === "scrap") {
@@ -91,9 +83,9 @@ function Heatmap({ dailyCounts, look }: { dailyCounts: Record<string, number>; l
   );
 }
 
-type PartProps = { stats: ChatStats; people: string[]; color: (p: string) => string; me: string; look: ChartLook };
+type PartProps = { stats: ChatStats; people: string[]; color: (p: string) => string; look: ChartLook };
 
-function ReplyByMonth({ stats, people, color, me, look }: PartProps) {
+function ReplyByMonth({ stats, people, color, look }: PartProps) {
   const months = Object.keys(stats.monthly).sort().slice(-MAX_REPLY_MONTHS);
   const value = (m: string, p: string) => stats.monthly[m].replyMedianMs[p] ?? null;
   // 사람끼리 같은 눈금
@@ -112,7 +104,7 @@ function ReplyByMonth({ stats, people, color, me, look }: PartProps) {
           <div key={p} className="grid gap-1">
             <div className="flex min-w-0 items-baseline justify-between gap-2 text-base">
               <span className="min-w-0 truncate">
-                <Person name={p} me={me} />
+                {p}
               </span>
               <span className="shrink-0 tabular-nums text-muted-foreground">전체 {formatDuration(stats.replyMedianMs[p] ?? null)}</span>
             </div>
@@ -136,7 +128,7 @@ function ReplyByMonth({ stats, people, color, me, look }: PartProps) {
   );
 }
 
-function Laugh({ stats, people, color, me, look }: PartProps) {
+function Laugh({ stats, people, color, look }: PartProps) {
   const rows = people.filter((p) => (stats.laughLength[p] ?? []).some((n) => n > 0));
   return (
     <ChartCard
@@ -156,7 +148,7 @@ function Laugh({ stats, people, color, me, look }: PartProps) {
               <div key={p} className="grid gap-1">
                 <div className="flex min-w-0 items-baseline justify-between gap-2 text-base">
                   <span className="min-w-0 truncate">
-                    <Person name={p} me={me} />
+                    {p}
                   </span>
                   <span className="shrink-0 text-muted-foreground">주로 {mode === 10 ? "10개 이상" : `${mode}개`}</span>
                 </div>
@@ -179,7 +171,7 @@ function Laugh({ stats, people, color, me, look }: PartProps) {
   );
 }
 
-function Crossed({ stats, me, look }: { stats: ChatStats; me: string; look: ChartLook }) {
+function Crossed({ stats, look }: { stats: ChatStats; look: ChartLook }) {
   const items = [...stats.crossed].sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0)).slice(0, MAX_CROSSED);
   return (
     <ChartCard title="엇갈린 패턴" note="한 지표는 오르고 다른 지표는 내린 달이에요. 숫자만 보여 드려요." look={look} index={7}>
@@ -190,7 +182,7 @@ function Crossed({ stats, me, look }: { stats: ChatStats; me: string; look: Char
           {items.map((c) => (
             <li key={`${c.month}-${c.person}`} className="grid gap-0.5 rounded-lg bg-muted p-3 text-base">
               <span className="text-sm text-muted-foreground">
-                {c.month} · <Person name={c.person} me={me} />
+                {c.month} · {c.person}
               </span>
               <span>{crossedText(c)}</span>
             </li>
@@ -204,12 +196,10 @@ function Crossed({ stats, me, look }: { stats: ChatStats; me: string; look: Char
 export function StatsDashboard({
   stats,
   kind,
-  me,
   look = "plain",
 }: {
   stats: ChatStats;
   kind: Payload["kind"];
-  me: string;
   look?: ChartLook;
 }) {
   const { people, rest } = topPeople(stats, MAX_BAR_PEOPLE);
@@ -254,7 +244,7 @@ export function StatsDashboard({
             rows={[
               ...people.map((p) => ({
                 key: p,
-                label: <Person name={p} me={me} />,
+                label: p,
                 value: stats.share[p] ?? 0,
                 display: `${formatPercent(stats.share[p] ?? 0)} · ${formatCount(stats.byPerson[p] ?? 0)}개`,
                 color: color(p),
@@ -280,7 +270,7 @@ export function StatsDashboard({
                 <tr key={p} className={cn("border-t", scrap && "border-dashed border-ink/20")}>
                   <td className="max-w-0 truncate py-1.5">
                     <span aria-hidden className="mr-1.5 inline-block size-2.5 rounded-sm align-middle" style={{ backgroundColor: color(p) }} />
-                    <Person name={p} me={me} />
+                    {p}
                   </td>
                   <td className="py-1.5 text-right tabular-nums">{formatCount(stats.initiations[p] ?? 0)}</td>
                   <td className="py-1.5 text-right tabular-nums">{formatCount(stats.closings[p] ?? 0)}</td>
@@ -290,7 +280,7 @@ export function StatsDashboard({
           </table>
         </ChartCard>
 
-        <ReplyByMonth stats={stats} people={multiples} color={color} me={me} look={look} />
+        <ReplyByMonth stats={stats} people={multiples} color={color} look={look} />
 
         <ChartCard title="시간대 · 요일" note={`심야(22~5시) ${formatPercent(stats.nightRatio)}`} look={look} index={4}>
           <div className="grid gap-1">
@@ -328,7 +318,7 @@ export function StatsDashboard({
           </div>
         </ChartCard>
 
-        <Laugh stats={stats} people={multiples} color={color} me={me} look={look} />
+        <Laugh stats={stats} people={multiples} color={color} look={look} />
 
         <ChartCard
           title="질문 비율"
@@ -342,7 +332,7 @@ export function StatsDashboard({
             max={1}
             rows={people.map((p) => ({
               key: p,
-              label: <Person name={p} me={me} />,
+              label: p,
               value: stats.questionRate[p] ?? 0,
               display: formatPercent(stats.questionRate[p] ?? 0),
               color: color(p),
@@ -350,7 +340,7 @@ export function StatsDashboard({
           />
         </ChartCard>
 
-        {kind === "pair" && <Crossed stats={stats} me={me} look={look} />}
+        {kind === "pair" && <Crossed stats={stats} look={look} />}
       </div>
     </div>
   );

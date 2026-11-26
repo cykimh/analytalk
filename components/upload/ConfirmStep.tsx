@@ -1,10 +1,10 @@
 "use client";
 
-// 확인 화면: 기간·메시지 수·줄 인식률(98% 미만이면 경고)
+// 확인 화면: 기간·메시지 수·참여자 수(봇·알 수 없음 제외)·줄 인식률(98% 미만이면 경고)
 import { formatCount, kstDate } from "@/components/stats/format";
 import { RECOGNITION_WARN } from "@/lib/config";
 import type { ParseResult } from "@/lib/parse/parse";
-import { recognitionPercent } from "./flow";
+import { nameTargets, recognitionPercent } from "./flow";
 import { NextButton, StepFrame } from "./StepFrame";
 
 export function ConfirmStep({
@@ -25,7 +25,7 @@ export function ConfirmStep({
           기간 {parse.firstTs === null ? "-" : kstDate(parse.firstTs)} ~ {parse.lastTs === null ? "-" : kstDate(parse.lastTs)}
         </li>
         <li>메시지 {formatCount(count)}개</li>
-        <li>참여자 {formatCount(parse.participants.length)}명</li>
+        <li>참여자 {formatCount(nameTargets(parse).length)}명</li>
         <li>인식률 {pct}%</li>
       </ul>
       {parse.recognizedRatio < RECOGNITION_WARN && (
