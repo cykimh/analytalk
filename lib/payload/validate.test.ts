@@ -44,6 +44,16 @@ describe("validatePayload", () => {
     expect(reject(appendLine(payload(), "내 번호 010-1234-5678"))).toMatch(/가리기/);
   });
 
+  it("maskCounts에 sensitive 키 → 거부", () => {
+    const p = payload();
+    expect(reject({ ...p, maskCounts: { ...p.maskCounts, sensitive: 1 } })).toMatch(/구조/);
+  });
+
+  it("본문의 [링크:사이트]는 통과하고, 가리지 않은 링크는 거부", () => {
+    expect(validatePayload(appendLine(payload(), "이거 봐 [링크:youtube.com]")).ok).toBe(true);
+    expect(reject(appendLine(payload(), "https://youtube.com/x"))).toMatch(/가리기/);
+  });
+
   it("1.5MB 초과 → 거부", () => {
     expect(reject({ ...payload(), anchors: "가".repeat(600_000) })).toMatch(/크기/);
   });

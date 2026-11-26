@@ -107,12 +107,12 @@ describe("sendSummary", () => {
     msgSent: 24,
     anchors: ["# 2024-03-14", "m0|03-14 00:05|P1|첫", "m100|03-14 00:06|P1|백", "# 2024-03-15", "m101|03-15 08:00|P1|활발"].join("\n"),
     transcript,
-    maskCounts: { phone: 1, email: 0, account: 0, rrn: 0, url: 2, sensitive: 3 },
+    maskCounts: { phone: 1, email: 0, account: 0, rrn: 0, url: 2 },
   } as unknown as Payload;
 
   it("보낼 범위·가린 수·미리보기 20줄", () => {
     const s = sendSummary(payload, messages);
-    expect(s).toMatchObject({ since: "2024-03-15", sent: 24, first: 2, busy: 1, masked: 6 });
+    expect(s).toMatchObject({ since: "2024-03-15", sent: 24, first: 2, busy: 1, masked: 3 });
     expect(s.preview).toEqual(transcript.split("\n").slice(0, 20));
   });
 

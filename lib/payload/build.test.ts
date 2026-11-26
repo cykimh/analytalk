@@ -92,13 +92,13 @@ describe("buildPayload", () => {
     expect(p.members).toEqual(["P1"]);
   });
 
-  it("줄 형식, 날짜 헤더, 본문 처리(미디어·꺾쇠·줄바꿈·민감·개인정보)", () => {
+  it("줄 형식, 날짜 헤더, 본문 처리(미디어·꺾쇠·줄바꿈·개인정보, 민감 주제는 그대로)", () => {
     const messages = chat([
       [null, kst(2026, 10, 1, 8), "P2님이 들어왔습니다."],
       ["P1", kst(2026, 10, 1, 9, 5), "사진", "photo"],
       ["P2", kst(2026, 10, 1, 23, 59), "a<b>c"],
       ["P1", kst(2026, 10, 2, 0, 1), "첫 줄\n둘째 줄"],
-      ["P2", kst(2026, 10, 2, 0, 2), "어제 우울증 진단 받았어"],
+      ["P2", kst(2026, 10, 2, 0, 2), "임신 테스트기 샀어"],
       ["P1", kst(2026, 10, 2, 0, 3), "내 번호 010-1234-5678"],
     ]);
     const p = build(messages);
@@ -108,12 +108,42 @@ describe("buildPayload", () => {
       "m2|10-01 23:59|P2|a＜b＞c",
       "# 2026-10-02",
       "m3|10-02 00:01|P1|첫 줄 ⏎ 둘째 줄",
-      "m4|10-02 00:02|P2|[가림:민감]",
+      "m4|10-02 00:02|P2|임신 테스트기 샀어",
       "m5|10-02 00:03|P1|내 번호 [가림:전화]",
     ]);
     expect(p.anchors).toBe("");
-    expect(p.maskCounts).toEqual({ phone: 1, email: 0, account: 0, rrn: 0, url: 0, sensitive: 1 });
+    expect(p.maskCounts).toEqual({ phone: 1, email: 0, account: 0, rrn: 0, url: 0 });
     expect(p).toMatchObject({ v: 1, concept: "couple", kind: "pair", me: "P1", members: ["P1", "P2"], msgTotal: 5, msgSent: 5 });
+  });
+
+  it("maskCounts 키는 phone·email·account·rrn·url뿐이고, 링크는 사이트 이름만 남는다", () => {
+    const p = build(
+      chat([
+        ["P1", kst(2026, 10, 1, 9), "이거 봐 https://www.youtube.com/watch?v=abc"],
+        ["P2", kst(2026, 10, 1, 9, 1), "ㅇㅋ"],
+      ]),
+    );
+    expect(Object.keys(p.maskCounts).sort()).toEqual(["account", "email", "phone", "rrn", "url"]);
+    expect(p.maskCounts.url).toBe(1);
+    expect(lines(p.transcript)[1]).toBe("m0|10-01 09:00|P1|이거 봐 [링크:youtube.com]");
+    expect(p.transcript).not.toContain("watch");
+  });
+
+  it("마지막 줄을 [링크:… 가운데서 자르는 예산에서도 validatePayload를 통과한다", () => {
+    const messages = chat([["P1", kst(2026, 10, 1, 9), "봐 https://youtube.com/watch?v=abcdef 이거 010-1234-5678"]]);
+    let cutInsideMark = 0;
+    for (let budget = 40; budget < 140; budget++) {
+      let p;
+      try {
+        p = build(messages, budget);
+      } catch {
+        continue; // 헤더와 줄 머리도 안 들어가는 예산
+      }
+      const last = lines(p.transcript).at(-1)!;
+      if (/\[링크[^\]]*…$/.test(last)) cutInsideMark++;
+      expect([budget, validatePayload(p).ok]).toEqual([budget, true]);
+    }
+    expect(cutInsideMark).toBeGreaterThan(0);
   });
 
   it("대화 전체가 예산에 들어가면 모두 transcript이고 anchors는 비어 있다", () => {

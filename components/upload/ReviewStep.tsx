@@ -15,8 +15,7 @@ const MASK_LABEL: Record<string, string> = {
   email: "이메일",
   account: "계좌",
   rrn: "주민번호",
-  url: "링크",
-  sensitive: "민감 주제",
+  url: "링크(사이트 이름만 남김)",
 };
 
 const HELP: Record<"self_harm" | "violence", { title: string; lines: string[] }> = {

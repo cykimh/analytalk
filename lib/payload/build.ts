@@ -5,7 +5,6 @@ import type { ChatMessage, MsgKind } from "@/lib/parse/parse";
 import { type ChatStats, computeStats } from "@/lib/stats/compute";
 import { statsForPrompt } from "@/lib/stats/view";
 import { type MaskCounts, type MaskKind, maskPII } from "./mask";
-import { isSensitive } from "./sensitive";
 
 export interface Payload {
   v: 1;
@@ -32,7 +31,7 @@ export interface Payload {
   anchors: string;
   /** 마지막 메시지까지 이어지는 최근 구간. 1건 이상이고, 가장 최근 메시지가 예산보다 길면 그 본문을 자른(끝에 …) 한 줄이다 */
   transcript: string;
-  /** anchors·transcript에서 가린 개수. 키: phone·email·account·rrn·url·sensitive */
+  /** anchors·transcript에서 가린 개수. 키: phone·email·account·rrn·url */
   maskCounts: Record<string, number>;
 }
 
@@ -122,26 +121,21 @@ interface Rendered {
   head: string;
   line: string;
   masked: MaskCounts | null;
-  sensitive: boolean;
 }
 
-/** 미디어는 표시로, 민감 주제는 [가림:민감]으로, 나머지는 줄바꿈·꺾쇠를 바꾼 뒤 개인정보를 가린다 */
+/** 미디어는 표시로, 나머지는 줄바꿈·꺾쇠를 바꾼 뒤 개인정보를 가린다 */
 function render(m: ChatLine): Rendered {
   const { day, time } = kst(m.ts);
   let body: string;
   let masked: MaskCounts | null = null;
-  let sensitive = false;
   if (m.kind !== "text") body = MEDIA[m.kind];
-  else if (isSensitive(m.text)) {
-    body = "[가림:민감]";
-    sensitive = true;
-  } else {
+  else {
     const r = maskPII(m.text.replace(LINE_BREAK, " ⏎ ").replace(/</g, "＜").replace(/>/g, "＞"));
     body = r.text;
     masked = r.counts;
   }
   const head = `m${m.id}|${day.slice(5)} ${time}|${m.sender}|`;
-  return { day, head, line: head + body, masked, sensitive };
+  return { day, head, line: head + body, masked };
 }
 
 // 자른 본문 끝에서 뗄 글자. 가리기 규칙(링크·이메일·숫자 묶음)의 머리와 끝이 이 글자들이라, 이것들을 떼면
@@ -316,10 +310,9 @@ function assemble(chat: ChatLine[], stats: ChatStats, input: BuildInput): Payloa
   }
   const sentIdx = Array.from({ length: chat.length - start }, (_, k) => start + k);
 
-  const maskCounts: Record<string, number> = { phone: 0, email: 0, account: 0, rrn: 0, url: 0, sensitive: 0 };
+  const maskCounts: Record<string, number> = { phone: 0, email: 0, account: 0, rrn: 0, url: 0 };
   for (const i of [...anchorIdx, ...sentIdx]) {
     const r = rendered(i);
-    if (r.sensitive) maskCounts.sensitive++;
     if (r.masked) for (const k of MASK_KINDS) maskCounts[k] += r.masked[k];
   }
 

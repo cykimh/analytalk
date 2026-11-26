@@ -40,7 +40,6 @@ export function safetySignal(msgs: ChatMessage[]): "self_harm" | "violence" | nu
 
 /**
  * 페이로드에 실리는 메시지(anchors + transcript)만 본다. 보내지 않는 몇 년 전 메시지 때문에 AI 연재를 막지 않는다.
- * 본문은 가리기 전 것(messages)으로 본다: [가림:민감]으로 바뀐 본문 속 신호도 놓치지 않는다
  */
 export function sentSafetySignal(p: Payload, msgs: ChatMessage[]): "self_harm" | "violence" | null {
   const sent = payloadIndex(p);

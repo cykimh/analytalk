@@ -70,7 +70,7 @@ const payloadSchema = z.strictObject({
   stats: statsSchema,
   anchors: z.string(),
   transcript: z.string(),
-  maskCounts: z.record(z.enum(["phone", "email", "account", "rrn", "url", "sensitive"]), count),
+  maskCounts: z.record(z.enum(["phone", "email", "account", "rrn", "url"]), count),
 }) satisfies z.ZodType<Payload>;
 
 /** 컨셉마다 고를 수 있는 방 종류. work(직장·팀)는 아직 컨셉이 없다 */

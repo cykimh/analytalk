@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { maskPII } from "./mask";
-import { isSensitive } from "./sensitive";
+import { hasPII, linkMark, maskPII } from "./mask";
 
 const ZERO = { phone: 0, email: 0, account: 0, rrn: 0, url: 0 };
 
@@ -12,8 +11,8 @@ describe("maskPII", () => {
   });
 
   it.each([
-    ["링크 https://example.com/a?b=c 봐", "링크 [가림:링크] 봐", "url"],
-    ["www.example.com 들어가", "[가림:링크] 들어가", "url"],
+    ["링크 https://example.com/a?b=c 봐", "링크 [링크:example.com] 봐", "url"],
+    ["www.example.com 들어가", "[링크:example.com] 들어가", "url"],
     ["주민번호 900101-1234567", "주민번호 [가림:주민번호]", "rrn"],
     ["계좌 110-123-456789 로", "계좌 [가림:계좌] 로", "account"],
     ["3333-01-1234567 카뱅", "[가림:계좌] 카뱅", "account"],
@@ -22,28 +21,28 @@ describe("maskPII", () => {
     ["01012345678로 전화", "[가림:전화]로 전화", "phone"],
     ["회사 02-123-4567", "회사 [가림:전화]", "phone"],
     ["회사 02)123-4567", "회사 [가림:전화]", "phone"],
-    ["instagram.com/minji 팔로우해", "[가림:링크] 팔로우해", "url"],
-    ["open.kakao.com/o/abc 들어와", "[가림:링크] 들어와", "url"],
-    ["naver.me/xYz", "[가림:링크]", "url"],
+    ["instagram.com/minji 팔로우해", "[링크:instagram.com] 팔로우해", "url"],
+    ["open.kakao.com/o/abc 들어와", "[링크:open.kakao.com] 들어와", "url"],
+    ["naver.me/xYz", "[링크:naver.me]", "url"],
     ["카드 1234 5678 9012 3456", "카드 [가림:계좌]", "account"],
     ["신한 110 123 456789", "신한 [가림:계좌]", "account"],
     ["카뱅 3333 01 1234567 로", "카뱅 [가림:계좌] 로", "account"],
     // 2글자 끝(so·me·io …)은 경로가 있거나 하위 도메인이 있으면 링크로 본다 (N4)
-    ["notion.so/minji 봐", "[가림:링크] 봐", "url"],
-    ["minji.github.io 블로그", "[가림:링크] 블로그", "url"],
-    ["블로그 minji.tistory.com", "블로그 [가림:링크]", "url"],
+    ["notion.so/minji 봐", "[링크:notion.so] 봐", "url"],
+    ["minji.github.io 블로그", "[링크:minji.github.io] 블로그", "url"],
+    ["블로그 minji.tistory.com", "블로그 [링크:minji.tistory.com]", "url"],
     ["토스 1000 1234 5678", "토스 [가림:계좌]", "account"],
     // 영어 낱말이 아닌 2글자 끝(kr·io·co …)은 이름 하나만 붙어도 링크다. 여러 단계 끝(co.jp·co.uk)도 통째로 (M1)
-    ["내 블로그 minji.kr 놀러와", "내 블로그 [가림:링크] 놀러와", "url"],
-    ["minji.co에 올렸어", "[가림:링크]에 올렸어", "url"],
-    ["amazon.co.jp/x 에서 샀어", "[가림:링크] 에서 샀어", "url"],
-    ["bbc.co.uk/news 봐", "[가림:링크] 봐", "url"],
-    ["is.gd/abc 눌러", "[가림:링크] 눌러", "url"],
-    ["op.gg 전적", "[가림:링크] 전적", "url"],
+    ["내 블로그 minji.kr 놀러와", "내 블로그 [링크:minji.kr] 놀러와", "url"],
+    ["minji.co에 올렸어", "[링크:minji.co]에 올렸어", "url"],
+    ["amazon.co.jp/x 에서 샀어", "[링크:amazon.co.jp] 에서 샀어", "url"],
+    ["bbc.co.uk/news 봐", "[링크:bbc.co.uk] 봐", "url"],
+    ["is.gd/abc 눌러", "[링크:is.gd] 눌러", "url"],
+    ["op.gg 전적", "[링크:op.gg] 전적", "url"],
     // 영어 낱말이기도 한 끝(do·at·la)은 경로가 있으면 링크다: 짧은 주소 me2.do·shorturl.at·vo.la (M1)
-    ["me2.do/abc 들어와", "[가림:링크] 들어와", "url"],
-    ["shorturl.at/abc 들어와", "[가림:링크] 들어와", "url"],
-    ["vo.la/abc 들어와", "[가림:링크] 들어와", "url"],
+    ["me2.do/abc 들어와", "[링크:me2.do] 들어와", "url"],
+    ["shorturl.at/abc 들어와", "[링크:shorturl.at] 들어와", "url"],
+    ["vo.la/abc 들어와", "[링크:vo.la] 들어와", "url"],
     // 날짜·시각 범위(월 1~12, 일 1~31, 시 0~23, 분 0~59)를 벗어난 연도 모양 숫자 묶음은 계좌로 본다 (M2)
     ["2012-34-56-78-90", "[가림:계좌]", "account"],
     ["1990 12 34 56 78", "[가림:계좌]", "account"],
@@ -68,13 +67,13 @@ describe("maskPII", () => {
     // 날짜·시각 뒤의 계좌는 계좌만 가린다 (M2)
     ["2026 10 01 12 30 110 123 456789", "2026 10 01 12 30 [가림:계좌]", "account"],
     // 등록되지 않은 끝(nz·in·au …)이 co·com 뒤에 붙은 링크도 경로까지 통째로 가린다 (N2)
-    ["abc.co.nz/minji", "[가림:링크]", "url"],
-    ["abc.co.in/minji", "[가림:링크]", "url"],
-    ["abc.com.au/minji", "[가림:링크]", "url"],
-    ["abc.com.br/minji 들어와", "[가림:링크] 들어와", "url"],
-    ["가게 abc.com.sg 봐", "가게 [가림:링크] 봐", "url"],
+    ["abc.co.nz/minji", "[링크:abc.co.nz]", "url"],
+    ["abc.co.in/minji", "[링크:abc.co.in]", "url"],
+    ["abc.com.au/minji", "[링크:abc.com.au]", "url"],
+    ["abc.com.br/minji 들어와", "[링크:abc.com.br] 들어와", "url"],
+    ["가게 abc.com.sg 봐", "가게 [링크:abc.com.sg] 봐", "url"],
     // 끝 뒤에 붙은 것이 2글자 이름이 아니면 링크에 넣지 않는다 (N2)
-    ["naver.com.html 열어", "[가림:링크].html 열어", "url"],
+    ["naver.com.html 열어", "[링크:naver.com].html 열어", "url"],
   ])("%s → %s", (input, expected, kind) => {
     const r = maskPII(input);
     expect(r.text).toBe(expected);
@@ -126,7 +125,7 @@ describe("maskPII", () => {
     "이름 하나만 붙은 2글자 끝 링크도 가린다: %s (M1)",
     (link) => {
       const r = maskPII(`${link} 블로그`);
-      expect(r.text).toBe("[가림:링크] 블로그");
+      expect(r.text).toBe(`[링크:${link}] 블로그`);
       expect(r.counts).toEqual({ ...ZERO, url: 1 });
     },
   );
@@ -139,7 +138,7 @@ describe("maskPII", () => {
 
   it("새로 가리는 모양(2글자 끝 링크·범위 밖 날짜 모양·한 자리 끝 계좌)도 다시 가려도 바뀌지 않는다", () => {
     const once = maskPII("minji.kr amazon.co.jp/x me2.do/abc 2012-34-56-78-90 2024 12 34 56 78 90 9002-1234-5678-9 9002 1234 5678 9");
-    expect(once.text).not.toMatch(/\d{3}|\.(?:kr|jp|do)/);
+    expect(once.text).not.toMatch(/\d{3}|\/x|\/abc/);
     expect(maskPII(once.text)).toEqual({ text: once.text, counts: ZERO });
   });
 
@@ -153,31 +152,68 @@ describe("maskPII", () => {
     const once = maskPII(
       "카드 1234 5678 9012 3456 3개월 1234 5678 9012 3456 12개월 abc.co.nz/minji abc.com.au/minji",
     );
-    expect(once.text).not.toMatch(/\d{3}|\.(?:nz|au)|minji/);
+    expect(once.text).not.toMatch(/\d{3}|minji/);
     expect(maskPII(once.text)).toEqual({ text: once.text, counts: ZERO });
   });
 });
 
-describe("isSensitive", () => {
-  it.each(["어제 우울증 진단 받았어", "나 임신했대", "대출 이자 연체됐어", "걔 고소한대", "고소장 냈어", "전과 있대", "기소됐대", "유산했대"])("민감: %s", (s) => {
-    expect(isSensitive(s)).toBe(true);
+describe("링크는 사이트 이름만 남긴다 (G3)", () => {
+  it.each([
+    ["https://example.com/a?b=c", "[링크:example.com]"],
+    ["WWW.Example.COM", "[링크:example.com]"],
+    ["https://a:b@x.com/", "[링크:x.com]"],
+    ["https://x.com:8080/a#b", "[링크:x.com]"],
+    ["naver.me/xYz", "[링크:naver.me]"],
+    ["naver.com에서", "[링크:naver.com]에서"],
+    ["http://192.168.0.1/a", "[가림:링크]"],
+    ["https://한글.kr/", "[가림:링크]"],
+    ["010-1234-5678.com", "[가림:링크]"],
+  ])("%s → %s", (input, expected) => {
+    const r = maskPII(input);
+    expect(r.text).toBe(expected);
+    expect(r.counts).toEqual({ ...ZERO, url: 1 });
+  });
+
+  it("linkMark는 던지지 않고 표시만 돌려준다", () => {
+    expect(linkMark("https://Example.COM./a")).toBe("[링크:example.com]");
+    expect(linkMark("https://")).toBe("[가림:링크]");
+    expect(linkMark("https://%zz/")).toBe("[가림:링크]");
+    expect(linkMark("https://a@b@x.com/")).toBe("[링크:x.com]");
+  });
+
+  it("이미 [링크:사이트] 표시인 조각은 다시 가리지 않는다", () => {
+    expect(maskPII("[링크:youtube.com]")).toEqual({ text: "[링크:youtube.com]", counts: ZERO });
+  });
+
+  it("사용자가 직접 친 [링크:사이트/경로]의 경로는 새지 않는다", () => {
+    const r = maskPII("[링크:instagram.com/minji]");
+    expect(r.text).not.toContain("minji");
+    expect(r.counts.url).toBe(1);
+  });
+
+  it("대문자 표시 조각은 소문자 표시로 바뀐다", () => {
+    expect(maskPII("[링크:YouTube.com]").text).toBe("[링크:[링크:youtube.com]]");
   });
 
   it.each([
-    "오늘 점심 뭐 먹지",
-    "게이머 마우스 샀다",
-    "ㅋㅋㅋ 내일 봐",
-    "예전과 달라",
-    "이전과 같아",
-    "전과목 다 봤어",
-    "자기소개서 썼어",
-    "유산소 하러 감",
-    "유산균 먹어",
-    "문화유산 답사",
-    "고소해 맛있어",
-    "참기름이 고소한 냄새",
-    "고소공포증 있어",
-  ])("민감 아님: %s", (s) => {
-    expect(isSensitive(s)).toBe(false);
+    "https://example.com/a?b=c",
+    "WWW.Example.COM",
+    "https://a:b@x.com/",
+    "naver.me/xYz",
+    "naver.com에서",
+    "http://192.168.0.1/a",
+    "https://한글.kr/",
+    "010-1234-5678.com",
+    "[링크:instagram.com/minji]",
+    "[링크:YouTube.com] 와 youtube.com/x",
+    "[링크:naver.me] 봐 naver.me/a 010-1234-5678",
+  ])("다시 가려도 바뀌지 않는다: %s", (x) => {
+    const once = maskPII(x).text;
+    expect(maskPII(once)).toEqual({ text: once, counts: ZERO });
+  });
+
+  it("hasPII: 표시는 통과, 날 링크는 걸린다", () => {
+    expect(hasPII("[링크:naver.me] 봐")).toBe(false);
+    expect(hasPII("youtube.com 봐")).toBe(true);
   });
 });
