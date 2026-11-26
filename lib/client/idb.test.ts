@@ -12,7 +12,7 @@ vi.mock("idb-keyval", () => ({
 
 const { deletePayload, loadPayload, savePayload, sweepPayloads } = await import("./idb");
 
-const payload = { v: 1, me: "멤버1", transcript: "# 2024-03-14\nm0|03-14 00:05|멤버1|안녕" } as unknown as Payload;
+const payload = { v: 2, tone: "fact", transcript: "# 2024-03-14\nm0|00:05|A|안녕" } as unknown as Payload;
 const HOUR = 3_600_000;
 
 describe("idb payload", () => {
@@ -44,6 +44,12 @@ describe("idb payload", () => {
 
   it("저장 형식이 아니면 지우고 null", async () => {
     store.set("payload:c1", { payload });
+    expect(await loadPayload("c1")).toBeNull();
+    expect(store.has("payload:c1")).toBe(false);
+  });
+
+  it("v2가 아닌 저장값(배포 전의 v1)은 지우고 null", async () => {
+    store.set("payload:c1", { savedAt: Date.now(), payload: { ...payload, v: 1 } });
     expect(await loadPayload("c1")).toBeNull();
     expect(store.has("payload:c1")).toBe(false);
   });

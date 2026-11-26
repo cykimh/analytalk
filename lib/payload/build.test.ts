@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/lib/parse/parse";
-import { ANCHOR_BUDGET_SHARE, PROMPT_RESERVE_TOKENS } from "@/lib/config";
+import { ANCHOR_BUDGET_SHARE, MAX_PAYLOAD_BYTES, PROMPT_RESERVE_TOKENS } from "@/lib/config";
 import { computeStats } from "@/lib/stats/compute";
 import { statsForPrompt } from "@/lib/stats/view";
 import { syntheticGroupChat } from "@/test/syntheticChat";
-import { buildPayload, buildPayloadForBudget, payloadIndex, payloadTokens } from "./build";
+import { buildPayload, buildPayloadForBudget, legendText, memberCodes, payloadIndex, payloadTokens, readBlock } from "./build";
 import { applyDisplayNames, type NameMap } from "./names";
 import { validatePayload } from "./validate";
 
@@ -44,7 +44,7 @@ function named(): ChatMessage[] {
 }
 
 const build = (messages: ChatMessage[], tokenBudget = 1_000_000, anchorShare?: number) =>
-  buildPayload({ messages, me: "P1", concept: "couple", kind: "pair", tokenBudget, tokensPerChar: 1, anchorShare });
+  buildPayload({ messages, tone: "warm", concept: "couple", kind: "pair", tokenBudget, tokensPerChar: 1, anchorShare });
 /** 덩어리 하나의 추정 토큰(tokensPerChar 1). 구현과 같은 정의: 줄마다 글자 수 + 1 */
 const tokens = (block: string) => lines(block).reduce((sum, l) => sum + l.length + 1, 0);
 
@@ -104,16 +104,17 @@ describe("buildPayload", () => {
     const p = build(messages);
     expect(lines(p.transcript)).toEqual([
       "# 2026-10-01",
-      "m1|10-01 09:05|P1|[사진]",
-      "m2|10-01 23:59|P2|a＜b＞c",
+      "m1|09:05|A|[사진]",
+      "m2|23:59|B|a＜b＞c",
       "# 2026-10-02",
-      "m3|10-02 00:01|P1|첫 줄 ⏎ 둘째 줄",
-      "m4|10-02 00:02|P2|임신 테스트기 샀어",
-      "m5|10-02 00:03|P1|내 번호 [가림:전화]",
+      "m3|00:01|A|첫 줄 ⏎ 둘째 줄",
+      "m4|00:02|B|임신 테스트기 샀어",
+      "m5|00:03|A|내 번호 [가림:전화]",
     ]);
     expect(p.anchors).toBe("");
     expect(p.maskCounts).toEqual({ phone: 1, email: 0, account: 0, rrn: 0, url: 0 });
-    expect(p).toMatchObject({ v: 1, concept: "couple", kind: "pair", me: "P1", members: ["P1", "P2"], msgTotal: 5, msgSent: 5 });
+    expect(p).toMatchObject({ v: 2, tone: "warm", concept: "couple", kind: "pair", members: ["P1", "P2"], msgTotal: 5, msgSent: 5 });
+    expect("me" in p).toBe(false);
   });
 
   it("maskCounts 키는 phone·email·account·rrn·url뿐이고, 링크는 사이트 이름만 남는다", () => {
@@ -125,12 +126,15 @@ describe("buildPayload", () => {
     );
     expect(Object.keys(p.maskCounts).sort()).toEqual(["account", "email", "phone", "rrn", "url"]);
     expect(p.maskCounts.url).toBe(1);
-    expect(lines(p.transcript)[1]).toBe("m0|10-01 09:00|P1|이거 봐 [링크:youtube.com]");
+    expect(lines(p.transcript)[1]).toBe("m0|09:00|A|이거 봐 [링크:youtube.com]");
     expect(p.transcript).not.toContain("watch");
   });
 
   it("마지막 줄을 [링크:… 가운데서 자르는 예산에서도 validatePayload를 통과한다", () => {
-    const messages = chat([["P1", kst(2026, 10, 1, 9), "봐 https://youtube.com/watch?v=abcdef 이거 010-1234-5678"]]);
+    const messages = chat([
+      ["P2", kst(2026, 10, 1, 8), "먼저"],
+      ["P1", kst(2026, 10, 1, 9), "봐 https://youtube.com/watch?v=abcdef 이거 010-1234-5678"],
+    ]);
     let cutInsideMark = 0;
     for (let budget = 40; budget < 140; budget++) {
       let p;
@@ -169,7 +173,7 @@ describe("buildPayload", () => {
       }
     }
     // anchors 몫을 넉넉히 줘서 고르는 범위만 본다(예산 상한은 아래 테스트)
-    const p = build(chat(rows), 8000, 0.95);
+    const p = build(chat(rows), 6000, 0.95);
     const sent = new Set(ids(p.transcript));
     const anchored = ids(p.anchors);
 
@@ -207,12 +211,12 @@ describe("buildPayload", () => {
     let budget = 50_000;
     let prevText = Infinity;
     for (let round = 0; round < 3; round++) {
-      const p = buildPayload({ messages, me: "P1", concept: "group", kind: "group", tokenBudget: budget, tokensPerChar: 1 });
+      const p = buildPayload({ messages, tone: "warm", concept: "group", kind: "group", tokenBudget: budget, tokensPerChar: 1 });
       const { text, total } = payloadTokens(p, 1);
       expect(text).toBeLessThanOrEqual(budget);
       expect(text).toBeGreaterThan(budget * 0.95);
       expect(tokens(p.anchors)).toBeLessThanOrEqual(budget * ANCHOR_BUDGET_SHARE);
-      expect(total).toBe(text + JSON.stringify(statsForPrompt(p.stats)).length);
+      expect(total).toBe(text + JSON.stringify(statsForPrompt(p.stats)).length + legendText(p.members).length + 1);
       expect(text).toBeLessThan(prevText);
       // 첫 대화와 상위 3일이 모두 조금씩 들어 있다
       const anchored = ids(p.anchors);
@@ -231,15 +235,15 @@ describe("buildPayload", () => {
 });
 
 describe("buildPayload: 마지막 메시지 한 줄이 예산보다 길 때", () => {
-  const MSG = /^m(\d+)\|\d{2}-\d{2} \d{2}:\d{2}\|[^|]+\|(.*)$/;
+  const MSG = /^m(\d+)\|\d{2}:\d{2}\|[A-Z]{1,3}\|(.*)$/;
   /** transcript의 메시지 줄 본문들 */
   const bodies = (block: string) => lines(block).flatMap((l) => MSG.exec(l)?.slice(2) ?? []);
   const group = (messages: ChatMessage[], tokenBudget: number) =>
-    buildPayload({ messages, me: "P1", concept: "group", kind: "group", tokenBudget, tokensPerChar: 1 });
+    buildPayload({ messages, tone: "warm", concept: "group", kind: "group", tokenBudget, tokensPerChar: 1 });
 
   it("5000자 메시지 1건, 예산 1,000: 본문을 잘라 …로 끝내고 transcript에 1건 넣는다", () => {
     const text = "오늘 있었던 일을 길게 적어 볼게 ".repeat(300).slice(0, 5000);
-    const p = group(chat([["P1", kst(2026, 10, 1, 9), text]]), 1000);
+    const p = group(chat([["P2", kst(2026, 10, 1, 8), "먼저 한마디"], ["P1", kst(2026, 10, 1, 9), text]]), 1000);
     expect(p.msgSent).toBe(1);
     expect(validatePayload(p).ok).toBe(true);
     expect(lines(p.transcript).at(-1)).toMatch(/…$/);
@@ -262,10 +266,16 @@ describe("buildPayload: 마지막 메시지 한 줄이 예산보다 길 때", ()
     const tails = ["1".repeat(40), "12-34-56-78-90-12-34-56", " www. 다음 말", " https:// 다음 말"];
     for (const tail of tails) {
       for (let k = 0; k < 30; k++) {
-        const p = group(chat([["P1", kst(2026, 10, 1, 9), "가".repeat(940 + k) + tail + "나".repeat(200)]]), 1000);
+        const p = group(
+          chat([
+            ["P2", kst(2026, 10, 1, 8), "먼저 한마디"],
+            ["P1", kst(2026, 10, 1, 9), "가".repeat(940 + k) + tail + "나".repeat(200)],
+          ]),
+          1000,
+        );
         const r = validatePayload(p);
         expect([tail, k, r.ok ? "ok" : r.error]).toEqual([tail, k, "ok"]);
-        expect(bodies(p.transcript)[0]).toMatch(/…$/);
+        expect(bodies(p.transcript).at(-1)).toMatch(/…$/);
       }
     }
   });
@@ -276,29 +286,31 @@ describe("buildPayload: 마지막 메시지 한 줄이 예산보다 길 때", ()
 });
 
 describe("payloadTokens", () => {
-  it("total = text + 모델에게 보이는 stats(statsForPrompt) JSON 글자 수 × tokensPerChar", () => {
+  it("total = text + 모델에게 보이는 stats(statsForPrompt) JSON + 범례 글자 수 × tokensPerChar", () => {
     const messages = syntheticGroupChat(20, 18);
-    const p = buildPayload({ messages, me: "멤버01", concept: "group", kind: "group", tokenBudget: 5000, tokensPerChar: 1 });
+    const p = buildPayload({ messages, tone: "warm", concept: "group", kind: "group", tokenBudget: 5000, tokensPerChar: 1 });
     const view = JSON.stringify(statsForPrompt(p.stats)).length;
     const text = tokens(p.anchors) + tokens(p.transcript);
+    const legend = legendText(p.members).length + 1;
     expect(view).toBeLessThan(JSON.stringify(p.stats).length);
-    expect(payloadTokens(p, 1)).toEqual({ text, total: text + view });
-    expect(payloadTokens(p, 0.5).total).toBe((text + view) * 0.5);
+    expect(payloadTokens(p, 1)).toEqual({ text, total: text + view + legend });
+    expect(payloadTokens(p, 0.5).total).toBe((text + view + legend) * 0.5);
   });
 });
 
 describe("buildPayloadForBudget", () => {
   const messages = syntheticGroupChat(40, 60);
   const statsChars = JSON.stringify(statsForPrompt(computeStats(messages))).length;
+  const legendChars = legendText([...new Set(messages.flatMap((m) => (m.sender ? [m.sender] : [])))]).length + 1;
   const forBudget = (inputBudget: number, tokensPerChar = 1) =>
-    buildPayloadForBudget({ messages, me: "멤버01", concept: "group", kind: "group", inputBudget, tokensPerChar });
+    buildPayloadForBudget({ messages, tone: "warm", concept: "group", kind: "group", inputBudget, tokensPerChar });
 
   it("40명 × 60개월, 입력 예산 128,000: 통계 요약·프롬프트 몫까지 예산 안이고 transcript가 있다", () => {
     const p = forBudget(128_000);
     const { text, total } = payloadTokens(p, 1);
     expect(total + PROMPT_RESERVE_TOKENS).toBeLessThanOrEqual(128_000);
     expect(total + PROMPT_RESERVE_TOKENS).toBeGreaterThan(128_000 * 0.97);
-    expect(text).toBeLessThanOrEqual(128_000 - PROMPT_RESERVE_TOKENS - statsChars);
+    expect(text).toBeLessThanOrEqual(128_000 - PROMPT_RESERVE_TOKENS - statsChars - legendChars);
     expect(p.msgSent).toBeGreaterThan(0);
     expect(validatePayload(p).ok).toBe(true);
     // 서버의 자리표시자 해석용으로 페이로드에는 전체 stats가 그대로 있다
@@ -313,7 +325,7 @@ describe("buildPayloadForBudget", () => {
   });
 
   it("anchors+transcript 몫이 1,000 미만이면 던진다", () => {
-    const edge = PROMPT_RESERVE_TOKENS + statsChars + 1000;
+    const edge = PROMPT_RESERVE_TOKENS + statsChars + legendChars + 1000;
     expect(payloadTokens(forBudget(edge), 1).text).toBeLessThanOrEqual(1000);
     expect(() => forBudget(edge - 1)).toThrow();
   });
@@ -321,7 +333,7 @@ describe("buildPayloadForBudget", () => {
   it("시스템 메시지뿐이면 buildPayload와 같이 던진다", () => {
     const only = chat([[null, kst(2026, 10, 1, 8), "P1님이 들어왔습니다."]]);
     expect(() =>
-      buildPayloadForBudget({ messages: only, me: "P1", concept: "group", kind: "group", inputBudget: 128_000, tokensPerChar: 1 }),
+      buildPayloadForBudget({ messages: only, tone: "warm", concept: "group", kind: "group", inputBudget: 128_000, tokensPerChar: 1 }),
     ).toThrow("보낼 메시지가 없다");
   });
 });
@@ -343,5 +355,54 @@ describe("payloadIndex", () => {
     const idx = payloadIndex(p);
     expect(idx.size).toBe(ids(p.anchors).length + p.msgSent);
     expect(idx.has("m1")).toBe(true);
+  });
+});
+
+describe("memberCodes·legendText", () => {
+  it("A…Z 다음은 AA(엑셀 열 방식)", () => {
+    const codes = memberCodes(Array.from({ length: 27 }, (_, i) => `P${i}`));
+    expect(codes[0]).toBe("A");
+    expect(codes[25]).toBe("Z");
+    expect(codes[26]).toBe("AA");
+  });
+
+  it("어떤 멤버의 표시 이름과 같은 기호는 대소문자 무시하고 건너뛴다", () => {
+    expect(memberCodes(["민지", "B", "철수"])).toEqual(["A", "C", "D"]);
+    expect(memberCodes(["민지", "b", "철수"])).toEqual(["A", "C", "D"]);
+  });
+
+  it("범례는 한 줄에 기호=표시 이름", () => {
+    expect(legendText(["민지", "a=b"])).toBe("A=민지\nB=a=b");
+  });
+});
+
+describe("payload v2 형식", () => {
+  it("범례 몫: 멤버 300명이어도 total + PROMPT_RESERVE_TOKENS가 입력 예산 안이다", () => {
+    const messages = syntheticGroupChat(300, 3);
+    const inputBudget = 60_000;
+    const p = buildPayloadForBudget({ messages, tone: "fact", concept: "group", kind: "group", inputBudget, tokensPerChar: 1 });
+    expect(p.members.length).toBe(300);
+    expect(payloadTokens(p, 1).total + PROMPT_RESERVE_TOKENS).toBeLessThanOrEqual(inputBudget);
+  });
+
+  it("바이트 상한: 한글 200만 자 대화도 JSON이 MAX_PAYLOAD_BYTES 이하다", () => {
+    const rows: Raw[] = Array.from({ length: 20_000 }, (_, i): Raw => [i % 2 ? "P2" : "P1", kst(2026, 1, 1, 9) + i * MIN, "가".repeat(100)]);
+    const p = buildPayloadForBudget({
+      messages: chat(rows),
+      tone: "fact",
+      concept: "group",
+      kind: "group",
+      inputBudget: 400_000,
+      tokensPerChar: 0.1,
+    });
+    expect(p.msgSent).toBeGreaterThan(1000);
+    expect(new TextEncoder().encode(JSON.stringify(p)).length).toBeLessThanOrEqual(MAX_PAYLOAD_BYTES);
+  });
+
+  it("readBlock: 메시지 줄은 기호와 날짜 헤더를 돌려준다", () => {
+    const [h, m, bad] = readBlock("# 2026-10-01\nm7|09:05|AB|안녕|여기\nm8|09:05|a|x");
+    expect(h).toEqual({ type: "header", date: "2026-10-01" });
+    expect(m).toEqual({ type: "message", ref: "m7", id: 7, time: "09:05", code: "AB", body: "안녕|여기", header: "2026-10-01" });
+    expect(bad).toEqual({ type: "bad" });
   });
 });

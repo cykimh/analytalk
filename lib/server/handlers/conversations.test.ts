@@ -40,7 +40,7 @@ const statusOf = (cookie: string, id: string) => request("GET", `/api/conversati
 function withTextTokens(p: Payload, target: number): Payload {
   const last = p.transcript.split("\n").at(-1)!;
   const [, id, stamp] = /^m(\d+)\|([^|]+)\|/.exec(last)!;
-  const head = `m${Number(id) + 1}|${stamp}|민지|`;
+  const head = `m${Number(id) + 1}|${stamp}|A|`;
   const body = "가".repeat(target - payloadTokens(p, TOKENS_PER_CHAR).text - 1 - head.length);
   return { ...p, transcript: `${p.transcript}\n${head}${body}`, msgSent: p.msgSent + 1 };
 }
@@ -295,7 +295,7 @@ describe("POST /api/conversations", () => {
     h.state.manual = true;
     const first = {
       messages: syntheticGroupChat(40, 60),
-      me: "멤버01",
+      tone: "fact" as const,
       concept: "group" as const,
       kind: "group" as const,
       tokensPerChar: TOKENS_PER_CHAR,

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
 import { DEFAULT_MODEL, PROMPT_STATS_MAX_PEOPLE } from "@/lib/config";
 import type { ChatMessage } from "@/lib/parse/parse";
-import { buildPayload, type Payload } from "@/lib/payload/build";
+import { buildPayload, legendText, type Payload } from "@/lib/payload/build";
 import { STAT_PATHS } from "@/lib/stats/paths";
 import { statsForPrompt } from "@/lib/stats/view";
 import { syntheticGroupChat } from "@/test/syntheticChat";
@@ -20,7 +20,7 @@ function payload(concept: Payload["concept"] = "couple"): Payload {
   const messages: ChatMessage[] = rows.map(([sender, ts, text], id) => ({ id, ts, sender, kind: "text", text, line: id + 1 }));
   return buildPayload({
     messages,
-    me: "민지",
+    tone: "fact",
     concept,
     kind: concept === "couple" ? "pair" : "group",
     tokenBudget: 1_000_000,
@@ -97,25 +97,33 @@ describe("buildRequest", () => {
     }
   });
 
-  it("messages[0]: stats·anchors·conversation 한 블록에 cache_control", () => {
+  it("messages[0]: members·stats·anchors·conversation 한 블록에 cache_control", () => {
     const p = payload();
     const first = buildRequest(p, 1, []).messages[0];
     expect(first.role).toBe("user");
     expect(first.content).toEqual([
       {
         type: "text",
-        text: `<stats>${JSON.stringify(statsForPrompt(p.stats))}</stats><anchors>${p.anchors}</anchors><conversation>${p.transcript}</conversation>`,
+        text: `<members>${legendText(p.members)}</members><stats>${JSON.stringify(statsForPrompt(p.stats))}</stats><anchors>${p.anchors}</anchors><conversation>${p.transcript}</conversation>`,
         cache_control: { type: "ephemeral" },
       },
     ]);
   });
 
+  it("데이터 블록은 <members>(범례)로 시작해 <stats>·<anchors>·<conversation> 순이다", () => {
+    const data = text(buildRequest(payload(), 1, []).messages[0].content);
+    expect(data.startsWith("<members>A=")).toBe(true);
+    const at = ["<members>", "<stats>", "<anchors>", "<conversation>"].map((tag) => data.indexOf(tag));
+    expect(at).toEqual([...at].sort((a, b) => a - b));
+    expect(at.every((i) => i >= 0)).toBe(true);
+  });
+
   it("40명 × 60개월: 데이터 블록의 stats는 요약(dailyCounts 없음, 사람 12명 이하)이고 편 지시가 그 사실을 알린다", () => {
     const messages = syntheticGroupChat(40, 60);
-    const p = buildPayload({ messages, me: "멤버01", concept: "group", kind: "group", tokenBudget: 20_000, tokensPerChar: 1 });
+    const p = buildPayload({ messages, tone: "fact", concept: "group", kind: "group", tokenBudget: 20_000, tokensPerChar: 1 });
     const req = buildRequest(p, 2, []);
     const data = text(req.messages[0].content);
-    const stats = JSON.parse(/^<stats>(.*?)<\/stats>/.exec(data)![1]);
+    const stats = JSON.parse(/<stats>(.*?)<\/stats>/.exec(data)![1]);
     expect(stats).not.toHaveProperty("dailyCounts");
     expect(Object.keys(stats.byPerson).length).toBeLessThanOrEqual(PROMPT_STATS_MAX_PEOPLE);
     expect(Object.keys(stats.monthly)).toHaveLength(12);
@@ -148,7 +156,8 @@ describe("buildRequest", () => {
     expect(body).toContain("1편: 첫 헤드라인");
     // 줄바꿈이 든 헤드라인은 한 줄로 편다
     expect(body).toContain("2편: 둘째 헤드라인");
-    expect(body).toContain("민지");
+    expect(body).toContain("참여자 2명(<members>의 범례)");
+    expect(body).not.toContain("업로더(나)");
     const last = text(buildRequest(p, 4, []).messages[1].content);
     expect(last).toContain("next_teaser는 null");
   });

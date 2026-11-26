@@ -1,6 +1,6 @@
 // 업로드 흐름의 순수 로직(화면 상태 → 이름 맵·확인 문구). DOM 없이 테스트한다.
 import { ANCHOR_FIRST_N } from "@/lib/config";
-import { type Payload, readBlock } from "@/lib/payload/build";
+import { legendText, type Payload, readBlock } from "@/lib/payload/build";
 import { applyDisplayNames, type NameError, type NameMap } from "@/lib/payload/names";
 import type { ChatMessage, ParseResult } from "@/lib/parse/parse";
 
@@ -97,6 +97,7 @@ export interface SendSummary {
   first: number;
   busy: number;
   masked: number;
+  /** 범례 줄들 다음에 transcript 앞 20줄 */
   preview: string[];
 }
 
@@ -122,6 +123,6 @@ export function sendSummary(p: Payload, messages: ChatMessage[]): SendSummary {
     first,
     busy,
     masked: Object.values(p.maskCounts).reduce((a, b) => a + b, 0),
-    preview: p.transcript.split("\n").slice(0, 20),
+    preview: [...legendText(p.members).split("\n"), ...p.transcript.split("\n").slice(0, 20)],
   };
 }

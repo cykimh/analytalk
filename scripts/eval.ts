@@ -344,11 +344,11 @@ async function main(): Promise<void> {
   for (const f of files) {
     const parsed = parseExport(await readUploads([new File([readFileSync(join(dir, f.path))], basename(f.path))]));
     if (parsed.formatId === null) throw new Error(`형식을 알아보지 못한 파일이 있다(${f.concept} ${counter[f.concept] + 1}번째)`);
-    const { map, me } = autoNames(parsed);
+    const { map } = autoNames(parsed);
     const named = applyDisplayNames(parsed.messages, map, parsed.systemNames);
     if (!named.ok) throw new Error(`이름 부여 실패: ${named.reason}`);
     const label = `${f.concept}-${++counter[f.concept]}${f.injection ? "-injection" : ""}`;
-    const payload = measurePayload(named.messages, me, f.concept);
+    const payload = measurePayload(named.messages, f.concept);
     prepared.push({ label, file: f, payload });
     const { msgTotal, msgSent } = payload;
     const tokens = payloadTokens(payload, TOKENS_PER_CHAR).total;

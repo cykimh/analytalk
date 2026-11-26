@@ -5,6 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { SESSION_COOKIE } from "@/lib/config";
 import { hashCode } from "@/lib/invite/code";
 import { signSession } from "@/lib/invite/session";
+import type { Tone } from "@/lib/llm/concepts";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { buildPayload, type Payload } from "@/lib/payload/build";
 import { handleInternalEpisode } from "@/lib/server/handlers/internal";
@@ -124,7 +125,7 @@ export function fakeAnthropic(reply: (n: number, call: number) => Reply, counted
 const kst = (d: number, h: number, mi: number) => Date.UTC(2026, 9, d, h, mi) - 9 * 3_600_000;
 
 /** 2026-10-01~03 저녁마다 철수·민지가 주고받는 1:1 대화. variant가 다르면 마지막 줄이 달라 해시도 다르다 */
-export function makePayload(variant = 0): Payload {
+export function makePayload(variant = 0, tone: Tone = "fact"): Payload {
   const rows: [string, number, string][] = [];
   for (let d = 1; d <= 3; d++) {
     rows.push(
@@ -136,7 +137,7 @@ export function makePayload(variant = 0): Payload {
   }
   rows.push(["민지", kst(3, 21, 0), `잘 자 ${"ㅎ".repeat(variant + 1)}`]);
   const messages: ChatMessage[] = rows.map(([sender, ts, text], id) => ({ id, ts, sender, kind: "text", text, line: id + 1 }));
-  return buildPayload({ messages, me: "민지", concept: "couple", kind: "pair", tokenBudget: 100_000, tokensPerChar: 1 });
+  return buildPayload({ messages, tone, concept: "couple", kind: "pair", tokenBudget: 100_000, tokensPerChar: 1 });
 }
 
 const section = (title: string) => ({

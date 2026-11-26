@@ -2,7 +2,7 @@
 
 // 편 생성 (서버)
 export const EPISODE_DEADLINE_MS = 270_000; // 편당 마감 (maxDuration = 300)
-export const MAX_PAYLOAD_BYTES = 1_500_000; // 페이로드 상한 1.5MB
+export const MAX_PAYLOAD_BYTES = 4_000_000; // 페이로드 상한 4MB
 export const TOKENS_PER_CHAR = 1.0;
 /** 모델별 입력 예산(토큰). 표 밖의 모델은 FALLBACK. 서버의 INPUT_TOKEN_BUDGET env가 이 값을 덮어쓴다 */
 export const INPUT_TOKEN_BUDGET_BY_MODEL: readonly (readonly [string, number])[] = [

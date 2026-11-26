@@ -1,18 +1,19 @@
 // AI용 페이로드를 만들고 읽는다. 이름 정리(applyDisplayNames)를 거친 메시지만 받는다. DOM 없이 브라우저(Worker)·node 공용.
-// 줄 형식(KST): 날짜가 바뀌면 `# YYYY-MM-DD`, 메시지는 `m<id>|MM-DD HH:mm|<표시이름>|<본문>`
-import { ANCHOR_BUDGET_SHARE, ANCHOR_BUSY_DAYS, ANCHOR_FIRST_N, PROMPT_RESERVE_TOKENS } from "@/lib/config";
+// 줄 형식(KST): 날짜가 바뀌면 `# YYYY-MM-DD`, 메시지는 `m<id>|HH:mm|<기호>|<본문>`. 기호(A, B, … AA)는 범례(legendText)로 표시 이름과 짝지어진다
+import { ANCHOR_BUDGET_SHARE, ANCHOR_BUSY_DAYS, ANCHOR_FIRST_N, MAX_PAYLOAD_BYTES, PROMPT_RESERVE_TOKENS } from "@/lib/config";
+import type { Tone } from "@/lib/llm/concepts";
 import type { ChatMessage, MsgKind } from "@/lib/parse/parse";
 import { type ChatStats, computeStats } from "@/lib/stats/compute";
 import { statsForPrompt } from "@/lib/stats/view";
 import { type MaskCounts, type MaskKind, maskPII } from "./mask";
 
 export interface Payload {
-  v: 1;
+  v: 2;
   concept: "group" | "couple";
   kind: "pair" | "group" | "work";
-  /** 업로더 본인의 표시 이름 */
-  me: string;
-  /** 발신자 표시 이름(처음 나온 순서) */
+  /** 리포트 말투 */
+  tone: Tone;
+  /** 분석에 넣은 발신자 표시 이름(처음 나온 순서, 2명 이상). 줄 안의 기호는 이 순서의 memberCodes다 */
   members: string[];
   /** 첫·마지막 메시지의 KST 날짜 YYYY-MM-DD */
   period: { start: string; end: string };
@@ -35,13 +36,13 @@ export interface Payload {
   maskCounts: Record<string, number>;
 }
 
-const MESSAGE_LINE = /^m(\d+)\|(\d{2}-\d{2}) (\d{2}:\d{2})\|([^|\n]{1,20})\|(.*)$/u;
+const MESSAGE_LINE = /^m(\d+)\|(\d{2}:\d{2})\|([A-Z]{1,3})\|(.*)$/u;
 const DAY_HEADER = /^# (\d{4}-\d{2}-\d{2})$/;
 
 /** message의 header는 이 줄 앞의 가장 가까운 날짜 헤더(YYYY-MM-DD)이고, 없으면 null이다 */
 export type BlockLine =
   | { type: "header"; date: string }
-  | { type: "message"; ref: string; id: number; mmdd: string; time: string; sender: string; body: string; header: string | null }
+  | { type: "message"; ref: string; id: number; time: string; code: string; body: string; header: string | null }
   | { type: "bad" };
 
 /** anchors·transcript 한 덩어리를 줄 단위로 읽는다. 빈 문자열은 줄 0개 */
@@ -56,17 +57,42 @@ export function readBlock(block: string): BlockLine[] {
     }
     const m = MESSAGE_LINE.exec(line);
     if (!m) return { type: "bad" };
-    return { type: "message", ref: `m${m[1]}`, id: Number(m[1]), mmdd: m[2], time: m[3], sender: m[4], body: m[5], header };
+    return { type: "message", ref: `m${m[1]}`, id: Number(m[1]), time: m[2], code: m[3], body: m[4], header };
   });
 }
 
-/** msg_id → 보낸 줄의 발신자·시각(날짜 헤더의 연도를 이어받은 ISO +09:00)·본문. validatePayload를 통과한 페이로드용 */
+/**
+ * members 순서대로 A…Z, AA…(엑셀 열 방식)인 기호. 어떤 멤버의 표시 이름과 같은 기호(대소문자 무시)는 건너뛴다
+ * (줄 안의 기호와 이름이 헷갈리지 않게)
+ */
+export function memberCodes(members: string[]): string[] {
+  const taken = new Set(members.map((n) => n.toUpperCase()));
+  const codes: string[] = [];
+  let n = 0;
+  while (codes.length < members.length) {
+    n++;
+    let code = "";
+    for (let k = n; k > 0; k = Math.floor((k - 1) / 26)) code = String.fromCharCode(65 + ((k - 1) % 26)) + code;
+    if (!taken.has(code)) codes.push(code);
+  }
+  return codes;
+}
+
+/** 한 줄에 `기호=표시 이름`, members 순서, "\n"으로 잇는다 */
+export function legendText(members: string[]): string {
+  const codes = memberCodes(members);
+  return members.map((name, i) => `${codes[i]}=${name}`).join("\n");
+}
+
+/** msg_id → 보낸 줄의 발신자(표시 이름)·시각(날짜 헤더 + 줄의 시각, ISO +09:00)·본문. 범례에 없는 기호의 줄은 뺀다. validatePayload를 통과한 페이로드용 */
 export function payloadIndex(p: Payload): Map<string, { sender: string; at: string; text: string }> {
+  const codes = memberCodes(p.members);
   const index = new Map<string, { sender: string; at: string; text: string }>();
   for (const line of [...readBlock(p.anchors), ...readBlock(p.transcript)]) {
     if (line.type !== "message" || line.header === null) continue;
-    const at = `${line.header.slice(0, 4)}-${line.mmdd}T${line.time}:00+09:00`;
-    index.set(line.ref, { sender: line.sender, at, text: line.body });
+    const who = codes.indexOf(line.code);
+    if (who < 0) continue;
+    index.set(line.ref, { sender: p.members[who], at: `${line.header}T${line.time}:00+09:00`, text: line.body });
   }
   return index;
 }
@@ -81,14 +107,14 @@ const promptStatsTokens = (stats: ChatStats, tokensPerChar: number) =>
 /**
  * 페이로드의 추정 토큰(글자 수 × tokensPerChar).
  * - text: anchors + transcript. buildPayload가 tokenBudget 안으로 맞추는 몫이다
- * - total: text + 모델에게 보이는 stats(statsForPrompt). system 프롬프트와 편별 지시는 들어 있지 않다
+ * - total: text + 모델에게 보이는 stats(statsForPrompt) + 범례(legendText). system 프롬프트와 지시는 들어 있지 않다
  */
 export function payloadTokens(
-  p: Pick<Payload, "stats" | "anchors" | "transcript">,
+  p: Pick<Payload, "stats" | "anchors" | "transcript" | "members">,
   tokensPerChar: number,
 ): { text: number; total: number } {
   const text = blockTokens(p.anchors, tokensPerChar) + blockTokens(p.transcript, tokensPerChar);
-  return { text, total: text + promptStatsTokens(p.stats, tokensPerChar) };
+  return { text, total: text + promptStatsTokens(p.stats, tokensPerChar) + blockTokens(legendText(p.members), tokensPerChar) };
 }
 
 const MEDIA: Record<Exclude<MsgKind, "text">, string> = {
@@ -117,14 +143,14 @@ function kst(ts: number): { day: string; time: string; iso: string } {
 type ChatLine = ChatMessage & { sender: string };
 interface Rendered {
   day: string;
-  /** 줄 머리 `m<id>|MM-DD HH:mm|<표시이름>|`. line = head + 본문 */
+  /** 줄 머리 `m<id>|HH:mm|<기호>|`. line = head + 본문 */
   head: string;
   line: string;
   masked: MaskCounts | null;
 }
 
 /** 미디어는 표시로, 나머지는 줄바꿈·꺾쇠를 바꾼 뒤 개인정보를 가린다 */
-function render(m: ChatLine): Rendered {
+function render(m: ChatLine, code: string): Rendered {
   const { day, time } = kst(m.ts);
   let body: string;
   let masked: MaskCounts | null = null;
@@ -134,7 +160,7 @@ function render(m: ChatLine): Rendered {
     body = r.text;
     masked = r.counts;
   }
-  const head = `m${m.id}|${day.slice(5)} ${time}|${m.sender}|`;
+  const head = `m${m.id}|${time}|${code}|`;
   return { day, head, line: head + body, masked };
 }
 
@@ -163,11 +189,11 @@ function joinBlock(items: Rendered[]): string {
   return out.join("\n");
 }
 
-type BuildInput = {
+export type BuildInput = {
   messages: ChatMessage[];
-  me: string;
   concept: Payload["concept"];
   kind: Payload["kind"];
+  tone: Tone;
   tokenBudget: number;
   tokensPerChar: number;
   /** anchors가 tokenBudget에서 쓸 수 있는 비율. 기본 ANCHOR_BUDGET_SHARE */
@@ -200,25 +226,33 @@ export function buildPayload(input: BuildInput): Payload {
 }
 
 /**
- * 입력 예산 전체(inputBudget)에서 PROMPT_RESERVE_TOKENS와 모델에게 보이는 stats(statsForPrompt) 몫을 빼고,
- * 남은 몫을 tokenBudget으로 buildPayload와 같이 만든다(stats는 한 번만 센다). 남은 몫이 1,000 미만이면 던진다
+ * 입력 예산 전체(inputBudget)에서 PROMPT_RESERVE_TOKENS·모델에게 보이는 stats(statsForPrompt)·범례 몫을 빼고,
+ * 남은 몫을 tokenBudget으로 buildPayload와 같이 만든다(stats는 한 번만 센다). 페이로드 JSON이 MAX_PAYLOAD_BYTES의 90%를
+ * 넘지 않게 글자 수도 제한한다(글자당 최대 3바이트로 어림). 남은 몫이 1,000 미만이면 던진다
  */
 export function buildPayloadForBudget(input: Omit<BuildInput, "tokenBudget"> & { inputBudget: number }): Payload {
   const { inputBudget, ...rest } = input;
   const chat = chatLines(rest.messages);
   const stats = computeStats(chat);
-  const tokenBudget = inputBudget - PROMPT_RESERVE_TOKENS - promptStatsTokens(stats, rest.tokensPerChar);
-  if (tokenBudget < MIN_TEXT_BUDGET) throw new Error("입력 예산이 모자라다: 통계·프롬프트 몫을 빼면 대화에 쓸 몫이 1,000 미만이다");
+  const { tokensPerChar } = rest;
+  const legend = blockTokens(legendText([...new Set(chat.map((m) => m.sender))]), tokensPerChar);
+  const byInput = inputBudget - PROMPT_RESERVE_TOKENS - promptStatsTokens(stats, tokensPerChar) - legend;
+  const statsBytes = new TextEncoder().encode(JSON.stringify(stats)).length;
+  const byBytes = Math.floor((MAX_PAYLOAD_BYTES * 0.9 - statsBytes) / 3) * tokensPerChar;
+  const tokenBudget = Math.min(byInput, byBytes);
+  if (tokenBudget < MIN_TEXT_BUDGET) throw new Error("입력 예산이 모자라다: 통계·범례·프롬프트 몫을 빼면 대화에 쓸 몫이 1,000 미만이다");
   return assemble(chat, stats, { ...rest, tokenBudget });
 }
 
 function assemble(chat: ChatLine[], stats: ChatStats, input: BuildInput): Payload {
-  const { me, concept, kind, tokenBudget, tokensPerChar, anchorShare = ANCHOR_BUDGET_SHARE } = input;
+  const { concept, kind, tone, tokenBudget, tokensPerChar, anchorShare = ANCHOR_BUDGET_SHARE } = input;
+  const members = [...new Set(chat.map((m) => m.sender))];
+  const codes = new Map(memberCodes(members).map((c, i) => [members[i], c]));
 
   const cache = new Map<number, Rendered>();
   const rendered = (i: number): Rendered => {
     let r = cache.get(i);
-    if (!r) cache.set(i, (r = render(chat[i])));
+    if (!r) cache.set(i, (r = render(chat[i], codes.get(chat[i].sender)!)));
     return r;
   };
   const lineCost = (r: Rendered) => (r.line.length + 1) * tokensPerChar;
@@ -324,11 +358,11 @@ function assemble(chat: ChatLine[], stats: ChatStats, input: BuildInput): Payloa
     if (m.ts > last) last = m.ts;
   }
   return {
-    v: 1,
+    v: 2,
     concept,
     kind,
-    me,
-    members: [...new Set(chat.map((m) => m.sender))],
+    tone,
+    members,
     period: { start: kst(first).day, end: kst(last).day },
     cutoffAt: kst(chat[start].ts).iso,
     msgTotal: stats.total,

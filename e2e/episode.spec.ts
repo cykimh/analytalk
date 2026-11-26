@@ -1,4 +1,6 @@
 import { type BrowserContext, expect, type Page, test } from "@playwright/test";
+import { PROMPT_RESERVE_TOKENS, TOKENS_PER_CHAR } from "@/lib/config";
+import { type Payload, payloadTokens } from "@/lib/payload/build";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { computeStats } from "@/lib/stats/compute";
 import { androidChat, expectNoHorizontalScroll, fakeTurnstile, login, textUpload } from "./helpers";
@@ -7,6 +9,8 @@ import { androidChat, expectNoHorizontalScroll, fakeTurnstile, login, textUpload
 // 페이지(서버 컴포넌트)의 초대 코드 확인만 진짜 세션을 쓴다.
 
 const ID = "0b6c3f1e-2a4d-4c5b-9e8f-7a6b5c4d3e2f";
+/** 413 응답의 maxTokens. 입력 예산 − 프롬프트 몫 − 통계·범례 몫이 1,000 이상 남는 값이다 */
+const MAX_TOKENS_413 = 12_000;
 const XSS = "<img src=x onerror=alert(1)>";
 /** android-ko 픽스처의 원래 발신자 이름("민지, 수아" 포함)과 초대 알림의 이름 */
 const ORIGINAL_NAMES = ["민지", "철수", "수아", "영희"];
@@ -151,7 +155,7 @@ async function fakeCreate(page: Page, replies: (202 | 413)[] = [202]) {
   await page.route("**/api/conversations", (route) => {
     posts.push(route.request().postDataJSON());
     return replies.shift() === 413
-      ? route.fulfill({ status: 413, json: { maxTokens: 200 } })
+      ? route.fulfill({ status: 413, json: { maxTokens: MAX_TOKENS_413 } })
       : route.fulfill({ status: 202, json: { id: ID } });
   });
   return posts;
@@ -178,7 +182,7 @@ async function toReview(page: Page) {
 }
 
 /** 화면이 보내는 페이로드 중 모델·서버가 보는 부분 */
-const sentParts = (p: Record<string, unknown>) => [p.transcript, p.anchors, JSON.stringify(p.stats), JSON.stringify(p.members), p.me];
+const sentParts = (p: Record<string, unknown>) => [p.transcript, p.anchors, JSON.stringify(p.stats), JSON.stringify(p.members)];
 
 test.describe("AI 연재", () => {
   test.beforeEach(async ({ page }) => {
@@ -186,7 +190,7 @@ test.describe("AI 연재", () => {
     await login(page);
   });
 
-  test("[AI 연재 만들기]: POST 본문(transcript·anchors·stats·members·me)에 원래 발신자 이름이 없고, 받으면 진행 화면으로 간다", async ({
+  test("[AI 연재 만들기]: POST 본문(transcript·anchors·stats·members)에 원래 발신자 이름이 없고, 받으면 진행 화면으로 간다", async ({
     page,
     context,
   }) => {
@@ -198,7 +202,9 @@ test.describe("AI 연재", () => {
 
     expect(posts).toHaveLength(1);
     const body = posts[0];
-    expect(body.me).toBe("멤버1");
+    expect(body.v).toBe(2);
+    expect(body.tone).toBe("fact");
+    expect("me" in body).toBe(false);
     expect(body.members).toEqual(expect.arrayContaining(["멤버1", "멤버2"]));
     expect(String(body.transcript).length).toBeGreaterThan(0);
     for (const name of ORIGINAL_NAMES) {
@@ -239,10 +245,9 @@ test.describe("AI 연재", () => {
     await expect(page).toHaveURL(`/c/${ID}/steps`);
     expect(posts).toHaveLength(4);
     expect(posts[2]).toEqual(posts[0]);
-    const textTokens = (p: Record<string, unknown>) =>
-      (p.anchors === "" ? 0 : String(p.anchors).length + 1) + String(p.transcript).length + 1;
-    expect(textTokens(posts[0])).toBeGreaterThan(200);
-    expect(textTokens(posts[3])).toBeLessThanOrEqual(Math.floor(200 * 0.95));
+    // 다시 만든 페이로드는 maxTokens × 0.95 안이다(통계·범례·프롬프트 몫 포함)
+    const total = (p: Record<string, unknown>) => payloadTokens(p as unknown as Payload, TOKENS_PER_CHAR).total + PROMPT_RESERVE_TOKENS;
+    expect(total(posts[3])).toBeLessThanOrEqual(Math.floor(MAX_TOKENS_413 * 0.95));
     expect(posts[3].stats).toEqual(posts[0].stats);
   });
 

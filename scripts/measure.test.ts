@@ -41,11 +41,10 @@ describe("parseArgs", () => {
 });
 
 describe("autoNames", () => {
-  it("발신자와 알림 속 이름에 P1…을 처음 나온 순서로 준다. 업로더(me)는 P1", () => {
+  it("발신자와 알림 속 이름에 P1…을 처음 나온 순서로 준다", () => {
     const msgs = [{ sender: "철수" }, { sender: "영희" }, { sender: "철수" }, { sender: null }] as ChatMessage[];
     const r = autoNames({ participants: ["철수", "영희"], systemNames: ["영희", "민수"], messages: msgs });
     expect(r.map).toEqual({ 철수: "P1", 영희: "P2", 민수: "P3" });
-    expect(r.me).toBe("P1");
   });
 });
 
@@ -53,14 +52,14 @@ describe("measurePayload", () => {
   const messages = syntheticGroupChat(40, 60);
 
   it("통계 요약과 프롬프트 몫까지 입력 예산 안에 들고, transcript가 있다", () => {
-    const p = measurePayload(messages, "멤버01", "group");
+    const p = measurePayload(messages, "group");
     expect(payloadTokens(p, TOKENS_PER_CHAR).total + PROMPT_RESERVE_TOKENS).toBeLessThanOrEqual(FALLBACK_INPUT_TOKEN_BUDGET);
     expect(p.msgSent).toBeGreaterThan(0);
-    expect(p).toMatchObject({ me: "멤버01", concept: "group", kind: "group" });
+    expect(p).toMatchObject({ v: 2, tone: "fact", concept: "group", kind: "group" });
   });
 
   it("couple 컨셉은 kind pair", () => {
-    expect(measurePayload(messages, "멤버01", "couple")).toMatchObject({ concept: "couple", kind: "pair" });
+    expect(measurePayload(messages, "couple")).toMatchObject({ concept: "couple", kind: "pair" });
   });
 });
 
@@ -170,7 +169,7 @@ describe("measureRun", () => {
   it("1편 스트림 시작에서 2~4편이 출발하고, 편별 수치와 validate 결과를 모은다", async () => {
     const { fetch, calls } = fakeFetch();
     const client = new Anthropic({ apiKey: "test", fetch: fetch as typeof globalThis.fetch, maxRetries: 0 });
-    const payload = buildPayload({ messages: msgs, me: "P1", concept: "group", kind: "group", tokenBudget: 10_000, tokensPerChar: 1 });
+    const payload = buildPayload({ messages: msgs, tone: "fact", concept: "group", kind: "group", tokenBudget: 10_000, tokensPerChar: 1 });
     let t = 0;
     const r = await measureRun(client, payload, { now: () => (t += 100) });
 
@@ -190,7 +189,7 @@ describe("measureTokens", () => {
   it("system + 데이터 메시지만 countTokens로 보내고 글자 수를 함께 돌려준다", async () => {
     const { fetch, calls } = fakeFetch();
     const client = new Anthropic({ apiKey: "test", fetch: fetch as typeof globalThis.fetch, maxRetries: 0 });
-    const payload = buildPayload({ messages: msgs, me: "P1", concept: "group", kind: "group", tokenBudget: 10_000, tokensPerChar: 1 });
+    const payload = buildPayload({ messages: msgs, tone: "fact", concept: "group", kind: "group", tokenBudget: 10_000, tokensPerChar: 1 });
     const r = await measureTokens(client, payload);
     expect(calls.count).toBe(1);
     expect(r.inputTokens).toBe(5000);

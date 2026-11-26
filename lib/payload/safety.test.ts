@@ -66,7 +66,7 @@ describe("sentSafetySignal (보낼 메시지만 본다)", () => {
   it("페이로드에 실리지 않은 메시지(최근 구간·발췌 밖)의 신호는 보지 않는다", () => {
     const messages = rows(Array.from({ length: 300 }, (_, i) => (i === 150 ? "어제 자해 했어" : `평범한 이야기 ${i}`)));
     // 최근 구간만 실리는 작은 예산
-    const p = buildPayload({ messages, me: "P1", concept: "couple", kind: "pair", tokenBudget: 2000, tokensPerChar: 1 });
+    const p = buildPayload({ messages, tone: "fact", concept: "couple", kind: "pair", tokenBudget: 2000, tokensPerChar: 1 });
     expect(payloadIndex(p).has("m150")).toBe(false);
     expect(safetySignal(messages)).toBe("self_harm");
     expect(sentSafetySignal(p, messages)).toBeNull();
@@ -74,7 +74,7 @@ describe("sentSafetySignal (보낼 메시지만 본다)", () => {
 
   it("실린 메시지에 신호가 있으면 알린다", () => {
     const messages = rows(["밥 먹었어?", "어제 자해 했어"]);
-    const p = buildPayload({ messages, me: "P1", concept: "couple", kind: "pair", tokenBudget: 100_000, tokensPerChar: 1 });
+    const p = buildPayload({ messages, tone: "fact", concept: "couple", kind: "pair", tokenBudget: 100_000, tokensPerChar: 1 });
     expect(sentSafetySignal(p, messages)).toBe("self_harm");
   });
 });

@@ -12,8 +12,14 @@ interface Stored {
   payload: Payload;
 }
 
+/** 배포 전에 저장한 v1 페이로드는 형식이 다른 것으로 본다(다시 올려야 한다) */
 const isStored = (v: unknown): v is Stored =>
-  typeof v === "object" && v !== null && typeof (v as Stored).savedAt === "number" && typeof (v as Stored).payload === "object";
+  typeof v === "object" &&
+  v !== null &&
+  typeof (v as Stored).savedAt === "number" &&
+  typeof (v as Stored).payload === "object" &&
+  (v as Stored).payload !== null &&
+  (v as Stored).payload.v === 2;
 /** 형식이 맞고 저장한 지 24시간이 지나지 않았다 */
 const isFresh = (v: unknown): v is Stored => isStored(v) && Date.now() - v.savedAt <= TTL_MS;
 

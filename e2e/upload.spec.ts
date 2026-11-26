@@ -114,7 +114,7 @@ test.describe("업로드 흐름", () => {
     await expect(page.getByRole("heading", { name: "대화 통계" })).toBeVisible();
     await page.getByRole("button", { name: "보낼 내용 확인" }).click();
     await page.getByText("미리보기 20줄").click();
-    await expect(page.getByText(/\|멤버2\|멤버1수 왔어$/)).toBeVisible();
+    await expect(page.getByText(/\|[A-Z]\|멤버1수 왔어$/)).toBeVisible();
     await expect(page.getByText(/민지수/)).toHaveCount(0);
   });
 

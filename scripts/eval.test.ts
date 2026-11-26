@@ -74,7 +74,7 @@ const msgs: ChatMessage[] = Array.from({ length: 6 }, (_, i) => ({
   text: "안녕 오늘 뭐해",
   line: i + 1,
 }));
-const payload = buildPayload({ messages: msgs, me: "P1", concept: "group", kind: "group", tokenBudget: 10_000, tokensPerChar: 1 });
+const payload = buildPayload({ messages: msgs, tone: "fact", concept: "group", kind: "group", tokenBudget: 10_000, tokensPerChar: 1 });
 const firstId = [...payloadIndex(payload).keys()][0];
 
 /** 문단 2개(하나는 '~것 같다' 금지 표현), 근거 2개(하나는 본문에 없는 인용) */

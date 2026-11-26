@@ -13,7 +13,7 @@ afterEach(() => vi.unstubAllEnvs());
 describe("config", () => {
   it("PRD 수치를 그대로 쓴다", () => {
     expect(EPISODE_DEADLINE_MS).toBe(270_000);
-    expect(MAX_PAYLOAD_BYTES).toBe(1_500_000);
+    expect(MAX_PAYLOAD_BYTES).toBe(4_000_000);
     expect(WEEKLY_CAP_USD).toBe(22.5);
     expect(DEFAULT_MODEL).toBe("claude-opus-5-5");
   });

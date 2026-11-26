@@ -19,6 +19,7 @@ import {
   retryBuildInput,
 } from "@/lib/client/worker";
 import { TOKENS_PER_CHAR } from "@/lib/config";
+import { DEFAULT_TONE } from "@/lib/llm/concepts";
 import type { Payload } from "@/lib/payload/build";
 import { sentSafetySignal } from "@/lib/payload/safety";
 import type { ParseResult } from "@/lib/parse/parse";
@@ -139,9 +140,9 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
       }
       const input = {
         messages: r.messages,
-        me: map[me],
         concept: conceptFor(kind),
         kind,
+        tone: DEFAULT_TONE,
         tokensPerChar: TOKENS_PER_CHAR,
         inputBudget,
       };
@@ -235,7 +236,7 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
           </Button>
         }
       >
-        <StatsDashboard stats={built.payload.stats} kind={built.payload.kind} me={built.payload.me} />
+        <StatsDashboard stats={built.payload.stats} kind={built.payload.kind} me={me ? map[me] : built.payload.members[0]} />
       </StepFrame>
     );
   } else if (step === "review" && built && renamed) {

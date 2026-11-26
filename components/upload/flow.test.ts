@@ -101,19 +101,20 @@ describe("sendSummary", () => {
   });
   // id 5가 시스템 메시지라 첫 대화 100개는 id 0~4, 6~100이다
   const messages = Array.from({ length: 130 }, (_, id) => chat(id, id === 5 ? "system" : "text"));
-  const transcript = ["# 2024-03-15", ...Array.from({ length: 24 }, (_, i) => `m${106 + i}|03-15 09:00|P1|줄 ${i}`)].join("\n");
+  const transcript = ["# 2024-03-15", ...Array.from({ length: 24 }, (_, i) => `m${106 + i}|09:00|A|줄 ${i}`)].join("\n");
   const payload = {
+    members: ["P1", "P2"],
     cutoffAt: "2024-03-15T09:00:00+09:00",
     msgSent: 24,
-    anchors: ["# 2024-03-14", "m0|03-14 00:05|P1|첫", "m100|03-14 00:06|P1|백", "# 2024-03-15", "m101|03-15 08:00|P1|활발"].join("\n"),
+    anchors: ["# 2024-03-14", "m0|00:05|A|첫", "m100|00:06|A|백", "# 2024-03-15", "m101|08:00|A|활발"].join("\n"),
     transcript,
     maskCounts: { phone: 1, email: 0, account: 0, rrn: 0, url: 2 },
   } as unknown as Payload;
 
-  it("보낼 범위·가린 수·미리보기 20줄", () => {
+  it("보낼 범위·가린 수·미리보기(범례 다음 20줄)", () => {
     const s = sendSummary(payload, messages);
     expect(s).toMatchObject({ since: "2024-03-15", sent: 24, first: 2, busy: 1, masked: 3 });
-    expect(s.preview).toEqual(transcript.split("\n").slice(0, 20));
+    expect(s.preview).toEqual(["A=P1", "B=P2", ...transcript.split("\n").slice(0, 20)]);
   });
 
   it("anchors가 비면(대화 전체가 transcript) 첫 대화·활발한 날은 0", () => {

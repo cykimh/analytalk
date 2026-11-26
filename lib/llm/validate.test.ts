@@ -20,7 +20,7 @@ function fixture(other = "철수", me = "민지") {
     );
   }
   const messages: ChatMessage[] = rows.map(([sender, ts, text], id) => ({ id, ts, sender, kind: "text", text, line: id + 1 }));
-  const p = buildPayload({ messages, me, concept: "couple", kind: "pair", tokenBudget: 1_000_000, tokensPerChar: 1 });
+  const p = buildPayload({ messages, tone: "fact", concept: "couple", kind: "pair", tokenBudget: 1_000_000, tokensPerChar: 1 });
   return { idx: payloadIndex(p), stats: p.stats };
 }
 const { idx, stats } = fixture();

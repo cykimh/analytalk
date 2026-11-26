@@ -17,7 +17,7 @@ function fixture() {
     rows.push(["철수", kst(d, 20, 0), d === 1 ? "오늘 뭐해?" : "오늘도 수고했어"], ["민지", kst(d, 20, 4), "집에서 쉬는 중"]);
   }
   const messages: ChatMessage[] = rows.map(([sender, ts, text], id) => ({ id, ts, sender, kind: "text", text, line: id + 1 }));
-  const p = buildPayload({ messages, me: "민지", concept: "couple", kind: "pair", tokenBudget: 1_000_000, tokensPerChar: 1 });
+  const p = buildPayload({ messages, tone: "fact", concept: "couple", kind: "pair", tokenBudget: 1_000_000, tokensPerChar: 1 });
   return { idx: payloadIndex(p), stats: p.stats };
 }
 const { idx, stats } = fixture();

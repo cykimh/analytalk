@@ -87,7 +87,7 @@ describe("runOp rename", () => {
 
 describe("runOp build", () => {
   const messages = [msg(0, "P1", "안녕"), msg(1, "P2", "반가워"), msg(2, null, "P3님이 나갔습니다.")];
-  const base = { messages, me: "P1", concept: "couple" as const, kind: "pair" as const, tokensPerChar: TOKENS_PER_CHAR };
+  const base = { messages, tone: "fact" as const, concept: "couple" as const, kind: "pair" as const, tokensPerChar: TOKENS_PER_CHAR };
 
   it("inputBudget이면 buildPayloadForBudget, tokenBudget이면 buildPayload", async () => {
     expect(await runOp({ op: "build", input: { ...base, inputBudget: FALLBACK_INPUT_TOKEN_BUDGET } })).toEqual(
@@ -107,7 +107,7 @@ describe("handleMessage", () => {
     const failed = await handleMessage({
       id: 8,
       op: "build",
-      input: { messages: [], me: "P1", concept: "group", kind: "group", tokensPerChar: 1, tokenBudget: 100 },
+      input: { messages: [], tone: "fact", concept: "group", kind: "group", tokensPerChar: 1, tokenBudget: 100 },
     });
     expect(failed).toEqual({ id: 8, ok: false, error: "보낼 메시지가 없다" });
   });

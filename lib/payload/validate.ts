@@ -2,8 +2,9 @@
 // 오류 문구에는 본문·이름·키 값을 싣지 않는다. 응답이나 로그에 남을 수 있어서다.
 import { z } from "zod";
 import { MAX_PAYLOAD_BYTES } from "@/lib/config";
+import { TONE_KEYS } from "@/lib/llm/concepts";
 import type { ChatStats } from "@/lib/stats/compute";
-import { type Payload, readBlock } from "./build";
+import { memberCodes, type Payload, readBlock } from "./build";
 import { maskPII } from "./mask";
 import { checkDisplayName } from "./names";
 
@@ -58,11 +59,11 @@ const statsSchema = z.strictObject({
 }) satisfies z.ZodType<ChatStats>;
 
 const payloadSchema = z.strictObject({
-  v: z.literal(1),
+  v: z.literal(2),
   concept: z.enum(["group", "couple"]),
   kind: z.enum(["pair", "group", "work"]),
-  me: z.string(),
-  members: z.array(z.string()).min(1),
+  tone: z.enum(TONE_KEYS),
+  members: z.array(z.string()).min(2),
   period: z.strictObject({ start: z.string().regex(DAY), end: z.string().regex(DAY) }),
   cutoffAt: z.string().regex(ISO_KST),
   msgTotal: count,
@@ -100,8 +101,8 @@ function fail(error: string): { ok: false; error: string } {
 }
 
 /**
- * 크기(1.5MB)·구조(zod)·꺾쇠 괄호·concept와 kind·members와 me·줄 형식·날짜 헤더·msg_id 순서·발신자·
- * 가리기 누락·msgSent·stats의 사람 키를 차례로 본다. msg_id는 anchors에서 transcript까지 이어서 커지기만 해야 하고,
+ * 크기(4MB)·구조(zod, v2·tone·members 2명 이상·me 없음)·꺾쇠 괄호·concept와 kind·members 이름·줄 형식·
+ * 날짜 헤더(메시지 줄 앞에 있어야 한다)·msg_id 순서·기호(범례 안)·가리기 누락·msgSent·stats의 사람 키를 차례로 본다. msg_id는 anchors에서 transcript까지 이어서 커지기만 해야 하고,
  * transcript에는 메시지가 1개 이상 있어야 한다
  */
 export function validatePayload(raw: unknown): { ok: true; payload: Payload } | { ok: false; error: string } {
@@ -130,7 +131,7 @@ export function validatePayload(raw: unknown): { ok: true; payload: Payload } | 
   if (members.size !== p.members.length || p.members.some((n) => checkDisplayName(n) !== null)) {
     return fail("members 이름 형식");
   }
-  if (!members.has(p.me)) return fail("me가 members 밖이다");
+  const codes = new Set(memberCodes(p.members));
 
   let prevId = -1;
   let sent = 0;
@@ -144,10 +145,10 @@ export function validatePayload(raw: unknown): { ok: true; payload: Payload } | 
       const at = `${name} ${i + 1}번째 줄`;
       if (line.type === "bad") return fail(`줄 형식: ${at}`);
       if (line.type === "header") continue;
-      if (line.header === null || line.header.slice(5) !== line.mmdd) return fail(`날짜 헤더: ${at}`);
+      if (line.header === null) return fail(`날짜 헤더: ${at}`);
       if (line.id <= prevId) return fail(`msg_id 순서: ${at}`);
       prevId = line.id;
-      if (!members.has(line.sender)) return fail(`members 밖의 발신자: ${at}`);
+      if (!codes.has(line.code)) return fail(`범례 밖의 기호: ${at}`);
       if (maskPII(line.body).text !== line.body) return fail(`가리기 누락: ${at}`);
       if (name === "transcript") sent++;
     }
