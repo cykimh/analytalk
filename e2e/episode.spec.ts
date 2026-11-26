@@ -11,6 +11,8 @@ import { androidChat, expectNoHorizontalScroll, fakeTurnstile, login, textUpload
 const ID = "0b6c3f1e-2a4d-4c5b-9e8f-7a6b5c4d3e2f";
 /** 413 응답의 maxTokens. 입력 예산 − 프롬프트 몫 − 통계·범례 몫이 1,000 이상 남는 값이다 */
 const MAX_TOKENS_413 = 12_000;
+/** 413 테스트용 긴 대화: 첫 페이로드가 재시도 예산(maxTokens × 0.95)을 넘도록 철수가 긴 메시지를 더 보낸다 */
+const LONG_BODIES = Array.from({ length: 12 }, (_, i) => `${i + 1}번째 긴 이야기 ${"오늘 저녁에 뭐 먹을지 한참 고민하다가 결국 집 앞 국밥집에 갔어요 ".repeat(12)}`);
 const XSS = "<img src=x onerror=alert(1)>";
 /** android-ko 픽스처의 원래 발신자 이름("민지, 수아" 포함)과 초대 알림의 이름 */
 const ORIGINAL_NAMES = ["민지", "철수", "수아", "영희"];
@@ -166,9 +168,9 @@ const create = (page: Page) => page.getByRole("button", { name: "AI 연재 만�
 const card = (page: Page, n: number) => page.getByRole("region", { name: `${n}편`, exact: true });
 
 /** android-ko 픽스처를 올려 기본 이름으로 '보낼 내용 확인'까지 가고 단톡방 동의를 체크한다 */
-async function toReview(page: Page) {
+async function toReview(page: Page, chat = androidChat()) {
   await page.goto("/new");
-  await page.getByLabel("대화 파일").setInputFiles(textUpload("KakaoTalkChats.txt", androidChat()));
+  await page.getByLabel("대화 파일").setInputFiles(textUpload("KakaoTalkChats.txt", chat));
   await next(page).click();
   await page.getByRole("radio", { name: "민지", exact: true }).check();
   await next(page).click();
@@ -233,7 +235,7 @@ test.describe("AI 연재", () => {
   test("413이면 maxTokens × 0.95로 한 번만 다시 만들어 보내고, 또 413이면 오류를 보여 준다", async ({ page, context }) => {
     await fakeApi(context, ["running", "queued", "queued", "queued"]);
     const posts = await fakeCreate(page, [413, 413, 413, 202]);
-    await toReview(page);
+    await toReview(page, androidChat({ bodies: LONG_BODIES }));
 
     await create(page).click();
     await expect(page.getByRole("alert").filter({ hasText: "대화가 너무 길어서" })).toBeVisible();
@@ -247,7 +249,10 @@ test.describe("AI 연재", () => {
     expect(posts[2]).toEqual(posts[0]);
     // 다시 만든 페이로드는 maxTokens × 0.95 안이다(통계·범례·프롬프트 몫 포함)
     const total = (p: Record<string, unknown>) => payloadTokens(p as unknown as Payload, TOKENS_PER_CHAR).total + PROMPT_RESERVE_TOKENS;
-    expect(total(posts[3])).toBeLessThanOrEqual(Math.floor(MAX_TOKENS_413 * 0.95));
+    const limit = Math.floor(MAX_TOKENS_413 * 0.95);
+    expect(total(posts[0])).toBeGreaterThan(limit);
+    expect(total(posts[3])).toBeLessThanOrEqual(limit);
+    expect(posts[3].transcript).not.toEqual(posts[0].transcript);
     expect(posts[3].stats).toEqual(posts[0].stats);
   });
 
