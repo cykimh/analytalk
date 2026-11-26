@@ -1,14 +1,14 @@
 "use client";
 
-// 대화 홈·진행·편 화면이 같이 쓰는 상태: 대화(편 내용 포함)를 읽고, 서버가 쓰는 편이 있는 동안 POLL_MS마다 status를 폴링한다.
-// 탭을 닫았다 다시 열어도 서버에서 편이 계속 진행되므로, 화면은 열릴 때마다 API에서 상태를 다시 불러온다.
-// 편 상태가 바뀌면 대화를 다시 읽어 끝난 편의 내용을 받는다. 다시 쓸 편이 없으면 이 브라우저의 페이로드를 지운다.
+// 대화 홈·리포트 화면이 같이 쓰는 상태: 대화(리포트 내용 포함)를 읽고, 서버가 리포트를 쓰는 동안 POLL_MS마다 status를 폴링한다.
+// 탭을 닫았다 다시 열어도 서버에서 리포트가 계속 진행되므로, 화면은 열릴 때마다 API에서 상태를 다시 불러온다.
+// 리포트 상태가 바뀌면 대화를 다시 읽어 끝난 리포트의 내용을 받는다. 다시 쓸 일이 없으면 이 브라우저의 페이로드를 지운다.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deletePayload, loadPayload, sweepPayloads } from "@/lib/client/idb";
 import { forgetSeries } from "@/lib/client/recent";
-import { postJson, retryEpisode, type SubmitResult } from "@/lib/client/submit";
+import { postJson, retryReport, type SubmitResult } from "@/lib/client/submit";
 import { POLL_MS } from "@/lib/config";
-import { type ConversationView, isActive, isSettled, mergeEpisodeNotes, type Note, statusChanged, type StatusView } from "./model";
+import { type ConversationView, isActive, isSettled, mergeNotes, type Note, type StatusView } from "./model";
 
 /** unauthorized·not_found는 더 읽지 않는다. network는 다시 시도한다 */
 export type LoadError = "unauthorized" | "not_found" | "network";
@@ -31,7 +31,7 @@ export function useConversation(id: string) {
   const base = `/api/conversations/${encodeURIComponent(id)}`;
   const [conversation, setConversation] = useState<ConversationView | null>(null);
   const [status, setStatus] = useState<StatusView | null>(null);
-  const [notes, setNotes] = useState<Record<number, Note[]>>({});
+  const [notes, setNotes] = useState<Note[]>([]);
   const [error, setError] = useState<LoadError | null>(null);
   /** status를 읽은 횟수(실패 포함). 바뀔 때마다 다음 폴링을 건다 */
   const [polls, setPolls] = useState(0);
@@ -52,7 +52,7 @@ export function useConversation(id: string) {
     const r = await getJson<StatusView>(`${base}/status`);
     if (r.ok) {
       setStatus(r.body);
-      setNotes((prev) => mergeEpisodeNotes(prev, r.body.episodes));
+      setNotes((prev) => mergeNotes(prev, r.body.report.progress));
     } else if (r.error !== "network") {
       setError(r.error);
     }
@@ -65,9 +65,9 @@ export function useConversation(id: string) {
     void loadStatus();
   }, [loadConversation, loadStatus]);
 
-  // 첫 status를 받을 때까지, 그 뒤로는 서버가 쓰는 편이 있는 동안 폴링한다
+  // 첫 status를 받을 때까지, 그 뒤로는 서버가 리포트를 쓰는 동안 폴링한다
   const fatal = error === "unauthorized" || error === "not_found";
-  const active = status === null || isActive(status.episodes);
+  const active = status === null || isActive(status.report.status);
   useEffect(() => {
     if (fatal || !active) return;
     const timer = setTimeout(() => void loadStatus(), POLL_MS);
@@ -76,14 +76,14 @@ export function useConversation(id: string) {
 
   useEffect(() => {
     if (!conversation || !status || syncedFor.current === status) return;
-    if (statusChanged(conversation.episodes, status.episodes)) {
+    if (conversation.report.status !== status.report.status) {
       syncedFor.current = status;
       void loadConversation();
     }
   }, [conversation, status, loadConversation]);
 
   useEffect(() => {
-    if (conversation && isSettled(conversation.episodes)) void deletePayload(id).catch(() => undefined);
+    if (conversation && isSettled(conversation.report.status)) void deletePayload(id).catch(() => undefined);
   }, [conversation, id]);
 
   // 지워졌거나 만료된 대화는 시작 화면의 '내 연재'에서 뺀다
@@ -93,8 +93,8 @@ export function useConversation(id: string) {
 
   /** [다시 쓰기]. 받아 주면 바로 status를 다시 읽어 폴링을 잇는다 */
   const retry = useCallback(
-    async (n: number): Promise<SubmitResult> => {
-      const r = await retryEpisode(id, n, { load: loadPayload, post: postJson("/api/episodes/retry") });
+    async (): Promise<SubmitResult> => {
+      const r = await retryReport(id, { load: loadPayload, post: postJson("/api/episodes/retry") });
       if (r.ok) await loadStatus();
       return r;
     },

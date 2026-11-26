@@ -1,5 +1,5 @@
 // dev 미리보기용 가짜 데이터. 표시 이름은 test/syntheticChat의 "멤버01"…이고 실제 이름·대화는 없다.
-// 통계는 진짜 computeStats로 세고, 편은 손으로 쓴 StoredEpisode({{stat:…}} 자리표시자·근거 인용·다음 편 예고 포함)다
+// 통계는 진짜 computeStats로 세고, 리포트는 손으로 쓴 StoredEpisode({{stat:…}} 자리표시자·근거 인용 포함)다
 import type { ConversationView, Note, StatusView } from "@/components/episode/model";
 import type { SharedReportData } from "@/components/episode/SharedReport";
 import { topPeople } from "@/components/stats/format";
@@ -17,7 +17,7 @@ const [top, second, third] = names;
 /** 근거 인용(가짜 대화의 줄 그대로) */
 const evidence = (id: string, sender: string, at: string, quote: string) => ({ id, msg_id: `m${id.slice(1)}`, sender, at, quote });
 
-export const previewEpisode: StoredEpisode = {
+export const previewReport: StoredEpisode = {
   episode: 1,
   safety: { flag: "none" },
   declined_topics: [],
@@ -83,54 +83,40 @@ export const previewEpisode: StoredEpisode = {
       evidence: [],
     },
   ],
-  next_teaser: `2편 멤버 캐릭터 카드: 답장이 {{stat:replyMedianMs.${top}}} 걸리는 사람은 누구일까요?`,
-};
-
-const second_episode: StoredEpisode = {
-  ...previewEpisode,
-  episode: 2,
-  headline: "멤버 캐릭터 카드",
-  dek: "누가 먼저 말을 걸고, 누가 마무리하는지",
-  sections: previewEpisode.sections.slice(0, 1),
-  next_teaser: "3편 명장면",
+  next_teaser: null,
 };
 
 export const previewConversation: ConversationView = {
   concept: "group",
   kind: "group",
+  tone: "fact",
   displayNames: names,
   stats,
   cutoffAt: new Date(messages[0].ts).toISOString(),
   msgSent: messages.length,
   expiresAt: "2026-12-25T03:00:00.000Z",
   shared: false,
-  shareScope: null,
-  shareHidden: [],
-  episodes: [
-    { n: 1, status: "done", content: previewEpisode, errorCode: null },
-    { n: 2, status: "partial", content: second_episode, errorCode: null },
-    { n: 3, status: "running", content: null, errorCode: null },
-    { n: 4, status: "failed", content: null, errorCode: "retryable" },
-  ],
+  // 쓰는 중: 대화 홈 미리보기가 진행 카드를 보여 준다(리포트 화면은 previewReadyConversation)
+  report: { status: "running", content: null, errorCode: null },
+};
+
+/** 다 쓴 리포트가 있는 대화(리포트 읽기 미리보기) */
+export const previewReadyConversation: ConversationView = {
+  ...previewConversation,
+  report: { status: "done", content: previewReport, errorCode: null },
 };
 
 export const previewStatus: StatusView = {
   paused: false,
-  episodes: previewConversation.episodes.map((e) => ({ n: e.n, status: e.status, progress: null, errorCode: e.errorCode })),
+  report: { status: "running", progress: null, errorCode: null },
 };
 
-export const previewNotes: Record<number, Note[]> = {
-  1: previewEpisode.reading_notes,
-  2: [{ range: "01-02~06-30", note: `${second}님이 먼저 말을 건 날을 셌다` }],
-  3: [{ range: "02-14~02-14", note: "가장 많이 웃은 하루를 찾는 중" }],
-};
+export const previewNotes: Note[] = previewReport.reading_notes;
 
 export const previewShared: SharedReportData = {
   concept: "group",
+  tone: "fact",
   displayNames: names,
   stats,
-  episodes: [
-    { n: 1, content: previewEpisode },
-    { n: 2, content: second_episode },
-  ],
+  report: previewReport,
 };

@@ -1,4 +1,4 @@
-// 편 화면의 문단 [틀렸어요] 모음. 리포트 영역(#report-capture) 바깥 아래에 둔다(DESIGN.md).
+// 리포트 화면의 문단 [틀렸어요] 모음. 리포트 영역(#report-capture) 바깥 아래에 둔다(DESIGN.md).
 // 문단마다 앞부분을 보여 주고 버튼 설명(aria-describedby)으로 묶는다. 보내는 것은 FeedbackButton 그대로다(문단 글은 보내지 않는다)
 import { Paper } from "@/components/scrap/Paper";
 import { paragraphRef } from "@/lib/episode/feedback";
@@ -7,7 +7,7 @@ import type { ChatStats } from "@/lib/stats/compute";
 import { FeedbackButton } from "./FeedbackButton";
 import { StatText } from "./StatText";
 
-export function ParagraphFeedback({ id, n, content, stats }: { id: string; n: number; content: StoredEpisode; stats: ChatStats }) {
+export function ParagraphFeedback({ id, content, stats }: { id: string; content: StoredEpisode; stats: ChatStats }) {
   const rows = content.sections.flatMap((s, si) => s.paragraphs.map((p) => ({ ref: paragraphRef(si, p.key), text: p.text })));
   if (rows.length === 0) return null;
   return (
@@ -21,7 +21,7 @@ export function ParagraphFeedback({ id, n, content, stats }: { id: string; n: nu
             <p id={`feedback-${r.ref}`} className="line-clamp-2 text-base text-ink-soft wrap-anywhere">
               <StatText text={r.text} stats={stats} />
             </p>
-            <FeedbackButton id={id} n={n} paragraphKey={r.ref} describedBy={`feedback-${r.ref}`} />
+            <FeedbackButton id={id} paragraphKey={r.ref} describedBy={`feedback-${r.ref}`} />
           </li>
         ))}
       </ol>

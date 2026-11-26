@@ -1,5 +1,5 @@
 // 재시도용 페이로드를 이 브라우저의 IndexedDB에 둔다(PRD 데이터 표). 서버에는 남지 않는다.
-// 4편이 모두 끝나면 deletePayload로 지우고, 24시간이 지나면 읽을 때(loadPayload)와 대화 화면을 열 때(sweepPayloads) 지운다.
+// 리포트가 끝나면 deletePayload로 지우고, 24시간이 지나면 읽을 때(loadPayload)와 대화 화면을 열 때(sweepPayloads) 지운다.
 import { del, entries, get, set } from "idb-keyval";
 import type { Payload } from "@/lib/payload/build";
 

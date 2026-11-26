@@ -1,7 +1,8 @@
 // 이 브라우저에서 만든 연재 목록(localStorage `analytalk:recent`). 시작 화면이 /c/[id]로 돌아가는 링크를 그린다.
 // 서버에는 대화 목록 API가 없고 초대 코드는 여러 사람이 같이 쓸 수 있어서, 만든 브라우저만 기억한다.
-// id·컨셉·만든 시각만 둔다(표시 이름·대화 내용은 넣지 않는다). 저장이 막혀도 화면은 동작한다.
+// id·컨셉·말투·만든 시각만 둔다(표시 이름·대화 내용은 넣지 않는다). 저장이 막혀도 화면은 동작한다.
 import { RETENTION_DAYS } from "@/lib/config";
+import { type Tone, TONE_KEYS } from "@/lib/llm/concepts";
 
 const KEY = "analytalk:recent";
 const MAX_ENTRIES = 20;
@@ -10,6 +11,8 @@ const TTL_MS = RETENTION_DAYS * 86_400_000;
 export interface RecentSeries {
   id: string;
   concept: "group" | "couple";
+  /** 말투. v1 항목에는 없다 */
+  tone?: Tone;
   /** 만든 시각(ms) */
   createdAt: number;
 }
@@ -19,7 +22,8 @@ const isEntry = (v: unknown): v is RecentSeries =>
   v !== null &&
   typeof (v as RecentSeries).id === "string" &&
   ((v as RecentSeries).concept === "group" || (v as RecentSeries).concept === "couple") &&
-  typeof (v as RecentSeries).createdAt === "number";
+  typeof (v as RecentSeries).createdAt === "number" &&
+  ((v as RecentSeries).tone === undefined || (TONE_KEYS as readonly unknown[]).includes((v as RecentSeries).tone));
 
 function read(): RecentSeries[] {
   try {
@@ -53,7 +57,7 @@ export function rememberSeries(entry: RecentSeries): void {
   const before = all.find((e) => e.id === entry.id);
   // 같은 요청으로 다시 받은 연재(중복 200)는 처음 만든 시각을 지킨다(서버 보관 30일과 맞춘다)
   const createdAt = before ? Math.min(before.createdAt, entry.createdAt) : entry.createdAt;
-  const next = [{ id: entry.id, concept: entry.concept, createdAt }, ...all.filter((e) => e.id !== entry.id)];
+  const next = [{ id: entry.id, concept: entry.concept, ...(entry.tone ? { tone: entry.tone } : {}), createdAt }, ...all.filter((e) => e.id !== entry.id)];
   write(next.sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_ENTRIES));
 }
 

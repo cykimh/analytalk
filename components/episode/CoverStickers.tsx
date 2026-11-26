@@ -1,16 +1,16 @@
-// 리포트 표지의 종이 스티커 줄: 컨셉 → 기간 → 멤버 이름(많으면 앞의 몇 명과 '외 N명')
+// 리포트 표지의 종이 스티커 줄: 말투 → 기간 → 멤버 이름(많으면 앞의 6명과 '외 N명')
 import { Sticker } from "@/components/scrap/Sticker";
 import { periodOf } from "@/components/stats/format";
-import { CONCEPTS } from "@/lib/llm/concepts";
+import { type Tone, TONES } from "@/lib/llm/concepts";
 
 const MAX_NAME_STICKERS = 6;
 
 export function CoverStickers({
-  concept,
+  tone,
   names,
   dailyCounts,
 }: {
-  concept: keyof typeof CONCEPTS;
+  tone: Tone;
   names: string[];
   dailyCounts: Record<string, number>;
 }) {
@@ -22,7 +22,7 @@ export function CoverStickers({
     <ul role="list" className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-2">
       <li className="min-w-0">
         <Sticker index={i++}>
-          {CONCEPTS[concept].title}
+          {TONES[tone].label}
         </Sticker>
       </li>
       {period && (

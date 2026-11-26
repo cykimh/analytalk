@@ -1,6 +1,6 @@
 "use client";
 
-// 문단 [틀렸어요] → 이유 고르기 → POST /api/feedback {id, n, paragraphKey, reason}. 문단 글은 보내지 않는다
+// 문단 [틀렸어요] → 이유 고르기 → POST /api/feedback {id, paragraphKey, reason}. 문단 글은 보내지 않는다
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { postJson } from "@/lib/client/submit";
@@ -9,13 +9,13 @@ import { FEEDBACK_LABEL, FEEDBACK_REASONS, type FeedbackReason } from "@/lib/epi
 const send = postJson("/api/feedback");
 
 /** describedBy: 어느 문단인지 알려 주는 요소의 id(버튼 설명) */
-export function FeedbackButton({ id, n, paragraphKey, describedBy }: { id: string; n: number; paragraphKey: string; describedBy?: string }) {
+export function FeedbackButton({ id, paragraphKey, describedBy }: { id: string; paragraphKey: string; describedBy?: string }) {
   const [state, setState] = useState<"idle" | "choosing" | "sending" | "sent" | "error">("idle");
 
   async function choose(reason: FeedbackReason) {
     setState("sending");
     try {
-      const res = await send({ id, n, paragraphKey, reason });
+      const res = await send({ id, paragraphKey, reason });
       setState(res.ok ? "sent" : "error");
     } catch {
       setState("error");

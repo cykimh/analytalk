@@ -15,7 +15,7 @@ export default async function Home() {
       <header className="grid gap-2">
         <h1 className="text-[2rem] leading-tight font-bold tracking-tight">analytalk</h1>
         <p className="text-base leading-relaxed text-muted-foreground">
-          카톡 대화를 브라우저 안에서 읽어 통계를 보여 주고, 원하면 AI가 4편짜리 연재로 써 드려요. 지인 초대로만 써요.
+          카톡 대화를 브라우저 안에서 읽어 통계를 보여 주고, 원하면 AI가 리포트로 써 드려요. 지인 초대로만 써요.
         </p>
       </header>
       {isKakaoInApp(ua) && <InAppBanner />}

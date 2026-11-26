@@ -53,6 +53,15 @@ describe("내 연재 목록 (이 브라우저의 localStorage)", () => {
     expect(listSeries()).toEqual([]);
   });
 
+  it("말투(tone)를 저장하고, tone이 없는 v1 항목은 받고, 모르는 tone은 버린다", () => {
+    rememberSeries({ id: A, concept: "couple", tone: "warm", createdAt: Date.now() });
+    expect(listSeries()).toEqual([{ id: A, concept: "couple", tone: "warm", createdAt: Date.now() }]);
+    map.set("analytalk:recent", JSON.stringify([{ id: B, concept: "group", createdAt: Date.now() }]));
+    expect(listSeries().map((s) => s.id)).toEqual([B]);
+    map.set("analytalk:recent", JSON.stringify([{ id: A, concept: "group", tone: "x", createdAt: Date.now() }]));
+    expect(listSeries()).toEqual([]);
+  });
+
   it("localStorage가 막혀도 예외 없이 빈 목록", () => {
     setStorage({
       get() {

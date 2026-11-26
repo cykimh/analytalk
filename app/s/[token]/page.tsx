@@ -14,7 +14,7 @@ type Props = { params: Promise<{ token: string }> };
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { token } = await params;
   const view = await loadSharedView(getRepo(), token);
-  const base: Metadata = { title: "공유된 연재 · analytalk", robots: { index: false, follow: false } };
+  const base: Metadata = { title: "공유된 리포트 · analytalk", robots: { index: false, follow: false } };
   if (!view) return base;
   // OG 이미지는 컨셉별 고정 이미지다. 대화 내용·이름은 넣지 않는다
   const h = await headers();
@@ -23,7 +23,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const image = host ? `${proto}://${host}/og/${view.concept}.png` : `/og/${view.concept}.png`;
   return {
     ...base,
-    openGraph: { title: "analytalk 연재 리포트", description: AI_NOTICE, images: [{ url: image, width: 1200, height: 630, alt: AI_NOTICE }] },
+    openGraph: { title: "analytalk 대화 리포트", description: AI_NOTICE, images: [{ url: image, width: 1200, height: 630, alt: AI_NOTICE }] },
     twitter: { card: "summary_large_image", images: [image] },
   };
 }
@@ -33,6 +33,5 @@ export default async function SharedPage({ params }: Props) {
   const view = await loadSharedView(getRepo(), token);
   if (!view) notFound();
 
-  // 화면은 Task 7에서 리포트 한 편으로 바뀐다. 그때까지 옛 모양(편 목록)으로 맞춰 넘긴다
-  return <SharedReport view={{ ...view, episodes: view.report ? [{ n: 1, content: view.report }] : [] }} />;
+  return <SharedReport view={view} />;
 }

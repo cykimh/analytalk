@@ -1,8 +1,6 @@
 // 소유자 공유 화면(components/episode/SharePanel)이 부르는 것: 공유 API(POST·DELETE /api/shares), 카톡 보내기·링크 복사, 발급한 링크 보관.
 // 원문 토큰은 DB에 없고 링크를 처음 만든 응답에만 한 번 온다. 그래서 받은 URL은 이 브라우저의 localStorage에 대화별로 둔다.
 
-export type ShareScope = "first" | "all";
-
 /** 네트워크 오류는 status 0 */
 type Failed = { ok: false; status: number };
 /** 테스트는 fetch를 주입한다 */
@@ -11,16 +9,11 @@ type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
 const sendJson = (fetcher: Fetcher, method: "POST" | "DELETE", body: unknown) =>
   fetcher("/api/shares", { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
-/** 공유 범위·숨김을 정한다. 처음 만들면 url, 이미 공유 중이면(범위만 바뀜) url은 null이다(409: 다른 곳에서 동시에 바뀜) */
-export async function createShare(
-  id: string,
-  scope: ShareScope,
-  hidden: number[],
-  fetcher: Fetcher = fetch,
-): Promise<{ ok: true; url: string | null } | Failed> {
+/** 공유 링크를 만든다. 처음 만들면 url, 이미 공유 중이면 url은 null이다(409: 다른 곳에서 동시에 바뀜) */
+export async function createShare(id: string, fetcher: Fetcher = fetch): Promise<{ ok: true; url: string | null } | Failed> {
   let res: Response;
   try {
-    res = await sendJson(fetcher, "POST", { id, scope, hidden });
+    res = await sendJson(fetcher, "POST", { id });
   } catch {
     return { ok: false, status: 0 };
   }

@@ -92,7 +92,7 @@ const DOWN: Record<MonthlyMetric, string> = {
   count: "메시지 수는 {p} 줄었어요",
 };
 
-/** 엇갈린 패턴을 묘사만 한다(해석은 "어떻게 느꼈나요?"로 본인에게 넘긴다) */
+/** 엇갈린 패턴을 묘사만 한다(해석은 하지 않는다) */
 export function crossedText(c: CrossedPattern): string {
   const pct = (n: number) => `${Math.round(Math.abs(n))}%`;
   return `${UP[c.up].replace("{p}", pct(c.upPct))} ${DOWN[c.down].replace("{p}", pct(c.downPct))}`;

@@ -17,29 +17,29 @@ const sent = (f: ReturnType<typeof fakeFetch>) => {
 };
 
 describe("createShare", () => {
-  it("POST /api/shares에 {id, scope, hidden}을 JSON으로 보내고, 새 링크면 url을 돌려준다", async () => {
+  it("POST /api/shares에 {id}를 JSON으로 보내고, 새 링크면 url을 돌려준다", async () => {
     const f = fakeFetch(Response.json({ url: URL_, shared: true }));
-    expect(await createShare(ID, "first", [2, 4], f)).toEqual({ ok: true, url: URL_ });
+    expect(await createShare(ID, f)).toEqual({ ok: true, url: URL_ });
     expect(sent(f)).toEqual({
       url: "/api/shares",
       method: "POST",
       type: "application/json",
-      body: { id: ID, scope: "first", hidden: [2, 4] },
+      body: { id: ID },
     });
   });
 
-  it("이미 공유 중이면(범위만 바꿈) url은 null", async () => {
+  it("이미 공유 중이면url은 null", async () => {
     const f = fakeFetch(Response.json({ url: null, shared: true }));
-    expect(await createShare(ID, "all", [], f)).toEqual({ ok: true, url: null });
+    expect(await createShare(ID, f)).toEqual({ ok: true, url: null });
   });
 
   it.each([409, 404, 401, 400])("%i면 상태를 돌려준다", async (status) => {
     const f = fakeFetch(Response.json({ error: "x" }, { status }));
-    expect(await createShare(ID, "all", [], f)).toEqual({ ok: false, status });
+    expect(await createShare(ID, f)).toEqual({ ok: false, status });
   });
 
   it("네트워크 오류는 status 0", async () => {
-    expect(await createShare(ID, "all", [], fakeFetch(new TypeError("offline")))).toEqual({ ok: false, status: 0 });
+    expect(await createShare(ID, fakeFetch(new TypeError("offline")))).toEqual({ ok: false, status: 0 });
   });
 });
 

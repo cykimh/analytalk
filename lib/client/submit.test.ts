@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Payload } from "@/lib/payload/build";
-import { createSeries, retryEpisode, SUBMIT_TEXT } from "./submit";
+import { createSeries, retryReport, SUBMIT_TEXT } from "./submit";
 
 const first = { v: 1, me: "멤버1", transcript: "첫 페이로드" } as unknown as Payload;
 const smaller = { v: 1, me: "멤버1", transcript: "줄인 페이로드" } as unknown as Payload;
@@ -96,7 +96,7 @@ describe("createSeries ([AI 연재 만들기])", () => {
   });
 });
 
-describe("retryEpisode ([다시 쓰기])", () => {
+describe("retryReport ([다시 쓰기])", () => {
   function retryDeps(payload: Payload | null, res?: Response | Error) {
     const sent: unknown[] = [];
     return {
@@ -111,22 +111,23 @@ describe("retryEpisode ([다시 쓰기])", () => {
     };
   }
 
-  it("이 브라우저에 둔 페이로드를 {id, n, payload}로 보내고 202면 ok", async () => {
+  it("이 브라우저에 둔 페이로드를 {id, payload}로(n 없이) 보내고 202면 ok", async () => {
     const d = retryDeps(first, json(202));
-    expect(await retryEpisode(ID, 2, d)).toEqual({ ok: true });
+    expect(await retryReport(ID, d)).toEqual({ ok: true });
     expect(d.load).toHaveBeenCalledWith(ID);
-    expect(d.sent).toEqual([{ id: ID, n: 2, payload: first }]);
+    expect(d.sent).toEqual([{ id: ID, payload: first }]);
   });
 
   it("페이로드가 없으면(24시간 지남·다른 브라우저) 보내지 않고 같은 파일·같은 설정으로 다시 올리라고 안내한다", async () => {
     const d = retryDeps(null);
-    expect(await retryEpisode(ID, 1, d)).toEqual({ ok: false, message: SUBMIT_TEXT.reupload });
+    expect(await retryReport(ID, d)).toEqual({ ok: false, message: SUBMIT_TEXT.reupload });
     expect(SUBMIT_TEXT.reupload).toContain("처음 올린 그 파일");
-    expect(SUBMIT_TEXT.reupload).toContain("이름");
+    expect(SUBMIT_TEXT.reupload).toContain("뺀 멤버");
+    expect(SUBMIT_TEXT.reupload).toContain("말투");
     expect(d.post).not.toHaveBeenCalled();
     const broken = retryDeps(first);
     broken.load.mockRejectedValueOnce(new Error("blocked"));
-    expect(await retryEpisode(ID, 1, broken)).toEqual({ ok: false, message: SUBMIT_TEXT.reupload });
+    expect(await retryReport(ID, broken)).toEqual({ ok: false, message: SUBMIT_TEXT.reupload });
   });
 
   it.each([
@@ -140,6 +141,6 @@ describe("retryEpisode ([다시 쓰기])", () => {
     [json(503, { error: "not_ready" }), SUBMIT_TEXT.notReady],
     [new TypeError("Failed to fetch"), SUBMIT_TEXT.generic],
   ])("응답별 문구 %#", async (res, message) => {
-    expect(await retryEpisode(ID, 1, retryDeps(first, res))).toEqual({ ok: false, message });
+    expect(await retryReport(ID, retryDeps(first, res))).toEqual({ ok: false, message });
   });
 });

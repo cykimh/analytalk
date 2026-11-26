@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { SERIES_TITLE } from "@/components/episode/model";
 import { kstDate } from "@/components/stats/format";
 import { sweepPayloads } from "@/lib/client/idb";
+import { TONES } from "@/lib/llm/concepts";
 import { listSeries, type RecentSeries as Entry } from "@/lib/client/recent";
 
 
@@ -31,7 +32,10 @@ export function RecentSeries() {
               href={`/c/${e.id}`}
               className="flex min-h-11 min-w-0 items-baseline justify-between gap-2 rounded-lg border bg-sheet p-3 text-base hover:bg-muted"
             >
-              <span className="font-medium">{SERIES_TITLE[e.concept]}</span>
+              <span className="min-w-0 font-medium wrap-anywhere">
+                {SERIES_TITLE[e.concept]}
+                {e.tone ? ` · ${TONES[e.tone].label}` : ""}
+              </span>
               <span className="shrink-0 text-sm text-muted-foreground tabular-nums">{kstDate(e.createdAt)} 만듦</span>
             </Link>
           </li>

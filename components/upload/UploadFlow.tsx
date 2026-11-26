@@ -1,7 +1,7 @@
 "use client";
 
 // /new 흐름: 파일 → (Worker) 파싱 → 확인 → 나는 누구? → 이름 정리(+분석에서 빼기) → 방 종류·말투 → (Worker) 이름 적용·페이로드
-// → 보낼 내용 확인 → [AI 연재 만들기](페이로드만 보낸다) → /c/[id]/steps.
+// → 보낼 내용 확인 → [AI 연재 만들기](페이로드만 보낸다) → /c/[id](대화 홈).
 // 원본 파일·파싱 결과·뺀 멤버의 메시지는 이 컴포넌트와 Worker(브라우저 메모리)에만 있다.
 import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
@@ -141,7 +141,7 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
     });
 
   /**
-   * [AI 연재 만들기]: 202·200이면 받아 준 페이로드를 이 브라우저에 두고 진행 화면으로 간다.
+   * [AI 연재 만들기]: 202·200이면 받아 준 페이로드를 이 브라우저에 두고 대화 홈으로 간다(진행은 거기서 보인다).
    * 413이면 한 번만 줄여 다시 보낸다. 성공하면 화면이 바뀔 때까지 버튼을 막아 둔다
    */
   async function create() {
@@ -156,8 +156,8 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
       });
       if (r.ok) {
         // 시작 화면의 '내 연재'에서 다시 찾을 수 있게 이 브라우저에 id만 남긴다
-        rememberSeries({ id: r.id, concept: built.payload.concept, createdAt: Date.now() });
-        router.push(`/c/${r.id}/steps`);
+        rememberSeries({ id: r.id, concept: built.payload.concept, tone, createdAt: Date.now() });
+        router.push(`/c/${r.id}`);
         return;
       }
       setError(r.message);

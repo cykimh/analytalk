@@ -1,5 +1,5 @@
 // dev 미리보기 첫 장: 콜라주 조각 모음(종이·테이프·형광펜·스티커·폴라로이드·메모지·크레파스 막대).
-// 리포트 화면은 /dev/preview/home·episode·steps·share. 링크로 들어오는 곳이 없고 프로덕션은 404다
+// 리포트 화면은 /dev/preview/home·report·share. 링크로 들어오는 곳이 없고 프로덕션은 404다
 import type { Metadata } from "next";
 import { Evidence } from "@/components/episode/Evidence";
 import { PageFrame } from "@/components/episode/PageState";

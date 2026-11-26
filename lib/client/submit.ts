@@ -1,4 +1,4 @@
-// 브라우저가 AI 연재를 요청한다: [AI 연재 만들기](POST /api/conversations)와 [다시 쓰기](POST /api/episodes/retry).
+// 브라우저가 AI 리포트를 요청한다: [AI 리포트 만들기](POST /api/conversations)와 [다시 쓰기](POST /api/episodes/retry, 리포트 한 편).
 // 페이로드는 이 두 요청의 본문으로만 나가고, 재시도용으로 이 브라우저의 IndexedDB에 둔다(lib/client/idb).
 import type { Payload } from "@/lib/payload/build";
 
@@ -11,11 +11,11 @@ export const SUBMIT_TEXT = {
   tooLong: "대화가 너무 길어서 AI에게 보내지 못했어요. 같은 파일로 다시 보내도 결과가 같아요.",
   cannotSend: "이 대화는 AI에게 보낼 수 없어요. 화면을 새로 고친 뒤에도 같으면 이 대화로는 만들 수 없어요.",
   // [다시 쓰기]용 사본이 없거나 다르다: 같은 파일을 같은 설정으로 올리면 같은 연재로 이어진다(한도를 더 쓰지 않는다)
-  reupload: "이 브라우저에 다시 쓰기용 사본이 없어요. 처음 올린 그 파일을 같은 이름·'나'·방 종류로 다시 올리면 이어서 쓸 수 있어요.",
-  retryLimit: "이 편은 더 다시 쓸 수 없어요. 한 편은 3번까지 써요.",
-  notStartable: "이 편은 지금 다시 쓸 수 없어요. 화면을 새로 고쳐 주세요.",
+  reupload: "이 브라우저에 다시 쓰기용 사본이 없어요. 처음 올린 그 파일을 같은 표시 이름·뺀 멤버·방 종류·말투로 다시 올리면 이어서 쓸 수 있어요.",
+  retryLimit: "리포트는 3번까지 써요. 더 다시 쓸 수 없어요.",
+  notStartable: "리포트를 지금 다시 쓸 수 없어요. 화면을 새로 고쳐 주세요.",
   session: "초대 코드 확인이 만료됐어요. 처음 화면에서 코드를 다시 넣어 주세요.",
-  notReady: "아직 AI 연재를 만들 준비가 안 됐어요. 잠시 뒤 다시 시도해 주세요.",
+  notReady: "아직 AI 리포트를 만들 준비가 안 됐어요. 잠시 뒤 다시 시도해 주세요.",
   generic: "보내지 못했어요. 잠시 뒤 다시 시도해 주세요.",
 } as const;
 
@@ -95,16 +95,16 @@ export async function createSeries(payload: Payload, deps: CreateDeps): Promise<
 
 export interface RetryDeps {
   load: (id: string) => Promise<Payload | null>;
-  post: (body: { id: string; n: number; payload: Payload }) => Promise<Response>;
+  post: (body: { id: string; payload: Payload }) => Promise<Response>;
 }
 
-/** 이 브라우저에 둔 페이로드로 n편을 다시 쓴다. 없으면(24시간 지남·다른 브라우저) 보내지 않는다 */
-export async function retryEpisode(id: string, n: number, deps: RetryDeps): Promise<SubmitResult> {
+/** 이 브라우저에 둔 페이로드로 리포트를 다시 쓴다. 없으면(24시간 지남·다른 브라우저·v1 사본) 보내지 않는다 */
+export async function retryReport(id: string, deps: RetryDeps): Promise<SubmitResult> {
   const payload = await deps.load(id).catch(() => null);
   if (!payload) return failed(SUBMIT_TEXT.reupload);
   let res: Response;
   try {
-    res = await deps.post({ id, n, payload });
+    res = await deps.post({ id, payload });
   } catch {
     return failed(SUBMIT_TEXT.generic);
   }

@@ -1,83 +1,95 @@
 import { describe, expect, it } from "vitest";
-import type { ChatMessage } from "@/lib/parse/parse";
-import { computeStats } from "@/lib/stats/compute";
 import {
-  episodeAction,
   formatAt,
-  retryKept,
   isActive,
   isSettled,
   kstDay,
-  mergeEpisodeNotes,
+  mergeNotes,
   readRange,
-  statCards,
-  statusChanged,
+  reportAction,
+  reportPhase,
+  retryKept,
 } from "./model";
 
-const eps = (...statuses: string[]) => statuses.map((status, i) => ({ n: i + 1, status }));
-
 describe("isActive (폴링을 계속할지)", () => {
-  it("쓰는 편이 있거나, 1편이 시작·완료됐고 기다리는 편이 있으면 true", () => {
-    expect(isActive(eps("running", "queued", "queued", "queued"))).toBe(true);
-    expect(isActive(eps("done", "running", "done", "queued"))).toBe(true);
-    expect(isActive(eps("done", "queued", "queued", "queued"))).toBe(true);
-    expect(isActive(eps("partial", "done", "done", "queued"))).toBe(true);
-    expect(isActive(eps("failed", "running", "done", "done"))).toBe(true);
-  });
-
-  it("1편이 실패해 2~4편이 기다리기만 하거나, 모두 끝났으면 false([다시 쓰기]를 기다린다)", () => {
-    expect(isActive(eps("failed", "queued", "queued", "queued"))).toBe(false);
-    expect(isActive(eps("refused", "queued", "queued", "queued"))).toBe(false);
-    expect(isActive(eps("done", "failed", "partial", "done"))).toBe(false);
-    expect(isActive(eps("done", "done", "done", "done"))).toBe(false);
+  it.each([
+    ["running", true],
+    ["queued", true],
+    ["done", false],
+    ["partial", false],
+    ["failed", false],
+    ["refused", false],
+    ["safety", false],
+  ])("%s → %s", (status, expected) => {
+    expect(isActive(status)).toBe(expected);
   });
 });
 
 describe("isSettled (이 브라우저의 페이로드를 지워도 되는지)", () => {
-  it("다시 쓸 수 있거나 쓰는 중인 편이 하나도 없으면 true", () => {
-    expect(isSettled(eps("done", "done", "done", "done"))).toBe(true);
-    expect(isSettled(eps("done", "refused", "safety", "done"))).toBe(true);
-  });
-
-  it("queued·running·failed·partial이 남았거나 편이 없으면 false", () => {
-    expect(isSettled(eps("done", "done", "done", "partial"))).toBe(false);
-    expect(isSettled(eps("done", "failed", "done", "done"))).toBe(false);
-    expect(isSettled(eps("done", "running", "done", "done"))).toBe(false);
-    expect(isSettled(eps("done", "queued", "done", "done"))).toBe(false);
-    expect(isSettled([])).toBe(false);
-  });
-});
-
-describe("statusChanged", () => {
-  it("편 상태가 하나라도 다르면 true(대화 내용을 다시 읽는다)", () => {
-    expect(statusChanged(eps("running", "queued"), eps("running", "queued"))).toBe(false);
-    expect(statusChanged(eps("running", "queued"), eps("done", "queued"))).toBe(true);
-    expect(statusChanged(eps("running"), eps("running", "queued"))).toBe(true);
+  it.each([
+    ["done", true],
+    ["refused", true],
+    ["safety", true],
+    ["queued", false],
+    ["running", false],
+    ["failed", false],
+    ["partial", false],
+  ])("%s → %s", (status, expected) => {
+    expect(isSettled(status)).toBe(expected);
   });
 });
 
-describe("mergeEpisodeNotes (편별 reading_notes 쌓기)", () => {
+describe("mergeNotes (reading_notes 쌓기)", () => {
   const a = { range: "10-01~10-03", note: "저녁마다 이야기했다" };
   const b = { range: "10-04~10-09", note: "주말엔 조용했다" };
 
-  it("편마다 처음 본 메모를 차례로 붙이고, 같은 메모는 한 번만", () => {
-    const one = mergeEpisodeNotes({}, [
-      { n: 1, progress: [a] },
-      { n: 2, progress: null },
-    ]);
-    expect(one).toEqual({ 1: [a] });
-    const two = mergeEpisodeNotes(one, [
-      { n: 1, progress: [a, b] },
-      { n: 2, progress: [b] },
-    ]);
-    expect(two).toEqual({ 1: [a, b], 2: [b] });
+  it("처음 본 메모를 차례로 붙이고, 같은 메모는 한 번만", () => {
+    const one = mergeNotes([], [a]);
+    expect(one).toEqual([a]);
+    expect(mergeNotes(one, [a, b])).toEqual([a, b]);
   });
 
-  it("다시 쓰기로 progress가 비어도 쌓인 메모는 남고, 모양이 틀린 값은 버린다", () => {
-    const prev = { 1: [a] };
-    expect(mergeEpisodeNotes(prev, [{ n: 1, progress: null }])).toBe(prev);
-    expect(mergeEpisodeNotes(prev, [{ n: 1, progress: [{ range: 1 }, "x", b] }])).toEqual({ 1: [a, b] });
-    expect(mergeEpisodeNotes({}, [{ n: 1, progress: { range: "x", note: "y" } }])).toEqual({});
+  it("progress가 없거나 바뀐 게 없으면 prev 그대로(같은 참조)", () => {
+    const prev = [a];
+    expect(mergeNotes(prev, null)).toBe(prev);
+    expect(mergeNotes(prev, [a])).toBe(prev);
+    expect(mergeNotes(prev, { range: "x", note: "y" })).toBe(prev);
+  });
+
+  it("모양이 틀린 값은 버린다", () => {
+    expect(mergeNotes([a], [{ range: 1 }, "x", b])).toEqual([a, b]);
+  });
+});
+
+describe("reportPhase (카드의 상태 줄)", () => {
+  it.each([
+    ["queued", false, "AI가 대화를 읽는 중"],
+    ["running", false, "AI가 대화를 읽는 중"],
+    ["running", true, "쓰는 중"],
+    ["done", false, "다 썼어요"],
+    ["partial", false, "일부만 썼어요"],
+    ["failed", false, "쓰지 못했어요"],
+    ["refused", false, "AI가 이 대화로는 리포트를 쓰지 않았어요"],
+    ["safety", false, "리포트를 쓰지 않았어요"],
+  ])("%s·메모 %s → %s", (status, hasNote, text) => {
+    expect(reportPhase(status, hasNote)).toBe(text);
+  });
+});
+
+describe("reportAction (카드의 버튼)", () => {
+  it("done은 읽기, partial은 읽기 + 다시 쓰기, failed는 다시 쓰기", () => {
+    expect(reportAction("done", false)).toEqual({ read: true, retry: null });
+    expect(reportAction("partial", false)).toEqual({ read: true, retry: "button" });
+    expect(reportAction("failed", false)).toEqual({ read: false, retry: "button" });
+  });
+
+  it("정지 중이면 [다시 쓰기] 대신 마감 안내", () => {
+    expect(reportAction("failed", true)).toEqual({ read: false, retry: "paused" });
+    expect(reportAction("partial", true)).toEqual({ read: true, retry: "paused" });
+  });
+
+  it("그 밖의 상태는 버튼이 없다", () => {
+    for (const s of ["queued", "running", "refused", "safety"]) expect(reportAction(s, false)).toEqual({ read: false, retry: null });
   });
 });
 
@@ -101,63 +113,5 @@ describe("retryKept (다시 쓰기가 실패해 앞의 글을 남겼다)", () =>
     expect(retryKept("partial", "retryable")).toBe(true);
     expect(retryKept("partial", null)).toBe(false);
     expect(retryKept("failed", "retryable")).toBe(false);
-  });
-});
-
-describe("episodeAction (편 카드의 버튼)", () => {
-  it("done은 읽기, partial은 읽기 + 다시 쓰기, failed는 다시 쓰기", () => {
-    expect(episodeAction("done", false)).toEqual({ read: true, retry: null });
-    expect(episodeAction("partial", false)).toEqual({ read: true, retry: "button" });
-    expect(episodeAction("failed", false)).toEqual({ read: false, retry: "button" });
-  });
-
-  it("정지 중이면 [다시 쓰기] 대신 마감 안내", () => {
-    expect(episodeAction("failed", true)).toEqual({ read: false, retry: "paused" });
-    expect(episodeAction("partial", true)).toEqual({ read: true, retry: "paused" });
-  });
-
-  it("그 밖의 상태는 버튼이 없다", () => {
-    for (const s of ["queued", "running", "refused", "safety"]) expect(episodeAction(s, false, 2)).toEqual({ read: false, retry: null });
-    for (const s of ["running", "refused", "safety"]) expect(episodeAction(s, false, 1)).toEqual({ read: false, retry: null });
-  });
-
-  it("1편이 queued면 [다시 쓰기]를 준다(정상 흐름은 202 전에 running이라 화면이 보는 queued 1편은 시작 전 유실이다)", () => {
-    expect(episodeAction("queued", false, 1)).toEqual({ read: false, retry: "button" });
-    expect(episodeAction("queued", true, 1)).toEqual({ read: false, retry: "paused" });
-  });
-});
-
-describe("statCards (생각하는 동안 돌아가며 보여 줄 통계)", () => {
-  const kst = (d: number, h: number, mi: number) => Date.UTC(2026, 9, d, h, mi) - 9 * 3_600_000;
-  const rows: [string, number][] = [
-    ["철수", kst(1, 20, 0)],
-    ["민지", kst(1, 20, 4)],
-    ["철수", kst(1, 23, 0)],
-    ["철수", kst(2, 20, 0)],
-    ["민지", kst(2, 20, 4)],
-  ];
-  const messages: ChatMessage[] = rows.map(([sender, ts], id) => ({ id, ts, sender, kind: "text", text: "안녕", line: id + 1 }));
-  const stats = computeStats(messages);
-
-  it("메시지 수·가장 많이 보낸 사람·최장 연속·가장 많았던 날·심야 비율·메시지 많은 두 사람의 답장 간격", () => {
-    expect(statCards(stats)).toEqual([
-      { label: "메시지", value: "5개" },
-      { label: "가장 많이 보낸 사람", value: "철수 · 60%" },
-      { label: "최장 연속", value: "2일" },
-      { label: "가장 많았던 날", value: "2026-10-01 · 3개" },
-      { label: "심야 비율 (22~5시)", value: "20%" },
-      { label: "철수의 답장 간격", value: "2시간 56분" },
-      { label: "민지의 답장 간격", value: "4분" },
-    ]);
-  });
-
-  it("답장이 없는 사람·가장 많았던 날이 없으면 그 카드는 뺀다", () => {
-    const one = computeStats([{ id: 0, ts: kst(1, 12, 0), sender: "철수", kind: "text", text: "안녕", line: 1 }]);
-    expect(statCards({ ...one, busiestDay: null }).map((c) => c.label)).toEqual([
-      "메시지",
-      "가장 많이 보낸 사람",
-      "최장 연속",
-      "심야 비율 (22~5시)",
-    ]);
   });
 });

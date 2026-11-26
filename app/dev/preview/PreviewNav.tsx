@@ -5,8 +5,7 @@ import { cn } from "@/lib/utils";
 const LINKS = [
   { href: "/dev/preview", key: "sheet", label: "조각 모음" },
   { href: "/dev/preview/home", key: "home", label: "대화 홈" },
-  { href: "/dev/preview/episode", key: "episode", label: "편 읽기" },
-  { href: "/dev/preview/steps", key: "steps", label: "진행" },
+  { href: "/dev/preview/report", key: "report", label: "리포트 읽기" },
   { href: "/dev/preview/share", key: "share", label: "공유 화면" },
 ];
 

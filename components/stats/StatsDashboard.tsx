@@ -197,7 +197,6 @@ function Crossed({ stats, me, look }: { stats: ChatStats; me: string; look: Char
           ))}
         </ul>
       )}
-      <p className={look === "scrap" ? "text-base font-bold" : "text-base font-medium"}>어떻게 느꼈나요?</p>
     </ChartCard>
   );
 }

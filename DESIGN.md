@@ -10,7 +10,7 @@ UI 작업 전에 이 문서를 읽고 따른다. 값의 원본은 코드다: 토
 
 | 화면 | 적용 |
 | --- | --- |
-| 대화 홈 `/c/[id]`, 편 읽기 `/c/[id]/e/[n]`, 진행 `/c/[id]/steps`, 공유 `/s/[token]` | 종이 카드·표지 테이프 한 조각·형광펜·폴라로이드·칩·인용 메모·크레파스 막대, 430px 다이어리 틀 |
+| 대화 홈 `/c/[id]`, 리포트 읽기 `/c/[id]/report`, 공유 `/s/[token]` | 종이 카드·표지 테이프 한 조각·형광펜·폴라로이드·칩·인용 메모·크레파스 막대, 430px 다이어리 틀 |
 | 없는 주소·사라진 공유 링크(404, `app/not-found.tsx`·`app/s/[token]/not-found.tsx`) | 430px 다이어리 틀, 떼어 낸 사진 빈자리(점선 + 테이프), 형광펜 제목 종이 한 장, [처음 화면으로] (`MissingPage`) |
 | 홈 `/`, 초대 코드, 업로드 `/new`, 안내 `/about` | 모눈종이 바탕과 글꼴만. 업로드의 통계 미리보기는 `StatsDashboard look="plain"`(둥근 카드, 색은 리포트와 같은 크레파스) |
 
@@ -39,10 +39,10 @@ UI 작업 전에 이 문서를 읽고 따른다. 값의 원본은 코드다: 토
 
 | 쓰임 | 크기·굵기 |
 | --- | --- |
-| 표지·편 제목 h1 | 28px(`text-[1.75rem]`) 700, `tracking-tight` (홈 로고 32px) |
+| 표지·리포트 제목 h1 | 28px(`text-[1.75rem]`) 700, `tracking-tight` (홈 로고 32px) |
 | 섹션 제목 h2 | 20~22px(`text-[1.25rem]`~`text-[1.375rem]`) 700, `tracking-tight` |
 | 카드·차트 제목 h3 | 18px(`text-[1.125rem]`) 700 |
-| 작은 제목·메모(“다음 편 예고”, “← 대화 홈”, 폴라로이드 캡션) | 16px(`text-base`) |
+| 작은 제목·메모(“← 대화 홈”, 폴라로이드 캡션) | 16px(`text-base`) |
 | 칩 | 15px 400, 자간 -0.01em |
 
 - 빌드 때 받아 `/_next/static/media`에서 낸다. CSP `font-src`는 `default-src 'self'`라 외부 글꼴 주소를 쓰면 막힌다
@@ -56,18 +56,18 @@ UI 작업 전에 이 문서를 읽고 따른다. 값의 원본은 코드다: 토
 
 - 리포트 화면은 `PageFrame`(`components/episode/PageState.tsx`): `max-w-[430px] mx-auto px-4`, 카드 사이 `gap-7`. 기운 카드·테이프가 옆으로 삐져나와도 가로 스크롤이 생기지 않게 `overflow-x-clip`
 - 카드는 한 줄로 쌓는다. 430px 안에서 `sm:grid-cols-2`를 쓰지 않는다(브레이크포인트는 화면 폭 기준이라 다이어리 폭과 어긋난다)
-- 글은 왼쪽 정렬. 가운데 정렬은 폴라로이드 캡션과 진행 화면의 노란 메모지만
+- 글은 왼쪽 정렬. 가운데 정렬은 폴라로이드 캡션만
 - 한글은 `word-break: keep-all` + `overflow-wrap: break-word`(앱 전체). keep-all에서는 띄어 쓰지 않은 긴 글(ㅋ 줄, 붙여 쓴 문장)이 끊을 곳 없는 한 단어라서, grid 칸이 그 폭만큼 넓어져 카드 밖으로 잘린다. 그래서
-  - 글이 든 grid는 `grid-cols-1`(`minmax(0,1fr)`)로 칸 폭을 부모에 묶는다(`PageFrame`·`ReportCapture`·편 카드·메모지·피드백 목록)
-  - 모델이 쓴 글과 인용(헤드라인·dek·섹션 제목·문단·예고·진행 메모·인용·보낸 사람)은 `wrap-anywhere`(`overflow-wrap: anywhere`)
+  - 글이 든 grid는 `grid-cols-1`(`minmax(0,1fr)`)로 칸 폭을 부모에 묶는다(`PageFrame`·`ReportCapture`·리포트 카드·피드백 목록)
+  - 모델이 쓴 글과 인용(헤드라인·dek·섹션 제목·문단·진행 메모·인용·보낸 사람)은 `wrap-anywhere`(`overflow-wrap: anywhere`)
   - `PageFrame`이 가로를 잘라서 안에서 넘친 글은 문서 가로 스크롤로 드러나지 않는다. e2e `expectNoHorizontalScroll`은 문서·`main`의 넘침과, 보이는 글자가 화면과 잘라 내는 조상 안에 있는지까지 본다(375px, ㅋ 줄 인용·붙여 쓴 문단 포함)
 
 ## 콜라주 조각 (`components/scrap/`)
 
 | 조각 | 규칙 |
 | --- | --- |
-| `Paper` | 종이 한 장. 모서리 8px, 1px 선 수준의 아주 옅은 그림자, **기울이지 않는다**(`tilt`·`calm`은 남아 있지만 `tilt.ts`에서 0°. 다시 기울이려면 `TILT_CLASS`만 바꾼다). `tone`: `sheet`(흰 종이)·`butter`(노란 메모지: 다음 편 예고·진행 통계)·`kraft`(크라프트지: 작은 숫자 칸) |
-| `MaskingTape` | **각 화면 맨 위 표지 카드(`tape={tapeAt(0)}`)에만 한 조각.** 편 카드·섹션·차트·공유 패널에는 붙이지 않는다. 반투명(`mix-blend-mode: multiply`), 양 끝이 들쭉날쭉, 살짝 기움. 모서리 테이프는 가늘고 짧게 모서리에 비껴 붙여 첫 줄 글자를 덮지 않고, 카드 바깥으로 8px만 나가 375px 화면 끝에서 잘리지 않는다 |
+| `Paper` | 종이 한 장. 모서리 8px, 1px 선 수준의 아주 옅은 그림자, **기울이지 않는다**(`tilt`·`calm`은 남아 있지만 `tilt.ts`에서 0°. 다시 기울이려면 `TILT_CLASS`만 바꾼다). `tone`: `sheet`(흰 종이)·`butter`(노란 메모지)·`kraft`(크라프트지: 작은 숫자 칸) |
+| `MaskingTape` | **각 화면 맨 위 표지 카드(`tape={tapeAt(0)}`)에만 한 조각.** 리포트 카드·섹션·차트·공유 패널에는 붙이지 않는다. 한 화면에 `.tape`는 하나다. 반투명(`mix-blend-mode: multiply`), 양 끝이 들쭉날쭉, 살짝 기움. 모서리 테이프는 가늘고 짧게 모서리에 비껴 붙여 첫 줄 글자를 덮지 않고, 카드 바깥으로 8px만 나가 375px 화면 끝에서 잘리지 않는다 |
 | `Highlight` | 제목 글자 뒤 아래쪽 절반의 단색 띠(하드 스톱). `highlightAt(i)`로 노랑부터 민트와 번갈아. h1·h2 제목에만 긋고, 차트 카드 제목(h3)에는 긋지 않는다 |
 | `Polaroid` / `PolaroidStrip` | 흰 테두리, 아래 여백이 두꺼운 사진. 사진 칸에 큰 숫자(Pretendard 굵게, tabular, 칸 폭에 맞춰 크기), 아래 여백에 캡션(16px). `<dl>` 안에서 읽는 순서는 캡션 → 숫자, 화면은 숫자가 위 |
 | `Sticker` | 칩: 옅은 종이색(`bg-paper`) + 1px 선, 알약 모양, 15px 보통 굵기, 기울이지 않음. 색은 한 가지(필요할 때만 `tone`). 긴 글자는 한 줄 말줄임 |
@@ -76,8 +76,8 @@ UI 작업 전에 이 문서를 읽고 따른다. 값의 원본은 코드다: 토
 
 리포트 화면이 쓰는 조합:
 
-- 표지 제목(`SERIES_TITLE`: “단톡방 연재”·“둘의 대화 연재”)은 굵은 제목 + 노랑 형광펜. 대화 홈과 공유 화면이 같은 제목을 쓴다
-- `CoverStickers`(`components/episode`): 컨셉 → 기간(첫 메시지 ~ 마지막 메시지) → 멤버 이름(6명까지, 넘으면 “외 N명”)
+- 표지 제목(`SERIES_TITLE`: “단톡방 연재”·“둘의 대화 연재”)은 굵은 제목 + 노랑 형광펜. 대화 홈·리포트·공유 화면이 같은 제목을 쓴다(리포트의 빈 헤드라인도 이 제목으로 대신한다)
+- `CoverStickers`(`components/episode`): 말투(`TONES[tone].label`) → 기간(첫 메시지 ~ 마지막 메시지) → 멤버 이름(6명까지, 넘으면 “외 N명”)
 - `KpiPolaroids`(`components/stats`): 주고받은 메시지 · 함께한 날(기간 날수, 양 끝 포함) · 가장 뜨거웠던 날(busiestDay 개수와 날짜)
 - 섹션 아이콘은 h2 앞의 스티커(`aria-hidden`)
 - 통계는 `StatsDashboard look="scrap"`: 차트 카드는 `Paper`(테이프 없음), 막대는 `.crayon`, 축 글자 12px
@@ -90,13 +90,12 @@ UI 작업 전에 이 문서를 읽고 따른다. 값의 원본은 코드다: 토
 
 | 화면 | 안 | 밖(아래) |
 | --- | --- | --- |
-| 대화 홈 | 표지(고지·제목·스티커·읽은 범위·삭제 예정일), 폴라로이드 | 편 카드([N편 읽기]·[다시 쓰기]), 공유 패널, 대화 통계, [지금 삭제] |
-| 편 읽기 | 편 전체(표지·스티커·폴라로이드·섹션·근거 메모지·다음 편 예고) | 문단 [틀렸어요] 모음(`ParagraphFeedback`), [N+1편 읽기] |
-| 진행 | 표지, 정지 안내, 노란 메모지 통계, 편별 진행 기록, 실패 안내 | [1편 읽기]·[대화 홈] |
-| 공유 | 표지(고지·스티커), 폴라로이드, 보여 줄 편들 | [나도 해보기] |
+| 대화 홈 | 표지(고지·제목·말투 칩·읽은 범위·삭제 예정일), 폴라로이드 | AI 리포트 카드(상태 줄·진행 메모·[리포트 읽기]·[다시 쓰기]), 공유 패널, 대화 통계, [지금 삭제] |
+| 리포트 읽기 | 리포트 전체(표지·스티커·폴라로이드·섹션·근거 메모지) | 문단 [틀렸어요] 모음(`ParagraphFeedback`) |
+| 공유 | 리포트 전체(`ReportView` 하나, 리포트가 없으면 표지와 안내) | [나도 해보기] |
 
 “← 대화 홈” 같은 이동 링크와 “일부 문단만 남았어요” 같은 알림은 위쪽 바깥에 둔다.
-버튼을 옮길 때는 글자와 역할(role)을 바꾸지 않는다. e2e가 글자·역할·영역 이름(`region "1편"`, `region "공유"`)으로 찾는다.
+버튼을 옮길 때는 글자와 역할(role)을 바꾸지 않는다. e2e가 글자·역할·영역 이름(`region "AI 리포트"`, `region "공유"`)으로 찾는다.
 
 ## 버튼·누르는 영역·포커스
 
@@ -128,13 +127,12 @@ UI 작업 전에 이 문서를 읽고 따른다. 값의 원본은 코드다: 토
 ```
 pnpm dev        # 그 뒤
 http://localhost:3000/dev/preview            # 조각 모음(종이·테이프·형광펜·칩·폴라로이드·인용 메모·크레파스)
-http://localhost:3000/dev/preview/home       # 대화 홈
-http://localhost:3000/dev/preview/episode    # 편 읽기
-http://localhost:3000/dev/preview/steps      # 진행
+http://localhost:3000/dev/preview/home       # 대화 홈(리포트를 쓰는 중 + 진행 메모)
+http://localhost:3000/dev/preview/report     # 리포트 읽기
 http://localhost:3000/dev/preview/share      # 공유 화면
 ```
 
-- 진짜 화면 컴포넌트(`ConversationHomeView`·`EpisodeReaderView`·`StepsFeedView`·`SharedReport`)에 가짜 데이터를 넣어 그린다:
-  `test/syntheticChat.ts`의 가짜 단톡방(“멤버01”…) → `computeStats`, 손으로 쓴 편(`app/dev/preview/data.ts`, `{{stat:…}}`·근거 인용·다음 편 예고 포함)
+- 진짜 화면 컴포넌트(`ConversationHomeView`·`ReportReaderView`·`SharedReport`)에 가짜 데이터를 넣어 그린다:
+  `test/syntheticChat.ts`의 가짜 단톡방(“멤버01”…) → `computeStats`, 손으로 쓴 리포트(`app/dev/preview/data.ts`, `{{stat:…}}`·근거 인용 포함)
 - 프로덕션 빌드에서는 404(`app/dev/preview/gate.ts`). 링크로 들어오는 곳이 없고, 초대 게이트(proxy.ts)는 `/new`·`/c/*`만 막아 dev에서 바로 열린다
 - 버튼은 진짜 것이다: [다시 쓰기]는 아무것도 보내지 않고 안내만 하고, 공유는 없는 대화라 실패하며, [지금 삭제]는 404를 “이미 지워짐”으로 보고 처음 화면으로 간다

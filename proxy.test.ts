@@ -55,7 +55,7 @@ describe("proxy CSP", () => {
 });
 
 describe("proxy 초대 게이트", () => {
-  it.each(["/new", "/c/x", "/c/abc/steps", "/c/abc/e/2"])("쿠키가 없으면 %s를 /로 보낸다", (path) => {
+  it.each(["/new", "/c/x", "/c/abc/report"])("쿠키가 없으면 %s를 /로 보낸다", (path) => {
     const res = proxy(request(path));
     expect(res.status).toBe(307);
     expect(getRedirectUrl(res)).toBe(`${ORIGIN}/`);
@@ -74,7 +74,7 @@ describe("proxy 초대 게이트", () => {
   });
 
   it("서명이 맞으면 통과시킨다(폐기 여부는 API·페이지가 확인한다)", () => {
-    for (const path of ["/new", "/c/abc/e/1"]) {
+    for (const path of ["/new", "/c/abc/report"]) {
       const res = proxy(request(path, validCookie()));
       expect(getRedirectUrl(res)).toBeNull();
       expect(res.headers.get("x-middleware-next")).toBe("1");
@@ -113,7 +113,7 @@ describe("proxy matcher", () => {
   });
 
   it("페이지와 API는 모두 지난다", () => {
-    for (const path of ["/", "/new", "/c/x", "/c/x/e/1", "/s/token", "/about", "/api/conversations", "/api/health"]) {
+    for (const path of ["/", "/new", "/c/x", "/c/x/report", "/s/token", "/about", "/api/conversations", "/api/health"]) {
       expect(matches(path), path).toBe(true);
     }
   });

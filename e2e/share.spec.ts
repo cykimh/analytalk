@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { login } from "./helpers";
 
-// 테스트 모드 서버에는 Claude가 없어 대화를 만들 수 없다(내용이 든 공유 화면의 범위·숨김·폐기 반영은 shares.test.ts가 저장소까지 시험한다).
+// 테스트 모드 서버에는 Claude가 없어 대화를 만들 수 없다(내용이 든 공유 화면과 폐기 반영은 shares.test.ts가 저장소까지 시험한다).
 // 여기서는 대화 없이 확인할 수 있는 공개 경계를 본다: 모르는 토큰, 응답 헤더, 고정 OG 이미지, 공유 API의 인증.
 
 const UNKNOWN_TOKEN = "AAAAAAAAAAAAAAAAAAAAAA";
@@ -29,9 +29,9 @@ test("컨셉별 고정 OG 이미지가 있다", async ({ request }) => {
 });
 
 test("공유 API는 세션이 없으면 401, 없는 대화는 404", async ({ page, request }) => {
-  expect((await request.post("/api/shares", { data: { id: ID, scope: "all", hidden: [] } })).status()).toBe(401);
+  expect((await request.post("/api/shares", { data: { id: ID } })).status()).toBe(401);
   expect((await request.delete("/api/shares", { data: { id: ID } })).status()).toBe(401);
   await login(page);
-  expect((await page.request.post("/api/shares", { data: { id: ID, scope: "all", hidden: [] } })).status()).toBe(404);
+  expect((await page.request.post("/api/shares", { data: { id: ID } })).status()).toBe(404);
   expect((await page.request.delete("/api/shares", { data: { id: ID } })).status()).toBe(404);
 });

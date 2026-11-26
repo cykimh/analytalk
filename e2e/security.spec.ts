@@ -51,7 +51,7 @@ test("pnpm build 출력에서 페이지 라우트가 모두 ƒ(요청마다 렌�
   const routes = [...log.matchAll(/^[┌├└]\s+(\S+)\s+(\/\S*)/gm)].map(([, mark, route]) => ({ mark, route }));
   const pages = routes.filter((r) => !r.route.startsWith("/api/"));
   expect(pages.map((r) => r.route)).toEqual(
-    expect.arrayContaining(["/", "/_not-found", "/about", "/new", "/c/[id]", "/c/[id]/steps", "/c/[id]/e/[n]", "/s/[token]"]),
+    expect.arrayContaining(["/", "/_not-found", "/about", "/new", "/c/[id]", "/c/[id]/report", "/s/[token]"]),
   );
   expect(pages.filter((r) => r.mark !== "ƒ")).toEqual([]);
 });
@@ -140,7 +140,7 @@ test.describe("초대 게이트", () => {
   test("쿠키 없는 새 context로 /new·/c/x에 가면 /로 간다", async ({ browser, baseURL }) => {
     const context = await browser.newContext({ baseURL });
     const page = await context.newPage();
-    for (const target of ["/new", "/c/x", "/c/x/e/1"]) {
+    for (const target of ["/new", "/c/x", "/c/x/report"]) {
       await page.goto(target);
       await expect(page).toHaveURL(/\/$/);
       await expect(page.getByLabel("초대 코드")).toBeVisible();
