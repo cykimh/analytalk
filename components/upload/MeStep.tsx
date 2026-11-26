@@ -22,7 +22,7 @@ export function MeStep({
   return (
     <StepFrame
       title="나는 누구?"
-      description="이 대화를 내보낸 본인을 골라 주세요. 리포트는 본인 입장에서 써요."
+      description="이 대화를 내보낸 본인을 골라 주세요. 나를 표시하는 데만 써요. 리포트는 방 전체를 3인칭으로 써요."
       onBack={onBack}
       action={<NextButton onClick={onNext} disabled={me === null} />}
     >

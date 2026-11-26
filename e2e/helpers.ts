@@ -53,6 +53,11 @@ export function androidChat({ badLines = 0, bodies = [] as string[] } = {}): str
   return [fixtureText("android-ko.txt").trimEnd(), ...bad, `2024년 3월 15일 오전 9:02, 철수 : ${UNIQUE_SENTENCE}`, ...more, ""].join("\n");
 }
 
+/** 이름 정리 단계에서 사람 하나를 분석에서 뺀다 */
+export async function excludeMember(page: Page, name: string): Promise<void> {
+  await page.getByRole("checkbox", { name: `${name} 분석에서 빼기`, exact: true }).check();
+}
+
 export const textUpload = (name: string, text: string) => ({ name, mimeType: "text/plain", buffer: Buffer.from(text, "utf8") });
 
 /** 폴더 안에 txt와 미디어가 든 내보내기 zip */

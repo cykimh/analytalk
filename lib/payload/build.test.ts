@@ -25,10 +25,12 @@ const chat = (rows: Raw[]): ChatMessage[] =>
     line: id + 1,
   }));
 
-const REAL = ["김민지", "민지폰", "이철수", "박영희", "민지", "철수", "영희"];
 const MAP: NameMap = { 김민지: "P1", 민지폰: "P1", 이철수: "P2", 박영희: "P3" };
+/** 분석에서 뺀 멤버의 이름과 고유한 문장 */
+const OUT = "박영희";
+const OUT_LINE = "영희만의고유문장";
 
-/** 원래 이름으로 된 3일치 대화(하루 100개)를 이름 정리까지 거친다 */
+/** 3일치 대화(하루 100개 + 뺀 멤버의 메시지)를 이름 정리까지 거친다. 본문은 바뀌지 않는다 */
 function named(): ChatMessage[] {
   const rows: Raw[] = [[null, kst(2026, 10, 1, 8), "박영희님이 들어왔습니다."]];
   for (let day = 1; day <= 3; day++) {
@@ -37,8 +39,9 @@ function named(): ChatMessage[] {
       const text = ["김민지야 뭐해", "철수랑 영화 보자", "영희 나갔대", "민지폰으로 보냄", "ㅋㅋ 내일 봐"][i % 5];
       rows.push([sender, kst(2026, 10, day, 9) + i * MIN, text]);
     }
+    rows.push([OUT, kst(2026, 10, day, 12), OUT_LINE]);
   }
-  const r = applyDisplayNames(chat(rows), MAP, ["박영희"], [["김민지", "민지폰"]]);
+  const r = applyDisplayNames(chat(rows), { map: MAP, merged: [["김민지", "민지폰"]], excluded: [OUT] });
   if (!r.ok) throw new Error(r.reason);
   return r.messages;
 }
@@ -75,9 +78,17 @@ describe("buildPayload", () => {
     expect(p.period).toEqual({ start: "2026-10-01", end: "2026-10-03" });
   });
 
-  it("JSON 전체에 원래 이름이 0건", () => {
-    const json = JSON.stringify(build(named(), 2000));
-    for (const name of REAL) expect([name, json.includes(name)]).toEqual([name, false]);
+  it("뺀 멤버의 이름(발신자로서)·본문·stats 키가 JSON에 0건", () => {
+    const messages = named();
+    expect(messages.some((m) => m.sender === OUT || m.text === OUT_LINE)).toBe(false);
+    const p = build(messages, 1_000_000);
+    const json = JSON.stringify(p);
+    expect(json.includes(OUT_LINE)).toBe(false);
+    expect(p.members).toEqual(["P1", "P2"]);
+    expect(Object.keys(p.stats.byPerson)).toEqual(["P1", "P2"]);
+    expect(json.includes(`"${OUT}"`)).toBe(false);
+    expect(json.includes(`${OUT}|`)).toBe(false);
+    expect(p.msgTotal).toBe(300);
   });
 
   it("별칭 둘을 합치면 stats.byPerson 키가 1개", () => {
@@ -85,7 +96,7 @@ describe("buildPayload", () => {
       ["김민지", kst(2026, 10, 1, 9), "폰에서"],
       ["민지폰", kst(2026, 10, 1, 9, 1), "PC에서"],
     ]);
-    const r = applyDisplayNames(raw, { 김민지: "P1", 민지폰: "P1" }, [], [["김민지", "민지폰"]]);
+    const r = applyDisplayNames(raw, { map: { 김민지: "P1", 민지폰: "P1" }, merged: [["김민지", "민지폰"]] });
     if (!r.ok) throw new Error(r.reason);
     const p = build(r.messages);
     expect(Object.keys(p.stats.byPerson)).toEqual(["P1"]);

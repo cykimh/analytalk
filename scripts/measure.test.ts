@@ -5,7 +5,7 @@ import { buildPayload, payloadTokens } from "@/lib/payload/build";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { syntheticGroupChat } from "@/test/syntheticChat";
 import {
-  autoNames,
+  displayNames,
   judge,
   measurePayload,
   measureRun,
@@ -40,11 +40,9 @@ describe("parseArgs", () => {
   });
 });
 
-describe("autoNames", () => {
-  it("발신자와 알림 속 이름에 P1…을 처음 나온 순서로 준다", () => {
-    const msgs = [{ sender: "철수" }, { sender: "영희" }, { sender: "철수" }, { sender: null }] as ChatMessage[];
-    const r = autoNames({ participants: ["철수", "영희"], systemNames: ["영희", "민수"], messages: msgs });
-    expect(r.map).toEqual({ 철수: "P1", 영희: "P2", 민수: "P3" });
+describe("displayNames", () => {
+  it("발신자에게 카톡 이름 그대로(금지 글자만 정리)를 준다", () => {
+    expect(displayNames({ participants: ["철수", "영희.", "a|b", ""] })).toEqual({ 철수: "철수", "영희.": "영희", "a|b": "ab" });
   });
 });
 

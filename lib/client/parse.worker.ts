@@ -1,23 +1,20 @@
 // 파싱·이름 정리·페이로드 만들기를 돌리는 Web Worker. 원본 파일과 파싱 결과는 이 브라우저 안에만 있다.
 // 요청 {id, op, …} → 응답 {id, ok, result | error}. 화면 쪽 호출은 lib/client/worker.ts가 맡는다.
 import { buildPayload, buildPayloadForBudget, type Payload } from "@/lib/payload/build";
-import { applyDisplayNames, applyNameFixes, findNameLeftovers, type NameError, type NameLeftover, type NameMap } from "@/lib/payload/names";
+import { applyDisplayNames, type NameError, type NameMap } from "@/lib/payload/names";
 import { type ChatMessage, type ParseResult, parseExport } from "@/lib/parse/parse";
 import { readUploads } from "@/lib/parse/uploads";
 
 export interface RenameInput {
   messages: ChatMessage[];
   map: NameMap;
-  systemNames: string[];
   /** [같은 사람]으로 합친 원래 이름 묶음 */
   merged: string[][];
-  /** 이름을 바꾼 뒤에도 남은 원래 이름 조각 → 그 자리에 넣을 표시 이름. findNameLeftovers와 같은 방식으로 찾아 바꾼다(applyNameFixes) */
-  fixes: Record<string, string>;
+  /** 분석에서 뺀 원래 이름(합친 사람 포함). 이 사람들의 메시지는 결과에 없다 */
+  excluded: string[];
 }
 
-export type RenameResult =
-  | { ok: true; messages: ChatMessage[]; leftovers: NameLeftover[] }
-  | { ok: false; reason: NameError };
+export type RenameResult = { ok: true; messages: ChatMessage[] } | { ok: false; reason: NameError };
 
 /** 첫 요청은 inputBudget(buildPayloadForBudget), 413 뒤 한 번 다시 만들 때는 tokenBudget(buildPayload) */
 export type BuildRequest = Parameters<typeof buildPayload>[0] | Parameters<typeof buildPayloadForBudget>[0];
@@ -31,11 +28,8 @@ export type WorkerResult<R extends WorkerRequest> = R extends { op: "parse" }
 export type WorkerResponse = { id: number; ok: true; result: unknown } | { id: number; ok: false; error: string };
 
 function rename(input: RenameInput): RenameResult {
-  const named = applyDisplayNames(input.messages, input.map, input.systemNames, input.merged);
-  if (!named.ok) return named;
-  const messages = applyNameFixes(named.messages, input.fixes, input.map);
   // 안전 신호는 보낼 메시지가 정해진 뒤(페이로드를 만든 뒤) 화면이 sentSafetySignal로 본다
-  return { ok: true, messages, leftovers: findNameLeftovers(messages, input.map) };
+  return applyDisplayNames(input.messages, { map: input.map, merged: input.merged, excluded: input.excluded });
 }
 
 export async function runOp<R extends WorkerRequest>(req: R): Promise<WorkerResult<R>>;

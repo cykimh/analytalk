@@ -26,7 +26,7 @@ import { type Payload, payloadIndex, payloadTokens } from "../lib/payload/build"
 import { parseExport } from "../lib/parse/parse";
 import { readUploads } from "../lib/parse/uploads";
 import { privilegedDb } from "../lib/server/privileged";
-import { autoNames, measurePayload } from "./measure";
+import { displayNames, measurePayload } from "./measure";
 
 // ── 인자 ──
 
@@ -344,8 +344,7 @@ async function main(): Promise<void> {
   for (const f of files) {
     const parsed = parseExport(await readUploads([new File([readFileSync(join(dir, f.path))], basename(f.path))]));
     if (parsed.formatId === null) throw new Error(`형식을 알아보지 못한 파일이 있다(${f.concept} ${counter[f.concept] + 1}번째)`);
-    const { map } = autoNames(parsed);
-    const named = applyDisplayNames(parsed.messages, map, parsed.systemNames);
+    const named = applyDisplayNames(parsed.messages, { map: displayNames(parsed) });
     if (!named.ok) throw new Error(`이름 부여 실패: ${named.reason}`);
     const label = `${f.concept}-${++counter[f.concept]}${f.injection ? "-injection" : ""}`;
     const payload = measurePayload(named.messages, f.concept);

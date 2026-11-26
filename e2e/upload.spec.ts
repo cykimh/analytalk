@@ -18,15 +18,17 @@ async function upload(page: Page, file: Parameters<ReturnType<Page["getByLabel"]
   await page.getByLabel("대화 파일").setInputFiles(file);
 }
 
-/** 확인 → 나는 누구? → 이름 정리(기본 이름) → 통계까지 */
-async function toStats(page: Page) {
+/** 확인 → 나는 누구? → 이름 정리(기본 이름) → 방 종류·말투 → 보낼 내용 확인까지 */
+async function toReview(page: Page) {
   await next(page).click();
   await expect(page.getByRole("heading", { name: "나는 누구?" })).toBeVisible();
   await page.getByRole("radio", { name: "민지", exact: true }).check();
   await next(page).click();
   await expect(page.getByRole("heading", { name: "이름 정리" })).toBeVisible();
   await next(page).click();
-  await expect(page.getByRole("heading", { name: "대화 통계" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "방 종류와 말투" })).toBeVisible();
+  await next(page).click();
+  await expect(page.getByRole("heading", { name: "보낼 내용 확인" })).toBeVisible({ timeout: 15_000 });
 }
 
 test.describe("업로드 흐름", () => {
@@ -42,11 +44,8 @@ test.describe("업로드 흐름", () => {
     await expect(page.getByText("인식률 100%")).toBeVisible();
     await expect(page.getByText(/인식하지 못한 줄이 있어요/)).toHaveCount(0);
 
-    await toStats(page);
-    await expect(page.getByText("최장 연속")).toBeVisible();
-    await page.getByRole("button", { name: "보낼 내용 확인" }).click();
-    await expect(page.getByRole("heading", { name: "보낼 내용 확인" })).toBeVisible();
-    await expect(page.getByText(/미국 Anthropic으로 가서 AI가 읽어요/)).toBeVisible();
+    await toReview(page);
+    await expect(page.getByText(/미국 Anthropic으로 가요/)).toBeVisible();
     await expect(page.getByText(/2024-03-14 이후 11개 전부/)).toBeVisible();
     await expect(page.getByRole("checkbox", { name: "방 사람들에게 말했어요" })).toBeVisible();
     await expect(page.getByRole("button", { name: "AI 연재 만들기" })).toBeDisabled();
@@ -98,24 +97,29 @@ test.describe("업로드 흐름", () => {
     await expect(next(page)).toBeEnabled();
   });
 
-  test("본문에 남은 원래 이름 조각을 보여 주고, 고르면 표시 이름으로 바꿔 보낸다", async ({ page }) => {
-    await upload(page, textUpload("KakaoTalkChats.txt", androidChat({ bodies: ["민지수 왔어"] })));
+  test("본문은 그대로 보내고 링크는 사이트 이름만 남긴다", async ({ page }) => {
+    await upload(page, textUpload("KakaoTalkChats.txt", androidChat({ bodies: ["https://www.youtube.com/watch?v=abc 봐", "민지수 왔어"] })));
+    await toReview(page);
+    await page.getByText("미리보기 20줄").click();
+    const preview = page.locator("pre");
+    await expect(preview).toContainText("[링크:youtube.com]");
+    await expect(preview).not.toContainText("watch?v=abc");
+    // 본문 속 이름은 바꾸지 않는다
+    await expect(preview).toContainText("민지수 왔어");
+    await expect(preview).toContainText("A=민지");
+  });
+
+  test("방 종류·말투 단계: 기본 말투는 팩트 일침이고 직장·팀이면 말투를 숨긴다", async ({ page }) => {
+    await upload(page, textUpload("KakaoTalkChats.txt", androidChat()));
     await next(page).click();
     await page.getByRole("radio", { name: "민지", exact: true }).check();
     await next(page).click();
     await next(page).click();
-    await expect(page.getByRole("heading", { name: "본문에 남은 이름" })).toBeVisible();
-    await expect(page.getByText("민지수 왔어")).toBeVisible();
-    // "민지"는 민지·"민지, 수아" 둘 다의 조각이라 주인을 정하지 않고 그대로 두기로 시작한다
-    const fix = page.getByLabel("민지 바꾸기");
-    await expect(fix).toHaveValue("");
-    await fix.selectOption("멤버1");
-    await next(page).click();
-    await expect(page.getByRole("heading", { name: "대화 통계" })).toBeVisible();
-    await page.getByRole("button", { name: "보낼 내용 확인" }).click();
-    await page.getByText("미리보기 20줄").click();
-    await expect(page.getByText(/\|[A-Z]\|멤버1수 왔어$/)).toBeVisible();
-    await expect(page.getByText(/민지수/)).toHaveCount(0);
+    await expect(page.getByRole("radio", { name: /팩트 일침/ })).toBeChecked();
+    await expect(page.getByRole("radio", { name: /따뜻한 위로/ })).toBeVisible();
+    await expect(page.getByRole("radio", { name: /예능 중계/ })).toBeVisible();
+    await page.getByRole("radio", { name: /직장·팀/ }).check();
+    await expect(page.getByRole("radio", { name: /팩트 일침/ })).toHaveCount(0);
   });
 
   test.describe("카카오톡 인앱 브라우저", () => {
@@ -157,12 +161,11 @@ test.describe("업로드 흐름", () => {
       await expect(page.getByRole("heading", { name: "이름 정리" })).toBeVisible();
       await expectNoHorizontalScroll(page);
       await next(page).click();
-      await expect(page.getByRole("heading", { name: "본문에 남은 이름" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "방 종류와 말투" })).toBeVisible();
       await expectNoHorizontalScroll(page);
       await next(page).click();
-      await expect(page.getByRole("heading", { name: "대화 통계" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "보낼 내용 확인" })).toBeVisible({ timeout: 15_000 });
       await expectNoHorizontalScroll(page);
-      await page.getByRole("button", { name: "보낼 내용 확인" }).click();
       await page.getByText("미리보기 20줄").click();
       await expectNoHorizontalScroll(page);
     });

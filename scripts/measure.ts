@@ -19,7 +19,7 @@ import { estimateCostUsd } from "../lib/llm/cost";
 import { buildRequest } from "../lib/llm/prompt";
 import { runEpisode } from "../lib/llm/stream";
 import { validateEpisode } from "../lib/llm/validate";
-import { applyDisplayNames, type NameMap } from "../lib/payload/names";
+import { applyDisplayNames, defaultDisplayName, type NameMap } from "../lib/payload/names";
 import { buildPayloadForBudget, type Payload, payloadIndex, payloadTokens } from "../lib/payload/build";
 import { type ChatMessage, parseExport } from "../lib/parse/parse";
 import { readUploads } from "../lib/parse/uploads";
@@ -59,17 +59,9 @@ export function parseArgs(argv: string[]): Args {
 
 // ── 이름 ──
 
-/** 발신자·알림 속 이름에 P1, P2…를 처음 나온 순서로 준다 */
-export function autoNames(p: {
-  participants: string[];
-  systemNames: string[];
-  messages: { sender: string | null }[];
-}): { map: NameMap } {
-  const map: NameMap = {};
-  for (const n of [...p.participants, ...p.systemNames]) {
-    if (n !== "" && !Object.hasOwn(map, n)) map[n] = `P${Object.keys(map).length + 1}`;
-  }
-  return { map };
+/** 발신자마다 기본 표시 이름(카톡 이름에서 금지 글자만 정리한 것)을 준다. 앱의 이름 단계 기본값과 같다 */
+export function displayNames(p: { participants: string[] }): NameMap {
+  return Object.fromEntries(p.participants.filter((n) => n !== "").map((n) => [n, defaultDisplayName(n)]));
 }
 
 // ── 집계 ──
@@ -209,8 +201,7 @@ async function main(): Promise<void> {
   const bytes = readFileSync(args.file);
   const parsed = parseExport(await readUploads([new File([bytes], basename(args.file))]));
   if (parsed.formatId === null) throw new Error("형식을 알아보지 못했다");
-  const { map } = autoNames(parsed);
-  const named = applyDisplayNames(parsed.messages, map, parsed.systemNames);
+  const named = applyDisplayNames(parsed.messages, { map: displayNames(parsed) });
   if (!named.ok) throw new Error(`이름 부여 실패: ${named.reason}`);
 
   const payload = measurePayload(named.messages, args.concept);

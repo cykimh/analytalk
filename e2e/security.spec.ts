@@ -33,14 +33,16 @@ async function watchCsp(page: Page): Promise<string[]> {
 
 const next = (page: Page) => page.getByRole("button", { name: "다음", exact: true });
 
-/** 확인 → 나는 누구? → 이름 정리(기본 이름) → 통계 */
-async function toStats(page: Page) {
+/** 확인 → 나는 누구? → 이름 정리(기본 이름) → 방 종류·말투 → 보낼 내용 확인 */
+async function toReview(page: Page) {
   await next(page).click();
   await page.getByRole("radio", { name: "민지", exact: true }).check();
   await next(page).click();
   await expect(page.getByRole("heading", { name: "이름 정리" })).toBeVisible();
   await next(page).click();
-  await expect(page.getByRole("heading", { name: "대화 통계" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "방 종류와 말투" })).toBeVisible();
+  await next(page).click();
+  await expect(page.getByRole("heading", { name: "보낼 내용 확인" })).toBeVisible({ timeout: 15_000 });
 }
 
 test("pnpm build 출력에서 페이지 라우트가 모두 ƒ(요청마다 렌더)다", () => {
@@ -97,15 +99,14 @@ test.describe("CSP 위반 0건", () => {
     expect(violations).toEqual([]);
   });
 
-  test("/new: txt 업로드 → Worker 파싱 → 통계", async ({ page }) => {
+  test("/new: txt 업로드 → Worker 파싱 → 보낼 내용 확인", async ({ page }) => {
     const violations = await watchCsp(page);
     await login(page);
     const res = await page.goto("/new");
     expect(nonceOf(res?.headers()["content-security-policy"])).toBeTruthy();
     await page.getByLabel("대화 파일").setInputFiles(textUpload("KakaoTalkChats.txt", androidChat()));
     await expect(page.getByText("메시지 11개")).toBeVisible();
-    await toStats(page);
-    await expect(page.getByText("최장 연속")).toBeVisible();
+    await toReview(page);
     expect(violations).toEqual([]);
   });
 

@@ -1,7 +1,7 @@
 // 업로드 흐름의 순수 로직(화면 상태 → 이름 맵·확인 문구). DOM 없이 테스트한다.
 import { ANCHOR_FIRST_N } from "@/lib/config";
-import { legendText, type Payload, readBlock } from "@/lib/payload/build";
-import { applyDisplayNames, type NameError, type NameMap } from "@/lib/payload/names";
+import { legendText, memberCodes, type Payload, readBlock } from "@/lib/payload/build";
+import { checkNameMap, defaultDisplayName, type NameError, type NameMap } from "@/lib/payload/names";
 import type { ChatMessage, ParseResult } from "@/lib/parse/parse";
 
 export type Kind = Payload["kind"];
@@ -17,9 +17,9 @@ export const conceptFor = (kind: Kind): Payload["concept"] => (kind === "pair" ?
 /** 줄 인식률(%) 정수. 내려서 98% 미만이 98%로 보이지 않게 한다 */
 export const recognitionPercent = (ratio: number) => Math.floor(ratio * 100 + 1e-9);
 
-/** 이름을 정할 원래 이름: 발신자(처음 나온 순서), 그다음 초대·나감 알림에만 나온 이름 */
-export function nameTargets(parse: Pick<ParseResult, "participants" | "systemNames">): string[] {
-  return [...new Set([...parse.participants, ...parse.systemNames])].filter((n) => n !== "");
+/** 이름을 정할 원래 이름: 발신자(처음 나온 순서) */
+export function nameTargets(parse: Pick<ParseResult, "participants">): string[] {
+  return parse.participants.filter((n) => n !== "");
 }
 
 export interface NameState {
@@ -27,11 +27,20 @@ export interface NameState {
   names: Record<string, string>;
   /** [같은 사람]: 원래 이름 → 대표 원래 이름. 대표는 키가 아니다 */
   sameAs: Record<string, string>;
+  /** 분석에서 뺀 대표(원래 이름). 대표에게 합친 사람도 함께 빠진다 */
+  excluded: string[];
 }
 
-/** 기본 표시 이름은 멤버1…(원래 이름을 그대로 두지 않는다) */
+/** 기본 표시 이름은 카톡 이름(금지 글자만 정리) */
 export function initialNames(targets: string[]): NameState {
-  return { names: Object.fromEntries(targets.map((t, i) => [t, `멤버${i + 1}`])), sameAs: {} };
+  return { names: Object.fromEntries(targets.map((t) => [t, defaultDisplayName(t)])), sameAs: {}, excluded: [] };
+}
+
+/** 대표만 뺄 수 있다(합친 사람은 대표를 따른다). 이미 뺐으면 다시 넣는다 */
+export function toggleExcluded(state: NameState, who: string): NameState {
+  if (state.sameAs[who] !== undefined) return state;
+  const excluded = state.excluded.includes(who) ? state.excluded.filter((x) => x !== who) : [...state.excluded, who];
+  return { ...state, excluded };
 }
 
 /** who(와 who에 합쳐 둔 사람들)를 into에 합친다 */
@@ -66,30 +75,38 @@ export function mergedGroups(sameAs: Record<string, string>): string[][] {
   return [...groups.values()];
 }
 
-/** 지금 이름으로 [다음]을 막을 이유. applyDisplayNames와 같은 판정이다(본문은 넘기지 않아 바로 끝난다) */
-export function nameProblem(state: NameState, targets: string[]): NameError | null {
-  const r = applyDisplayNames([], nameMapOf(state, targets), targets, mergedGroups(state.sameAs));
-  return r.ok ? null : r.reason;
+/** 분석에서 뺀 원래 이름(대표에게 합친 사람 포함) */
+export function excludedNames(state: NameState, targets: string[]): string[] {
+  return targets.filter((t) => state.excluded.includes(rootOf(state.sameAs, t)));
 }
 
-export const NAME_PROBLEM_TEXT: Record<NameError, string> = {
-  empty: "비어 있는 이름이 있어요. 모든 사람에게 표시 이름을 정해 주세요.",
-  invalid: "이름은 20자까지, | . { } < > 와 줄바꿈 같은 쓸 수 없는 글자 없이 정해 주세요.",
+/** 분석에 넣는 대표(합쳐지지 않은 사람 중 뺀 사람을 제외) */
+export function includedRoots(state: NameState, targets: string[]): string[] {
+  return targets.filter((t) => state.sameAs[t] === undefined && !state.excluded.includes(t));
+}
+
+export type NameProblem = NameError | "too_few";
+
+/** 지금 이름으로 [다음]을 막을 이유. 넣은 사람만 검사하고, 넣은 대표가 2명 미만이면 too_few */
+export function nameProblem(state: NameState, targets: string[]): NameProblem | null {
+  if (includedRoots(state, targets).length < 2) return "too_few";
+  const out = new Set(excludedNames(state, targets));
+  return checkNameMap(nameMapOf(state, targets), targets.filter((t) => !out.has(t)), mergedGroups(state.sameAs));
+}
+
+export const NAME_PROBLEM_TEXT: Record<NameProblem, string> = {
+  empty: "비어 있는 이름이 있어요. 분석에 넣는 모든 사람에게 표시 이름을 정해 주세요.",
+  invalid: "이름은 20자까지, | . { } < > 와 줄바꿈 같은 쓸 수 없는 글자 없이 정해 주세요. 전화번호·계좌 같은 숫자는 이름에 쓸 수 없어요.",
   collision: "두 사람에게 같은 이름을 줄 수 없어요. 같은 사람이면 [같은 사람]으로 합쳐 주세요.",
   unmapped: "이름을 정하지 않은 사람이 있어요.",
+  too_few: "분석할 사람이 2명 이상 남아야 AI 리포트를 만들 수 있어요.",
 };
 
-/**
- * 남은 조각을 바꿀 표시 이름 제안. 조각을 품은 원래 이름(대소문자 무시)이 모두 같은 표시 이름이면 그 이름, 아니면 null.
- * 조각은 모두 원래 이름의 일부다(names.ts nameKeys)
- */
-export function leftoverOwner(piece: string, map: NameMap): string | null {
-  const p = piece.toLowerCase();
-  const owners = new Set(Object.entries(map).flatMap(([name, shown]) => (name.toLowerCase().includes(p) ? [shown] : [])));
-  return owners.size === 1 ? [...owners][0] : null;
-}
-
 export interface SendSummary {
+  /** 첫·마지막 메시지의 KST 날짜 `시작 ~ 끝` */
+  period: string;
+  /** 넣은 멤버의 전체 메시지 수 */
+  total: number;
   /** transcript 첫 메시지의 KST 날짜 */
   since: string;
   sent: number;
@@ -97,12 +114,15 @@ export interface SendSummary {
   first: number;
   busy: number;
   masked: number;
+  /** 뺀 멤버(카톡 이름과 메시지 수). 화면에만 있고 페이로드에는 없다 */
+  excluded: { name: string; count: number }[];
+  legend: { code: string; name: string }[];
   /** 범례 줄들 다음에 transcript 앞 20줄 */
   preview: string[];
 }
 
 /** 보낼 내용 확인 화면의 숫자. messages는 페이로드를 만든 메시지(이름 정리 뒤) */
-export function sendSummary(p: Payload, messages: ChatMessage[]): SendSummary {
+export function sendSummary(p: Payload, messages: ChatMessage[], excluded: { name: string; count: number }[]): SendSummary {
   const firstIds = new Set(
     messages
       .filter((m) => m.sender !== null && m.kind !== "system")
@@ -117,12 +137,17 @@ export function sendSummary(p: Payload, messages: ChatMessage[]): SendSummary {
     if (firstIds.has(line.id)) first++;
     else busy++;
   }
+  const codes = memberCodes(p.members);
   return {
+    period: `${p.period.start} ~ ${p.period.end}`,
+    total: p.msgTotal,
     since: p.cutoffAt.slice(0, 10),
     sent: p.msgSent,
     first,
     busy,
     masked: Object.values(p.maskCounts).reduce((a, b) => a + b, 0),
+    excluded,
+    legend: p.members.map((name, i) => ({ code: codes[i], name })),
     preview: [...legendText(p.members).split("\n"), ...p.transcript.split("\n").slice(0, 20)],
   };
 }

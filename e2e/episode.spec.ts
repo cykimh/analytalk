@@ -3,7 +3,7 @@ import { PROMPT_RESERVE_TOKENS, TOKENS_PER_CHAR } from "@/lib/config";
 import { type Payload, payloadTokens } from "@/lib/payload/build";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { computeStats } from "@/lib/stats/compute";
-import { androidChat, expectNoHorizontalScroll, fakeTurnstile, login, textUpload } from "./helpers";
+import { androidChat, excludeMember, expectNoHorizontalScroll, fakeTurnstile, login, textUpload } from "./helpers";
 
 // 대화·상태·다시 쓰기·피드백 API는 page.route로 흉내 낸다(테스트 모드 서버에는 Claude가 없다).
 // 페이지(서버 컴포넌트)의 초대 코드 확인만 진짜 세션을 쓴다.
@@ -14,8 +14,8 @@ const MAX_TOKENS_413 = 12_000;
 /** 413 테스트용 긴 대화: 첫 페이로드가 재시도 예산(maxTokens × 0.95)을 넘도록 철수가 긴 메시지를 더 보낸다 */
 const LONG_BODIES = Array.from({ length: 12 }, (_, i) => `${i + 1}번째 긴 이야기 ${"오늘 저녁에 뭐 먹을지 한참 고민하다가 결국 집 앞 국밥집에 갔어요 ".repeat(12)}`);
 const XSS = "<img src=x onerror=alert(1)>";
-/** android-ko 픽스처의 원래 발신자 이름("민지, 수아" 포함)과 초대 알림의 이름 */
-const ORIGINAL_NAMES = ["민지", "철수", "수아", "영희"];
+/** 영희를 분석에서 뺄 때 영희가 쓴 고유 문장이 든 줄(픽스처에 없는 한 줄) */
+const YOUNGHEE_LINE = "2024년 3월 15일 오전 9:30, 영희 : 영희만의고유문장";
 
 const kst = (d: number, h: number, mi: number) => Date.UTC(2026, 9, d, h, mi) - 9 * 3_600_000;
 /** 표시 이름 민지·철수의 가짜 대화 통계. 민지는 늘 4분 뒤 답한다 */
@@ -167,17 +167,30 @@ const next = (page: Page) => page.getByRole("button", { name: "다음", exact: t
 const create = (page: Page) => page.getByRole("button", { name: "AI 연재 만들기" });
 const card = (page: Page, n: number) => page.getByRole("region", { name: `${n}편`, exact: true });
 
-/** android-ko 픽스처를 올려 기본 이름으로 '보낼 내용 확인'까지 가고 단톡방 동의를 체크한다 */
-async function toReview(page: Page, chat = androidChat()) {
+/** 이름 단계까지 간다(나는 민지). exclude에 든 사람은 분석에서 뺀다 */
+async function toNames(page: Page, chat = androidChat(), exclude: string[] = []) {
   await page.goto("/new");
   await page.getByLabel("대화 파일").setInputFiles(textUpload("KakaoTalkChats.txt", chat));
   await next(page).click();
   await page.getByRole("radio", { name: "민지", exact: true }).check();
   await next(page).click();
   await expect(page.getByRole("heading", { name: "이름 정리" })).toBeVisible();
+  for (const name of exclude) await excludeMember(page, name);
+}
+
+/** 방 종류·말투 단계까지 간다 */
+async function toKind(page: Page, chat = androidChat(), exclude: string[] = []) {
+  await toNames(page, chat, exclude);
   await next(page).click();
-  await expect(page.getByRole("heading", { name: "대화 통계" })).toBeVisible({ timeout: 15_000 });
-  await page.getByRole("button", { name: "보낼 내용 확인" }).click();
+  await expect(page.getByRole("heading", { name: "방 종류와 말투" })).toBeVisible();
+}
+
+/** android-ko 픽스처를 올려 기본 이름으로 '보낼 내용 확인'까지 가고 단톡방 동의를 체크한다 */
+async function toReview(page: Page, chat = androidChat(), exclude: string[] = [], tone?: string) {
+  await toKind(page, chat, exclude);
+  if (tone) await page.getByRole("radio", { name: new RegExp(tone) }).check();
+  await next(page).click();
+  await expect(page.getByRole("heading", { name: "보낼 내용 확인" })).toBeVisible({ timeout: 15_000 });
   await expect(create(page)).toBeDisabled();
   await page.getByRole("checkbox", { name: "방 사람들에게 말했어요" }).check();
   await expect(create(page)).toBeEnabled();
@@ -192,10 +205,7 @@ test.describe("AI 연재", () => {
     await login(page);
   });
 
-  test("[AI 연재 만들기]: POST 본문(transcript·anchors·stats·members)에 원래 발신자 이름이 없고, 받으면 진행 화면으로 간다", async ({
-    page,
-    context,
-  }) => {
+  test("[AI 연재 만들기]: 기본 POST는 tone fact·members가 카톡 이름 그대로이고, 받으면 진행 화면으로 간다", async ({ page, context }) => {
     await fakeApi(context, ["running", "queued", "queued", "queued"]);
     const posts = await fakeCreate(page);
     await toReview(page);
@@ -207,11 +217,42 @@ test.describe("AI 연재", () => {
     expect(body.v).toBe(2);
     expect(body.tone).toBe("fact");
     expect("me" in body).toBe(false);
-    expect(body.members).toEqual(expect.arrayContaining(["멤버1", "멤버2"]));
+    expect(body.members).toEqual(["민지", "철수", "민지, 수아", "영희"]);
     expect(String(body.transcript).length).toBeGreaterThan(0);
-    for (const name of ORIGINAL_NAMES) {
-      expect(sentParts(body).filter((part) => String(part).includes(name)), name).toEqual([]);
-    }
+  });
+
+  test("말투로 예능 중계를 고르면 POST의 tone이 show다", async ({ page, context }) => {
+    await fakeApi(context, ["running", "queued", "queued", "queued"]);
+    const posts = await fakeCreate(page);
+    await toReview(page, androidChat(), [], "예능 중계");
+    await expect(page.getByText("말투", { exact: true }).locator("..")).toContainText("예능 중계");
+    await create(page).click();
+    await expect(page).toHaveURL(`/c/${ID}/steps`);
+    expect(posts[0].tone).toBe("show");
+  });
+
+  test("영희를 빼면 POST 어디에도 영희의 문장·이름이 없고, 보낼 내용 확인에는 뺀 멤버로 보인다", async ({ page, context }) => {
+    await fakeApi(context, ["running", "queued", "queued", "queued"]);
+    const posts = await fakeCreate(page);
+    const chat = `${androidChat().trimEnd()}\n${YOUNGHEE_LINE}\n`;
+    await toReview(page, chat, ["영희"]);
+    await expect(page.getByText("뺀 멤버", { exact: true }).locator("..")).toContainText("영희");
+    await create(page).click();
+    await expect(page).toHaveURL(`/c/${ID}/steps`);
+
+    const body = posts[0];
+    expect(JSON.stringify(body)).not.toContain("영희");
+    expect(body.members).not.toContain("영희");
+    expect(Object.keys((body.stats as { byPerson: Record<string, unknown> }).byPerson)).not.toContain("영희");
+    expect(body.members).toEqual(["민지", "철수", "민지, 수아"]);
+  });
+
+  test("민지만 남기면 이름 단계 [다음]이 막히고 이유가 보인다", async ({ page }) => {
+    await toNames(page, androidChat(), ["철수", "민지, 수아", "영희"]);
+    await expect(next(page)).toBeDisabled();
+    await expect(page.getByText("분석할 사람이 2명 이상 남아야 AI 리포트를 만들 수 있어요.")).toBeVisible();
+    await page.getByRole("checkbox", { name: "철수 분석에서 빼기" }).uncheck();
+    await expect(next(page)).toBeEnabled();
   });
 
   test("만든 연재는 시작 화면의 '내 연재'에서 다시 열 수 있고, [지금 삭제]하면 목록에서 빠진다", async ({ page, context }) => {

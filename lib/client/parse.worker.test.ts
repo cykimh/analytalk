@@ -20,10 +20,9 @@ const msg = (id: number, sender: string | null, text: string, kind: ChatMessage[
 
 const rename = (over: Partial<RenameInput> = {}): RenameInput => ({
   messages: [msg(0, "김민지", "철수야 밥 먹자"), msg(1, "철수", "민지수 왔어"), msg(2, "철수", "응")],
-  map: { 김민지: "P1", 철수: "P2" },
-  systemNames: [],
+  map: { 김민지: "민지", 철수: "철수" },
   merged: [],
-  fixes: {},
+  excluded: [],
   ...over,
 });
 
@@ -43,46 +42,28 @@ describe("runOp parse", () => {
 });
 
 describe("runOp rename", () => {
-  it("이름을 바꾸고 남은 조각을 함께 돌려준다(안전 신호는 페이로드를 만든 뒤 sentSafetySignal이 본다)", async () => {
+  it("발신자만 표시 이름으로 바꾸고 본문은 그대로 둔다", async () => {
     const r = await runOp({ op: "rename", input: rename() });
-    expect(r).toMatchObject({ ok: true, leftovers: [{ piece: "민지", count: 1, ids: [1] }] });
-    expect(r).not.toHaveProperty("safety");
+    expect(r).toMatchObject({ ok: true });
     if (!("messages" in r)) throw new Error("ok가 아니다");
     expect(r.messages.map((m) => [m.sender, m.text])).toEqual([
-      ["P1", "P2야 밥 먹자"],
-      ["P2", "민지수 왔어"],
-      ["P2", "응"],
+      ["민지", "철수야 밥 먹자"],
+      ["철수", "민지수 왔어"],
+      ["철수", "응"],
     ]);
   });
 
-  it("fixes의 조각은 글자 그대로(대소문자 무시) 그 표시 이름으로 바꾸고 남은 조각에서 빠진다", async () => {
-    const input = rename({
-      messages: [msg(0, "Minji Kim", "hi"), msg(1, "철수", "MINJIabc 민지수 왔어")],
-      map: { "Minji Kim": "P1", 철수: "P2" },
-    });
-    const before = await runOp({ op: "rename", input });
-    expect(before).toMatchObject({ ok: true, leftovers: [{ piece: "Minji" }] });
-    const r = await runOp({ op: "rename", input: { ...input, fixes: { Minji: "P1" } } });
-    expect(r).toMatchObject({ ok: true, leftovers: [] });
-    if (!("messages" in r)) throw new Error("ok가 아니다");
-    expect(r.messages[1].text).toBe("P1abc 민지수 왔어");
-  });
-
-  it("시스템·미디어 메시지 본문은 fixes로 바꾸지 않는다", async () => {
-    const input = rename({
-      messages: [msg(0, "김민지", "a"), msg(1, null, "민지수님이 나갔습니다."), msg(2, "철수", "민지수", "photo")],
-      fixes: { 민지: "P1" },
-    });
+  it("뺀 사람의 메시지는 걸러 낸다(합친 사람 포함)", async () => {
+    const input = rename({ excluded: ["철수"] });
     const r = await runOp({ op: "rename", input });
     if (!("messages" in r)) throw new Error("ok가 아니다");
-    expect(r.messages.map((m) => m.text)).toEqual(["a", "민지수님이 나갔습니다.", "민지수"]);
+    expect(r.messages.map((m) => m.id)).toEqual([0]);
   });
 
   it("이름 정리가 실패하면 이유만 돌려준다", async () => {
     expect(await runOp({ op: "rename", input: rename({ map: { 김민지: "P1", 철수: "P1" } }) })).toEqual({ ok: false, reason: "collision" });
     expect(await runOp({ op: "rename", input: rename({ map: { 김민지: "P1", 철수: "a|b" } }) })).toEqual({ ok: false, reason: "invalid" });
   });
-
 });
 
 describe("runOp build", () => {

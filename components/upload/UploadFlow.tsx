@@ -1,12 +1,10 @@
 "use client";
 
-// /new 흐름: 파일 → (Worker) 파싱 → 확인·방 종류 → 나는 누구? → 이름 정리 → 남은 이름 → (Worker) 페이로드 → 통계 → 보낼 내용 확인
-// → [AI 연재 만들기](페이로드만 보낸다) → /c/[id]/steps.
-// 원본 파일·파싱 결과·실제 이름은 이 컴포넌트와 Worker(브라우저 메모리)에만 있다.
+// /new 흐름: 파일 → (Worker) 파싱 → 확인 → 나는 누구? → 이름 정리(+분석에서 빼기) → 방 종류·말투 → (Worker) 이름 적용·페이로드
+// → 보낼 내용 확인 → [AI 연재 만들기](페이로드만 보낸다) → /c/[id]/steps.
+// 원본 파일·파싱 결과·뺀 멤버의 메시지는 이 컴포넌트와 Worker(브라우저 메모리)에만 있다.
 import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { StatsDashboard } from "@/components/stats/StatsDashboard";
 import { savePayload, sweepPayloads } from "@/lib/client/idb";
 import { rememberSeries } from "@/lib/client/recent";
 import { createSeries, postJson } from "@/lib/client/submit";
@@ -14,12 +12,11 @@ import {
   buildInWorker,
   type BuildRequest,
   parseInWorker,
-  type RenameResult,
   renameInWorker,
   retryBuildInput,
 } from "@/lib/client/worker";
 import { TOKENS_PER_CHAR } from "@/lib/config";
-import { DEFAULT_TONE } from "@/lib/llm/concepts";
+import { DEFAULT_TONE, type Tone } from "@/lib/llm/concepts";
 import type { Payload } from "@/lib/payload/build";
 import { sentSafetySignal } from "@/lib/payload/safety";
 import type { ParseResult } from "@/lib/parse/parse";
@@ -27,24 +24,24 @@ import { ConfirmStep } from "./ConfirmStep";
 import {
   conceptFor,
   defaultKind,
+  excludedNames,
+  includedRoots,
   initialNames,
   type Kind,
-  leftoverOwner,
   mergedGroups,
   nameMapOf,
   nameProblem,
   type NameState,
   nameTargets,
 } from "./flow";
-import { LeftoversStep } from "./LeftoversStep";
+import { KindStep } from "./KindStep";
 import { MeStep } from "./MeStep";
 import { NamesStep } from "./NamesStep";
 import { ReviewStep } from "./ReviewStep";
 import { StepFrame } from "./StepFrame";
 import { UploadStep } from "./UploadStep";
 
-type Step = "upload" | "confirm" | "me" | "names" | "leftovers" | "stats" | "review";
-type Renamed = Extract<RenameResult, { ok: true }>;
+type Step = "upload" | "confirm" | "me" | "names" | "kind" | "review";
 /** 첫 페이로드를 만든 입력. 413이면 retryBuildInput(input, maxTokens)로 한 번 다시 만든다 */
 type Built = { payload: Payload; input: Extract<BuildRequest, { inputBudget: number }> };
 
@@ -60,9 +57,9 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
   const [parse, setParse] = useState<ParseResult | null>(null);
   const [kind, setKind] = useState<Kind>("group");
   const [me, setMe] = useState<string | null>(null);
-  const [names, setNames] = useState<NameState>({ names: {}, sameAs: {} });
-  const [renamed, setRenamed] = useState<Renamed | null>(null);
-  const [fixes, setFixes] = useState<Record<string, string>>({});
+  const [tone, setTone] = useState<Tone>(DEFAULT_TONE);
+  const [kindChosen, setKindChosen] = useState(false);
+  const [names, setNames] = useState<NameState>({ names: {}, sameAs: {}, excluded: [] });
   const [built, setBuilt] = useState<Built | null>(null);
 
   // 24시간 지난 재시도용 페이로드를 지운다(다른 대화를 올리러 왔을 때도)
@@ -79,7 +76,10 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
   /** 보낼 메시지(페이로드에 실린 것)의 안전 신호. 실리지 않는 옛 메시지는 보지 않는다 */
   const safety = useMemo(() => (built ? sentSafetySignal(built.payload, built.input.messages) : null), [built]);
   const problem = parse ? nameProblem(names, targets) : null;
-  const map = nameMapOf(names, targets);
+  const excluded = useMemo(
+    () => excludedNames(names, targets).map((name) => ({ name, count: counts[name] ?? 0 })).filter((e) => e.count > 0),
+    [names, targets, counts],
+  );
 
   /** 비동기 단계 하나. 실패하면 문구를 보여 주고 그 자리에 남는다 */
   async function run(task: () => Promise<void>) {
@@ -101,53 +101,43 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
       if (!r.messages.some((m) => m.sender !== null && m.kind !== "system")) throw new Error(NO_MESSAGES);
       setParse(r);
       setKind(defaultKind(r.participants.length));
+      setKindChosen(false);
+      setTone(DEFAULT_TONE);
       setMe(null);
       setNames(initialNames(nameTargets(r)));
-      setRenamed(null);
-      setFixes({});
       setBuilt(null);
       setStep("confirm");
     });
 
-  /**
-   * 이름을 바꾸고(남은 조각은 withFixes대로) 페이로드를 만든다.
-   * 이름 정리 화면에서 왔고 남은 조각이 있으면 먼저 '본문에 남은 이름' 화면을 보여 준다
-   */
-  const applyNames = (withFixes: Record<string, string>, reviewLeftovers: boolean) =>
+  /** 이름 단계 [다음]: Worker 없이 바로 검사해서 방 종류 단계로. 방 종류 기본값은 처음 들어올 때 남은 사람 수로 정한다 */
+  const toKind = () => {
+    if (problem) return;
+    if (!kindChosen) setKind(defaultKind(includedRoots(names, targets).length));
+    setError(null);
+    setStep("kind");
+  };
+
+  /** 방 종류·말투 [다음]: 이름을 적용하고(뺀 멤버 제외) 페이로드를 만든다 */
+  const prepare = () =>
     run(async () => {
-      if (!parse || !me) return;
+      if (!parse) return;
       const r = await renameInWorker({
         messages: parse.messages,
-        map,
-        systemNames: parse.systemNames,
+        map: nameMapOf(names, targets),
         merged: mergedGroups(names.sameAs),
-        fixes: withFixes,
+        excluded: excludedNames(names, targets),
       });
       if (!r.ok) throw new Error("이름을 다시 확인해 주세요");
-      setRenamed(r);
-      if (reviewLeftovers && r.leftovers.length > 0) {
-        // 바꾸기를 권할 조각(suggest)이고 주인이 분명하면 그 표시 이름으로 미리 골라 둔다.
-        // 이름 모양이 아닌 데서 나온 흔한 말(어머·교회)은 부르는 말로 쓰인 적이 없으면 그대로 두기가 기본이다
-        const suggested: Record<string, string> = {};
-        for (const l of r.leftovers) {
-          if (!l.suggest) continue;
-          const owner = leftoverOwner(l.piece, map);
-          if (owner) suggested[l.piece] = owner;
-        }
-        setFixes(suggested);
-        setStep("leftovers");
-        return;
-      }
       const input = {
         messages: r.messages,
         concept: conceptFor(kind),
         kind,
-        tone: DEFAULT_TONE,
+        tone,
         tokensPerChar: TOKENS_PER_CHAR,
         inputBudget,
       };
       setBuilt({ payload: await buildInWorker(input), input });
-      setStep("stats");
+      setStep("review");
     });
 
   /**
@@ -192,61 +182,40 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
   if (step === "upload" || !parse) {
     body = <UploadStep inApp={inApp} busy={busy} error={error} onFiles={onFiles} />;
   } else if (step === "confirm") {
-    body = <ConfirmStep parse={parse} kind={kind} onKind={setKind} onBack={back("upload")} onNext={back("me")} />;
+    body = <ConfirmStep parse={parse} onBack={back("upload")} onNext={back("me")} />;
   } else if (step === "me") {
     body = (
       <MeStep participants={parse.participants} counts={counts} me={me} onMe={setMe} onBack={back("confirm")} onNext={back("names")} />
     );
   } else if (step === "names" && me) {
     body = (
-      <NamesStep
-        targets={targets}
-        senders={new Set(parse.participants)}
-        me={me}
-        state={names}
-        problem={problem}
+      <NamesStep targets={targets} me={me} state={names} problem={problem} busy={busy} onChange={setNames} onBack={back("me")} onNext={toKind} />
+    );
+  } else if (step === "kind") {
+    body = (
+      <KindStep
+        kind={kind}
+        tone={tone}
         busy={busy}
-        onChange={setNames}
-        onBack={back("me")}
-        onNext={() => applyNames({}, true)}
+        onKind={(k) => {
+          setKind(k);
+          setKindChosen(true);
+        }}
+        onTone={setTone}
+        onBack={back("names")}
+        onNext={prepare}
       />
     );
-  } else if (step === "leftovers" && renamed) {
-    body = (
-      <LeftoversStep
-        leftovers={renamed.leftovers}
-        messages={renamed.messages}
-        displayNames={[...new Set(Object.values(map))]}
-        fixes={fixes}
-        busy={busy}
-        onFixes={setFixes}
-        onBack={back("names")}
-        onNext={() => applyNames(fixes, false)}
-      />
-    );
-  } else if (step === "stats" && built) {
-    body = (
-      <StepFrame
-        title="대화 통계"
-        description="숫자는 모두 이 브라우저에서 셌어요."
-        onBack={back("names")}
-        action={
-          <Button size="lg" onClick={back("review")}>
-            보낼 내용 확인
-          </Button>
-        }
-      >
-        <StatsDashboard stats={built.payload.stats} kind={built.payload.kind} me={me ? map[me] : built.payload.members[0]} />
-      </StepFrame>
-    );
-  } else if (step === "review" && built && renamed) {
+  } else if (step === "review" && built) {
     body = (
       <ReviewStep
         payload={built.payload}
         messages={built.input.messages}
+        excluded={excluded}
+        me={me ? (nameMapOf(names, targets)[me] ?? "") : ""}
         safety={safety}
         busy={busy}
-        onBack={back("stats")}
+        onBack={back("kind")}
         onCreate={create}
       />
     );
