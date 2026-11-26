@@ -113,7 +113,7 @@ export function ReviewStep({
       {safetyDropped > 0 && (
         <div className="grid gap-1">
           <p className="text-base tabular-nums">위험할 수 있는 메시지 {formatCount(safetyDropped)}개는 빼고 보내요</p>
-          <p className="text-sm text-muted-foreground">{HELPLINE}</p>
+          <p className="text-base text-muted-foreground">{HELPLINE}</p>
         </div>
       )}
       {work ? (
