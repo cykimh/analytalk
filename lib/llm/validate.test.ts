@@ -72,7 +72,7 @@ describe("validateReport", () => {
         sec(
           "근거 검사",
           [para("p1", "저녁에 대화가 몰려요", ["e1", "e2", "e3", "e4"])],
-          [ev("e1", "m999", "쉬는 중"), ev("e2", "m1", "쉬는중"), ev("e3", "m1", " "), ev("e4", "m1", "집에서")],
+          [ev("e1", "m999", "쉬는 중"), ev("e2", "m1", "학교에서"), ev("e3", "m1", " "), ev("e4", "m1", "집에서")],
         ),
       ]),
     );
@@ -161,8 +161,8 @@ describe("validateReport", () => {
     ]);
   });
 
-  // Fix 1: 근거를 달았는데 원문과 맞는 것이 하나도 없는 문단은 섹션에 다른 근거가 남아도 지운다(사람 문단이든 아니든)
-  it("원문과 맞는 근거가 하나도 없는 문단(가짜 근거만 단 문단)은 섹션에 다른 근거가 남아도 지운다", () => {
+  // v2.5: 근거를 달았는데 원문과 맞는 것이 하나도 없는 문단도 남긴다(근거 id만 빠진다). v2.2 Fix 1까지는 지웠다
+  it("원문과 맞는 근거가 하나도 없는 문단(가짜 근거만 단 문단)도 남고 근거 id만 빠진다", () => {
     const r = run(
       report([
         sec(
@@ -178,14 +178,17 @@ describe("validateReport", () => {
       ]),
     );
     expect(r.content?.sections[0].paragraphs.map((p) => [p.key, p.text, p.evidence_ids])).toEqual([
-      ["p1", "민지의 답은 짧고 빨랐어요", ["e2"]],
-      ["p2", "민지는 웃음이 많아요", ["e2"]],
+      ["p1", "철수는 늘 먼저 물었어요", []],
+      ["p2", "저녁 8시에 대화가 몰려요", []],
+      ["p3", "민지의 답은 짧고 빨랐어요", ["e2"]],
+      ["p4", "민지는 웃음이 많아요", ["e2"]],
     ]);
     expect(r.content?.sections[0].evidence.map((e) => e.id)).toEqual(["e2"]);
-    expect(r.dropped).toMatchObject({ paragraphs: 2, evidence: 1 });
+    expect(r.dropped).toMatchObject({ paragraphs: 0, evidence: 1 });
+    expect(r.status).toBe("done");
   });
 
-  it("문단 안 큰따옴표 인용은 보낸 메시지의 부분 문자열이어야 한다: 지어낸 인용이 든 문단은 지운다", () => {
+  it("v2.5: 문단 안 큰따옴표 인용이 원문과 안 맞으면 문단은 남기고 그 따옴표만 뗀다(제목·headline·dek도)", () => {
     const r = run(
       report([
         sec(
@@ -205,12 +208,16 @@ describe("validateReport", () => {
     expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual([
       "민지는 \"집에서 쉬는 중\"이라고 답했어요",
       "철수는 “영화 볼래? ⏎ 내일 저녁”이라고 물었어요",
+      "민지는 나는 철수가 제일 좋아라고 했어요",
+      "철수는 내일 꼭 만나자라고 했어요",
       "답은 늘 \"좋아\"였고, 별명은 '저녁 8시 담당'이에요",
     ]);
-    expect(r.dropped.paragraphs).toBe(2);
-    // 제목·headline·dek의 지어낸 인용은 비운다
-    expect(r.content?.headline).toBe("");
+    expect(r.dropped.paragraphs).toBe(0);
+    expect(r.status).toBe("done");
+    // 제목·headline·dek의 지어낸 인용도 따옴표만 뗀다
+    expect(r.content?.headline).toBe("철수 사랑해의 방");
     expect(r.content?.dek).toBe("\"오늘 뭐해?\"로 시작하는 저녁");
+    expect(r.content?.checks).toMatchObject({ unquoted: 3, dropped_by: {} });
   });
 
   it("Fix 2: 작은따옴표+토씨('…'라고)·둥근 작은따옴표·낫표·겹낫표 인용도 원문과 대 본다. 토씨 없는 별명과 '…'이라고 부르는 별명은 남는다", () => {
@@ -230,12 +237,22 @@ describe("validateReport", () => {
       "그래서 민지는 '선톡왕'이라고 불린다.",
     ];
     const r = run(report([sec("민지", texts.map((t, i) => para(`p${i + 1}`, t, ["e1"])), [ev("e1", "m1", "쉬는 중")], "민지")]));
-    expect(r.status).toBe("partial");
-    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual(texts.slice(6));
-    expect(r.dropped.paragraphs).toBe(6);
+    expect(r.status).toBe("done");
+    // 원문과 안 맞는 여섯은 따옴표 문자만 떼어 서술로 남는다
+    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual([
+      "민지는 나 철수 진짜 싫어라고 했다.",
+      "민지는 나 철수 진짜 싫어라고 했다.",
+      "민지는 나 철수 진짜 싫어라고 했다.",
+      "민지는 나 철수 진짜 싫어라고 했다.",
+      "민지는 나 철수 진짜 싫어 하고 웃었다.",
+      "민지는 싫어이라며 돌아섰다.",
+      ...texts.slice(6),
+    ]);
+    expect(r.dropped.paragraphs).toBe(0);
+    expect(r.content?.checks?.unquoted).toBe(6);
   });
 
-  it("Fix 2: 인용 길이 하한이 없다. 지어낸 짧은 말(\"사랑해\"·\"싫어\")은 지우고 원문에 있는 짧은 말(\"좋아\"·\"ㅋㅋ\")은 남긴다. 빈 따옴표는 건너뛴다", () => {
+  it("Fix 2: 인용 길이 하한이 없다. 지어낸 짧은 말(\"사랑해\"·\"싫어\")은 따옴표를 떼고 원문에 있는 짧은 말(\"좋아\"·\"ㅋㅋ\")은 그대로. 빈 따옴표는 건너뛴다", () => {
     const texts = [
       "민지는 \"사랑해\"라고 했다.",
       "민지는 \"싫어\"라고 했다.",
@@ -244,8 +261,8 @@ describe("validateReport", () => {
       "철수의 빈 말풍선 \" \"도 있었다.",
     ];
     const r = run(report([sec("민지", texts.map((t, i) => para(`p${i + 1}`, t, ["e1"])), [ev("e1", "m1", "쉬는 중")], "민지")], { dek: "\"미안해\"가 없는 방" }));
-    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual(texts.slice(2));
-    expect(r.content?.dek).toBe("");
+    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual(["민지는 사랑해라고 했다.", "민지는 싫어라고 했다.", ...texts.slice(2)]);
+    expect(r.content?.dek).toBe("미안해가 없는 방");
   });
 
   it("Fix 3: '…' 뒤의 라는·란·라던·라 했다·고 했다·했다·면서, 캐치프레이즈는 '…'다, 《…》·〈…〉·＂…＂도 인용이다. 부르다·불리다 밖의 부·불 동사는 빼 주지 않는다", () => {
@@ -277,8 +294,11 @@ describe("validateReport", () => {
     ];
     const texts = [...dropped, ...kept];
     const r = run(report([sec("민지", texts.map((t, i) => para(`p${i + 1}`, t, ["e1"])), [ev("e1", "m1", "쉬는 중")], "민지")]));
-    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual(kept);
-    expect(r.dropped.paragraphs).toBe(dropped.length);
+    // 인용으로 본 '…'·《…》 등은 원문과 안 맞아 따옴표만 떼어지고, 별명·이름 붙이기와 원문에 있는 말은 그대로다
+    const unquoted = (t: string) => t.replace(/['《》〈〉＂]/g, "");
+    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual([...dropped.map(unquoted), ...kept]);
+    expect(r.dropped.paragraphs).toBe(0);
+    expect(r.content?.checks?.unquoted).toBe(dropped.length);
   });
 
   it("Fix 3: 인용이 든 문장에 멤버 이름이 나오면 그 멤버가 보낸 말이어야 한다. 이름이 없으면 누구의 말이든 원문에 있으면 된다", () => {
@@ -303,9 +323,14 @@ describe("validateReport", () => {
         dek: "철수의 \"오늘 뭐해?\"로 여는 저녁",
       }),
     );
-    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual(texts.slice(3));
-    expect(r.dropped.paragraphs).toBe(3);
-    expect(r.content?.headline).toBe("");
+    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual([
+      "철수는 집에서 쉬는 중이라고 했다.",
+      "민지는 영화 볼래?라고 물었다.",
+      "철수의 캐치프레이즈는 좋아!다.",
+      ...texts.slice(3),
+    ]);
+    expect(r.dropped.paragraphs).toBe(0);
+    expect(r.content?.headline).toBe("민지의 오늘 뭐해?");
     expect(r.content?.dek).toBe("철수의 \"오늘 뭐해?\"로 여는 저녁");
   });
 
@@ -316,7 +341,8 @@ describe("validateReport", () => {
     expect(r.content?.sections[0].paragraphs).toHaveLength(2);
   });
 
-  it("근거도 자리표시자도 없는 사람 섹션: about이 사람이면 섹션째 빠지고, 방 섹션이면 이름이 든 문단만 지운다", () => {
+  // v2.5: 근거 없는 사람 문단(ungrounded)을 지우지 않는다. v2.2~v2.4는 섹션째 또는 이름이 든 문단을 지웠다
+  it("근거도 자리표시자도 없는 사람 섹션도 남는다. 원문과 안 맞는 근거는 근거 id만 빠진다", () => {
     const r = run(
       report([
         sec("철수", [para("p1", "질문을 자주 했어요"), para("p2", "저녁에 자주 보였어요")], [], "철수"),
@@ -328,12 +354,15 @@ describe("validateReport", () => {
         ),
       ]),
     );
-    expect(r.content?.sections.map((s) => s.title)).toEqual(["방"]);
-    expect(r.content?.sections[0].paragraphs.map((p) => [p.key, p.text])).toEqual([
-      ["p1", "저녁 8시에 대화가 몰려요"],
-      ["p2", "주말엔 조용해요"],
+    expect(r.content?.sections.map((s) => s.title)).toEqual(["철수", "방"]);
+    expect(r.content?.sections[0].paragraphs).toHaveLength(2);
+    expect(r.content?.sections[1].paragraphs.map((p) => [p.key, p.text, p.evidence_ids])).toEqual([
+      ["p1", "저녁 8시에 대화가 몰려요", []],
+      ["p2", "철수가 늘 먼저 물었어요", []],
+      ["p3", "주말엔 조용해요", []],
     ]);
-    expect(r.dropped).toMatchObject({ paragraphs: 3, evidence: 1 });
+    expect(r.dropped).toMatchObject({ paragraphs: 0, evidence: 1 });
+    expect(r.status).toBe("done");
   });
 
   const evidence = (prefix: string, n: number) =>
@@ -364,6 +393,7 @@ describe("validateReport", () => {
     expect(r.content?.sections.map((s) => [s.title, s.evidence.length, s.paragraphs.length])).toEqual([
       ["앞", 30, 1],
       ["민지", 0, 2],
+      ["철수", 0, 1],
     ]);
     expect(r.content?.sections[1].paragraphs.map((p) => p.evidence_ids)).toEqual([[], []]);
   });
@@ -633,13 +663,13 @@ describe("validateReport", () => {
 
   it("safety.flag가 none이 아니면 safety", () => {
     const r = run(report([sec("s", [para("p1", "저녁 대화")])], { safety: { flag: "self_harm" } }));
-    expect(r).toEqual({ status: "safety", content: null, dropped: { paragraphs: 0, evidence: 0, checks: { relinked: 0, dropped_by: {} } } });
+    expect(r).toEqual({ status: "safety", content: null, dropped: { paragraphs: 0, evidence: 0, checks: { relinked: 0, requoted: 0, unquoted: 0, dropped_by: {} } } });
   });
 
   it("표에 없는 none 아닌 flag도 safety (SDK 스키마 변환이 enum을 강제하지 않는다)", () => {
     for (const flag of ["unknown", "self-harm", "자해", ""]) {
       const r = run(report([sec("s", [para("p1", "저녁 대화")])], { safety: { flag: flag as "none" } }));
-      expect(r, flag).toEqual({ status: "safety", content: null, dropped: { paragraphs: 0, evidence: 0, checks: { relinked: 0, dropped_by: {} } } });
+      expect(r, flag).toEqual({ status: "safety", content: null, dropped: { paragraphs: 0, evidence: 0, checks: { relinked: 0, requoted: 0, unquoted: 0, dropped_by: {} } } });
     }
   });
 
@@ -686,11 +716,11 @@ describe("validateReport", () => {
       { id: "e1", msg_id: "m9", quote: "집에서 쉬는 중", sender: "민지", at: "2026-10-03T20:05:00+09:00" },
       { id: "e2", msg_id: "m3", quote: "좋아!", sender: "민지", at: "2026-10-01T20:10:00+09:00" },
     ]);
-    expect(r.dropped).toMatchObject({ paragraphs: 0, evidence: 0, checks: { relinked: 2, dropped_by: {} } });
-    expect(r.content?.checks).toEqual({ relinked: 2, dropped_by: {} });
+    expect(r.dropped).toMatchObject({ paragraphs: 0, evidence: 0, checks: { relinked: 2, requoted: 0, dropped_by: {} } });
+    expect(r.content?.checks).toEqual({ relinked: 2, requoted: 0, unquoted: 0, dropped_by: {} });
   });
 
-  it(`relink: 짧은 quote는 ${RELINK_NEAR}번 안에서만 찾고, 없으면 예전처럼 근거와 그 근거만 단 문단을 지운다`, () => {
+  it(`relink: 짧은 quote는 ${RELINK_NEAR}번 안에서만 찾고, 없으면 근거만 뺀다(v2.5부터 문단은 남는다)`, () => {
     const r = run(
       report([
         sec(
@@ -700,8 +730,11 @@ describe("validateReport", () => {
         ),
       ]),
     );
-    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual(["주말엔 조용했다"]);
-    expect(r.dropped.checks).toEqual({ relinked: 0, dropped_by: { evidence_unmatched: 1, fake_evidence: 1 } });
+    expect(r.content?.sections[0].paragraphs.map((p) => [p.text, p.evidence_ids])).toEqual([
+      ["저녁 대화가 이어졌다", []],
+      ["주말엔 조용했다", []],
+    ]);
+    expect(r.dropped.checks).toEqual({ relinked: 0, requoted: 0, unquoted: 0, dropped_by: { evidence_unmatched: 1 } });
   });
 
   it("relink: 사람 섹션이면 그 사람이 보낸 메시지를 먼저 고른다(더 가까운 다른 사람 메시지보다)", () => {
@@ -738,7 +771,9 @@ describe("validateReport", () => {
     );
     expect(r.content?.checks).toEqual({
       relinked: 0,
-      dropped_by: { banned: 1, inline_quote: 1, placeholder: 1, fake_evidence: 1, empty: 1, evidence_unmatched: 1, evidence_orphan: 1 },
+      requoted: 0,
+      unquoted: 1,
+      dropped_by: { banned: 1, placeholder: 1, empty: 1, evidence_unmatched: 1, evidence_orphan: 1 },
     });
   });
 
@@ -766,6 +801,77 @@ describe("validateReport", () => {
     expect(head.content?.sections[0].title).toBe("민지는 철수를 좋아한다");
     expect(head.content?.dek).toBe("");
     expect(head.content?.headline).toBe("이 방의 실세는 철수다");
+  });
+
+  // v2.5(실측 3: inline_quote 7개로 문단이 지워졌다): 띄어쓰기·문장부호·ㅋ 개수·두 메시지 합침·글자 겹침 80%는 같은 말로 본다
+  it("v2.5: 원문과 조금 다른 따옴표 대사는 정규화해서 맞으면 그대로 남는다", () => {
+    const texts = [
+      // 띄어쓰기·문장부호·ㅋ 개수
+      "민지는 \"집에서 쉬는중 ㅋㅋㅋㅋ\"이라고 답했다.",
+      "민지는 \"집에서 쉬는 중...!\"이라고 답했다.",
+      // 연속한 두 메시지를 합쳤다(철수 m2 "영화 볼래?\n내일 저녁"은 한 메시지, m0 "오늘 뭐해?"와 m2를 합침)
+      "철수는 \"오늘 뭐해? 영화 볼래?\"라고 물었다.",
+      // 글자 겹침 80% 이상(ㅋ과 ㅎ 한 글자 다름)
+      "민지는 \"집에서 쉬는 중 ㅎㅎ\"이라고 했다.",
+    ];
+    const r = run(report([sec("민지", texts.map((t, i) => para(`p${i + 1}`, t, ["e1"])), [ev("e1", "m1", "쉬는 중")], "민지")]));
+    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual(texts);
+    expect(r.content?.checks).toMatchObject({ unquoted: 0, dropped_by: {} });
+    expect(r.status).toBe("done");
+  });
+
+  it("v2.5: 따옴표 대사가 많이 틀려도 문단이 지워지지 않아 partial이 되지 않는다", () => {
+    const paragraphs = Array.from({ length: 10 }, (_, i) => para(`p${i + 1}`, `민지는 \"지어낸 말 ${i}번\"이라고 했다.`));
+    const r = run(report([sec("민지", paragraphs, [], "민지")]));
+    expect(r.status).toBe("done");
+    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual(Array.from({ length: 10 }, (_, i) => `민지는 지어낸 말 ${i}번이라고 했다.`));
+    expect(r.content?.checks).toMatchObject({ unquoted: 10, dropped_by: {} });
+  });
+
+  it("v2.5 근거: m번호 메시지와 정규화로 맞으면 그 메시지의 원문 글자로 바꿔 넣는다(requoted)", () => {
+    const r = run(
+      report([
+        sec(
+          "근거",
+          [para("p1", "저녁마다 쉬었다", ["e1", "e2", "e3"])],
+          // e1: 띄어쓰기만 다름 → 원문 "쉬는 중". e2: ㅋ 개수 → 원문의 ㅋ 반복까지. e3: 줄바꿈·문장부호 없이
+          [ev("e1", "m1", "쉬는중"), ev("e2", "m1", "쉬는 중ㅋㅋㅋㅋ"), ev("e3", "m2", "볼래 내일 저녁")],
+        ),
+      ]),
+    );
+    expect(r.content?.sections[0].evidence.map((e) => [e.msg_id, e.quote, e.sender])).toEqual([
+      ["m1", "쉬는 중", "민지"],
+      ["m1", "쉬는 중 ㅋㅋ", "민지"],
+      ["m2", "볼래?\n내일 저녁", "철수"],
+    ]);
+    expect(r.content?.checks).toMatchObject({ requoted: 3, relinked: 0, dropped_by: {} });
+  });
+
+  it("v2.5 근거: 정규화로 relink하고, 그래도 없으면 m번호 메시지와 글자 겹침 80% 이상일 때 그 메시지 전체를 넣는다", () => {
+    const r = run(
+      report([
+        sec(
+          "민지",
+          [para("p1", "민지는 저녁마다 쉬었다", ["e1", "e2", "e3"])],
+          [
+            // e1: m0(철수 "오늘 뭐해?")에는 없고 가까운 m1(민지)에 정규화로 있다
+            ev("e1", "m0", "집에서쉬는중"),
+            // e2: m3 "좋아!"와 한 글자 다름(겹침 2/2가 아니다) → 못 찾는다
+            ev("e2", "m3", "싫어!"),
+            // e3: m5(민지 "집에서 쉬는 중 ㅋㅋ")와 글자 겹침 80% 이상 → 메시지 전체
+            ev("e3", "m5", "집에서 쉬는 중 ㅎㅎ"),
+          ],
+          "민지",
+        ),
+      ]),
+    );
+    expect(r.content?.sections[0].evidence.map((e) => [e.id, e.msg_id, e.quote, e.sender])).toEqual([
+      ["e1", "m1", "집에서 쉬는 중", "민지"],
+      ["e3", "m5", "집에서 쉬는 중 ㅋㅋ", "민지"],
+    ]);
+    expect(r.content?.checks).toMatchObject({ relinked: 1, requoted: 2, dropped_by: { evidence_unmatched: 1 } });
+    // 문단은 남고 못 찾은 근거 id만 빠진다
+    expect(r.content?.sections[0].paragraphs[0].evidence_ids).toEqual(["e1", "e3"]);
   });
 
   it("truncated: 빠진 뒤쪽 필드에 기본값을 넣고, 결과는 partial", () => {

@@ -4,22 +4,22 @@
 //   남은 것을 리포트 전체 MAX_QUOTES_PER_REPORT개까지 앞 섹션부터 센다(고아 근거가 뒤 구성의 몫을 먹지 않게).
 //   마지막 구성(마무리) 섹션이 쓰는 근거 몫은 CLOSING_QUOTE_RESERVE개까지 따로 남겨 둔다(앞 섹션이 몫을 다 써도 마무리가 인용을 단다).
 // 문단: 풀리지 않는 자리표시자, 금지 표현·개인정보가 든 문단, 너무 긴 문단을 지운다. 남은 문단 키는 섹션마다 p1, p2…
-// 가짜 인용(v2.2 Fix 1): 근거를 달았는데 그중 원문과 맞는 것이 하나도 없는 문단은 지운다(사람 문단이든 아니든).
-//   문단 안 인용은 보낸 메시지의 부분 문자열이어야 하고, 인용이 든 문장에 멤버 이름이 나오면 그 멤버가 보낸 메시지여야 한다(Fix 3).
-//   아니면 문단을 지운다(제목·headline·dek는 비운다).
-//   인용으로 보는 것: "…"·“…”·＂…＂·‘…’·「…」·『…』·〈…〉·《…》 전부, 그리고 말을 옮기는 말(라고·라는·란·라 했다·고 했다·하고·했다·며 등)이
-//   바로 뒤에 붙거나 캐치프레이즈·말버릇 같은 말이 바로 앞에 있는 '…'(Fix 3). 토씨 없는 '…'(별명·상 이름·자막),
-//   '…'이라고 불린다·'…'라는 별명은 인용으로 보지 않는다. 길이 하한은 없다(빈 칸만 든 것만 건너뛴다).
-// 사람 근거(v2.2): 근거를 하나도 달지 않은 문단만 섹션 단위로 본다. 사람을 다루는 섹션(about이 참여자이거나 문단에 이름이 나온다)은
-//   원문과 맞는 근거를 쓰는 문단이나 풀리는 자리표시자가 섹션 어디든 하나 있으면 된다. 둘 다 없으면 이름이 든 문단(about이 사람이면 전부)을 지운다.
-//   몫 때문에 근거 카드가 빠져도 원문과 맞은 근거를 단 문단은 남는다(카드만 빠진다). 문단을 지우는 것은 몫과 상관없이 정해진다.
 // 구성 키(part)는 그 말투의 구성(TONES[tone].parts)만 남긴다.
-// v2.4: 근거의 msg_id가 틀려도(긴 입력에서 m번호를 잘못 옮긴 경우) quote가 글자 그대로 든 메시지가 있으면 가장 가까운 번호의 그 메시지로
-//   다시 잇는다(relink). 보낸 사람·시각은 이은 메시지의 것이라 카드가 거짓이 되지 않는다. 짧은 quote(RELINK_SHORT_CHARS자 미만)는
+// v2.4: 근거의 msg_id가 틀려도(긴 입력에서 m번호를 잘못 옮긴 경우) quote가 든 메시지가 있으면 가장 가까운 번호의 그 메시지로
+//   다시 잇는다(relink). 보낸 사람·시각은 이은 메시지의 것이라 카드가 거짓이 되지 않는다. 짧은 quote(정규화해 RELINK_SHORT_CHARS자 미만)는
 //   흔한 말("ㅋㅋ")이 엉뚱한 곳에 붙지 않게 가까운 번호(RELINK_NEAR) 안에서만 찾는다. 사람 섹션이면 그 사람이 보낸 메시지를 먼저 본다.
 // v2.4: 지운 까닭을 센다(checks.dropped_by). 대화 원문·이름 없는 숫자뿐이라 저장한다(운영에서 문단이 왜 줄었는지 확인용).
-// v2.4 Fix 1: 속마음·호감 단정·점수·놀림은 지우지 않는다. 금지 표현은 banned.ts의 넷(속성 비하·성적 묘사, 진단명 단정, 자해·폭력 부추김)과 글자로 쓴 %뿐이고,
-//   지어낸 대사는 위의 문단 안 인용 검사가 맡는다.
+// v2.4 Fix 1·v2.5: 금지 표현은 banned.ts의 넷(혐오·차별, 자해·폭력 부추김, 성적 묘사, 성적 지향 단정)과 글자로 쓴 %뿐이다.
+// v2.5(2026-11-27 실측 3: 섹션 5·문단 10만 남아 partial. inline_quote 7, ungrounded 3, evidence_orphan 8):
+//   - 문단 안 인용(따옴표 대사)은 quoteMatch의 정규화로 원문과 대 본다(띄어쓰기·문장부호·ㅋ 개수·두세 메시지 합침·글자 겹침 80%).
+//     그래도 안 맞으면 문단을 지우지 않고 그 따옴표 문자만 떼어 서술로 남긴다(checks.unquoted). 제목·headline·dek도 같다.
+//     인용으로 보는 것: "…"·“…”·＂…＂·‘…’·「…」·『…』·〈…〉·《…》 전부, 그리고 말을 옮기는 말(라고·라는·란·라 했다·고 했다·하고·했다·며 등)이
+//     바로 뒤에 붙거나 캐치프레이즈·말버릇 같은 말이 바로 앞에 있는 '…'(Fix 3). 인용이 든 문장에 멤버 이름이 나오면 그 멤버의 메시지와,
+//     없으면 아무 멤버의 메시지와 대 본다(민지의 말을 철수의 말로 옮긴 따옴표도 떼어진다).
+//   - 근거 없는 사람 문단(ungrounded)과 근거 id를 모두 잃은 문단(fake_evidence)도 지우지 않는다(근거 id만 빠진다).
+//   - 근거 카드는 실제 메시지처럼 말풍선으로 보이므로 원문 확인은 그대로 하되, 정규화로 맞으면 그 메시지의 원문 글자로 바꿔 넣는다
+//     (checks.requoted). m번호의 메시지와 정규화로 안 맞으면 relink(글자 그대로 → 정규화 순)로 찾고, 그래도 없으면 m번호 메시지와
+//     글자 겹침 80% 이상일 때 그 메시지 전체를 넣는다. 그래도 못 찾는 카드만 뺀다.
 // 나머지 모델 글(headline·dek·제목)도 같은 검사(금지 표현·개인정보·글자 수)에 걸리면 비운다. icon·about·part는 허용 모양만 남긴다.
 // 자리표시자 경로 속 범례 기호(A, B…)는 표시 이름으로 바꾼다(모델이 줄의 기호를 그대로 옮겨 쓴 경우).
 import "server-only";
@@ -31,6 +31,7 @@ import type { ChatStats } from "@/lib/stats/compute";
 import { resolveStat } from "@/lib/stats/paths";
 import { type Tone, TONES } from "./concepts";
 import { sanitizeNotes } from "./notes";
+import { normalizeQuote, OVERLAP_MIN, originalSpan, overlapRatio, matchesSpeech } from "./quoteMatch";
 import { DECLINED_TOPICS, type DropReason, type Report, reportSchema, type StoredReport, type ValidationChecks } from "./schema";
 
 type Index = ReturnType<typeof payloadIndex>;
@@ -122,22 +123,22 @@ const SENTENCE_END = /[.!?。\n]/;
 const NOT_SPEAKER = /^이?(?:에게|한테|께(?!서)|더러|를|을)/;
 const blank = (s: string) => " ".repeat(s.length);
 
-/** 원문과 대 볼 보낸 메시지 본문. 전체와 보낸 사람별로, 처음 쓸 때 한 번만 만든다(줄바꿈 표시는 줄바꿈으로, 메시지 사이는 \u0000) */
-type Corpus = { all: () => string; of: (sender: string) => string };
+/** 원문과 대 볼 보낸 메시지(정규화본, 보낸 순서). 보낸 사람별로, 처음 쓸 때 한 번만 만든다 */
+type Corpus = { senders: () => string[]; of: (sender: string) => string[] };
 function corpusOf(idx: Index): Corpus {
-  let all: string | null = null;
-  let bySender: Map<string, string> | null = null;
-  return {
-    all: () => (all ??= Array.from(idx.values(), (line) => toNewlines(line.text)).join("\u0000")),
-    of: (sender) => {
-      if (bySender === null) {
-        const lists = new Map<string, string[]>();
-        for (const line of idx.values()) lists.set(line.sender, [...(lists.get(line.sender) ?? []), toNewlines(line.text)]);
-        bySender = new Map(Array.from(lists, ([name, texts]) => [name, texts.join("\u0000")]));
+  let bySender: Map<string, string[]> | null = null;
+  const build = () => {
+    if (bySender === null) {
+      bySender = new Map();
+      for (const line of idx.values()) {
+        const list = bySender.get(line.sender) ?? [];
+        list.push(normalizeQuote(toNewlines(line.text)));
+        bySender.set(line.sender, list);
       }
-      return bySender.get(sender) ?? "";
-    },
+    }
+    return bySender;
   };
+  return { senders: () => [...build().keys()], of: (sender) => build().get(sender) ?? [] };
 }
 
 /**
@@ -177,22 +178,27 @@ function speakersNear(masked: string, start: number, end: number, members: strin
 }
 
 /**
- * 글 안의 인용이 모두 원문에 있고 말한 사람도 맞는가(Fix 3).
- * 인용이 든 문장에 멤버 이름이 나오면 그 멤버(들) 중 누군가가 보낸 메시지의 부분 문자열이어야 한다(민지의 말을 철수의 말로 옮기지 못한다).
- * 문장에 이름이 없으면 보낸 메시지 어느 하나의 부분 문자열이면 된다. 한 문장에 두 사람이 나오면 둘 중 누구의 말이든 통과한다.
- * 길이 하한이 없다: 진짜 짧은 인용("응"·"ㅋㅋ")은 어차피 원문의 부분 문자열이라 지워지지 않고, 하한은 지어낸 짧은 말("사랑해")만 통과시킨다
+ * 글 안의 인용(따옴표 대사)을 원문과 대 보고, 맞지 않는 인용은 따옴표 문자만 뗀다(v2.5). 고친 글과 뗀 인용 수를 돌려준다.
+ * 인용이 든 문장에 멤버 이름이 나오면 그 멤버(들) 중 누군가의 메시지와, 없으면 아무 멤버의 메시지와 대 본다(Fix 3).
+ * 한 문장에 두 사람이 나오면 둘 중 누구의 말이든 맞으면 된다. 길이 하한은 없다(빈 칸만 든 것은 건너뛴다)
  */
-const inlineQuotesOk = (text: string, corpus: Corpus, members: string[]) => {
+function unquoteUnmatched(text: string, corpus: Corpus, members: string[]): { text: string; unquoted: number } {
   const { quotes, masked } = findQuotes(text);
-  for (const q of quotes) {
+  const wrong = quotes.filter((q) => {
     const quote = toNewlines(q.quote).trim();
-    if (quote === "") continue;
+    if (quote === "") return false;
     const speakers = speakersNear(masked, q.start, q.end, members);
-    const found = speakers.length === 0 ? corpus.all().includes(quote) : speakers.some((name) => corpus.of(name).includes(quote));
-    if (!found) return false;
+    const nq = normalizeQuote(quote);
+    return !(speakers.length > 0 ? speakers : corpus.senders()).some((name) => matchesSpeech(nq, corpus.of(name)));
+  });
+  if (wrong.length === 0) return { text, unquoted: 0 };
+  // 따옴표는 모두 한 글자(UTF-16 한 칸)다. 뒤에서부터 떼어 앞쪽 자리가 밀리지 않게 한다
+  let out = text;
+  for (const q of [...wrong].sort((a, b) => b.start - a.start)) {
+    out = out.slice(0, q.start) + out.slice(q.start + 1, q.end - 1) + out.slice(q.end);
   }
-  return true;
-};
+  return { text: out, unquoted: wrong.length };
+}
 
 /**
  * 풀리는 {{stat:경로}} 자리표시자를 뺀 글. 경로 속 표시 이름이 링크 끝과 같은 말(Me·Com)이어도 개인정보로 보지 않게 한다.
@@ -209,9 +215,13 @@ function unstorable(text: string, max: number, stats: ChatStats): DropReason | n
   if (hasPII(withoutStats(text, stats))) return "pii";
   return null;
 }
-/** 제목·headline·dek: 저장할 수 없거나 원문에 없는(말한 사람이 다른) 인용이 들었으면 비운다 */
-const clean = (text: string, max: number, stats: ChatStats, corpus: Corpus, members: string[]) =>
-  unstorable(text, max, stats) === null && inlineQuotesOk(text, corpus, members) ? text : "";
+/** 제목·headline·dek: 원문과 안 맞는 인용은 따옴표를 떼고(v2.5), 그래도 저장할 수 없으면 비운다 */
+function clean(text: string, max: number, stats: ChatStats, corpus: Corpus, members: string[], checks: ValidationChecks): string {
+  const fixed = unquoteUnmatched(text, corpus, members);
+  if (unstorable(fixed.text, max, stats) !== null) return "";
+  checks.unquoted += fixed.unquoted;
+  return fixed.text;
+}
 /** 이모지 몇 글자만. 글자·숫자가 들었으면(문장을 넣었으면) 비운다 */
 const cleanIcon = (icon: string) => {
   const t = icon.trim();
@@ -282,21 +292,27 @@ function placeholderCount(text: string, stats: ChatStats): number | null {
 const refNumber = (ref: string) => (/^m\d+$/.test(ref) ? Number(ref.slice(1)) : null);
 
 /**
- * quote가 글자 그대로 든 메시지 중 claimed(모델이 적은 m번호)에 가장 가까운 것(v2.4 relink). 없으면 null.
- * prefer(사람 섹션의 그 사람)가 보낸 메시지가 있으면 그중에서만 고른다. 짧은 quote는 RELINK_NEAR 안에서만
+ * quote가 든 메시지 중 claimed(모델이 적은 m번호)에 가장 가까운 것(v2.4 relink). 글자 그대로 든 메시지가 있으면 그것만,
+ * 없으면 정규화본이 든 메시지에서 고른다(v2.5). 없으면 null.
+ * prefer(사람 섹션의 그 사람)가 보낸 메시지가 있으면 그중에서만 고른다. 짧은 quote(정규화해 RELINK_SHORT_CHARS자 미만)는 RELINK_NEAR 안에서만
  */
-function relink(lines: [ref: string, n: number, line: IndexLine][], claimed: string, quote: string, prefer: string | null) {
+function relink(lines: NumberedLine[], claimed: string, quote: string, nq: string, prefer: string | null) {
   const at = refNumber(claimed);
-  const short = length(quote.trim()) < RELINK_SHORT_CHARS;
+  const short = length(nq) < RELINK_SHORT_CHARS;
   if (short && at === null) return null;
-  const found = lines.filter(([, n, line]) => (!short || Math.abs(n - at!) <= RELINK_NEAR) && toNewlines(line.text).includes(quote));
-  const pool = prefer !== null && found.some(([, , line]) => line.sender === prefer) ? found.filter(([, , line]) => line.sender === prefer) : found;
+  const near = lines.filter((x) => !short || Math.abs(x.n - at!) <= RELINK_NEAR);
+  const exact = near.filter((x) => toNewlines(x.line.text).includes(quote));
+  const found = exact.length > 0 ? exact : near.filter((x) => x.norm().includes(nq));
+  const pool = prefer !== null && found.some((x) => x.line.sender === prefer) ? found.filter((x) => x.line.sender === prefer) : found;
   if (pool.length === 0) return null;
   const distance = (n: number) => (at === null ? n : Math.abs(n - at));
-  return pool.reduce((best, x) => (distance(x[1]) < distance(best[1]) ? x : best));
+  return pool.reduce((best, x) => (distance(x.n) < distance(best.n) ? x : best));
 }
 
-const emptyChecks = (): ValidationChecks => ({ relinked: 0, dropped_by: {} });
+/** 번호 붙은 보낸 줄. 정규화본은 처음 볼 때 만든다 */
+type NumberedLine = { ref: string; n: number; line: IndexLine; norm: () => string };
+
+const emptyChecks = (): ValidationChecks => ({ relinked: 0, requoted: 0, unquoted: 0, dropped_by: {} });
 
 export function validateReport(
   raw: unknown,
@@ -317,7 +333,7 @@ export function validateReport(
   const parts = new Set<string>(TONES[opts.tone].parts.map((p) => p.key));
   const closingPart = TONES[opts.tone].parts.at(-1)?.key;
   const people = Object.keys(stats.byPerson);
-  // 글 안의 인용을 맞춰 볼 보낸 메시지 본문. 인용이 있을 때 한 번만 만든다
+  // 글 안의 인용을 맞춰 볼 보낸 메시지(정규화본). 인용이 있을 때 한 번만 만든다
   const corpus = corpusOf(idx);
   const paragraphsIn = report.sections.reduce((n, s) => n + s.paragraphs.length, 0);
   const evidenceIn = report.sections.reduce((n, s) => n + s.evidence.length, 0);
@@ -326,65 +342,71 @@ export function validateReport(
     if (n > 0) checks.dropped_by[reason] = (checks.dropped_by[reason] ?? 0) + n;
   };
   // 다시 잇기에 쓰는 번호 붙은 줄 목록. 틀린 근거가 있을 때 한 번만 만든다
-  let numbered: [string, number, IndexLine][] | null = null;
+  let numbered: NumberedLine[] | null = null;
   const lines = () =>
-    (numbered ??= Array.from(idx, ([ref, line]): [string, number, IndexLine] => [ref, refNumber(ref) ?? -1, line]).filter(([, n]) => n >= 0));
+    (numbered ??= Array.from(idx, ([ref, line]): NumberedLine => {
+      let norm: string | null = null;
+      return { ref, n: refNumber(ref) ?? -1, line, norm: () => (norm ??= normalizeQuote(toNewlines(line.text))) };
+    }).filter((x) => x.n >= 0));
+
+  /**
+   * 근거 하나를 원문에 맞춘다(v2.5). 글자 그대로 → m번호 메시지의 정규화 구간 → relink(글자 그대로·정규화) → m번호 메시지와 글자 겹침 순.
+   * 정규화·겹침으로 맞으면 quote를 그 메시지의 원문 글자로 바꾼다. 못 찾으면 null
+   */
+  const verify = (e: Report["sections"][number]["evidence"][number], prefer: string | null): StoredSection["evidence"][number] | null => {
+    const quote = toNewlines(e.quote);
+    const line = idx.get(e.msg_id);
+    const original = line ? toNewlines(line.text) : null;
+    if (line && original!.includes(quote)) return { id: e.id, msg_id: e.msg_id, quote, sender: line.sender, at: line.at };
+    const nq = normalizeQuote(quote);
+    if (nq === "") return null;
+    const span = original === null ? null : originalSpan(original, nq);
+    if (line && span !== null) {
+      checks.requoted++;
+      return { id: e.id, msg_id: e.msg_id, quote: span, sender: line.sender, at: line.at };
+    }
+    const found = relink(lines(), e.msg_id, quote, nq, prefer);
+    if (found) {
+      const text = toNewlines(found.line.text);
+      const exact = text.includes(quote);
+      checks.relinked++;
+      if (!exact) checks.requoted++;
+      return { id: e.id, msg_id: found.ref, quote: exact ? quote : originalSpan(text, nq)!, sender: found.line.sender, at: found.line.at };
+    }
+    if (line && overlapRatio(nq, normalizeQuote(original!)) >= OVERLAP_MIN) {
+      checks.requoted++;
+      return { id: e.id, msg_id: e.msg_id, quote: original!, sender: line.sender, at: line.at };
+    }
+    return null;
+  };
 
   // 1차: 섹션마다 남을 문단과 그 문단이 쓰는 근거를 정한다. 근거 몫과 상관없이 정해진다
   const judged = report.sections.flatMap((section) => {
-    // 1) 근거: 보낸 줄에 있고 본문의 부분 문자열인 것만(원문 일치), 같은 id는 처음 것만.
-    // m번호가 틀렸으면 quote가 든 가장 가까운 메시지로 다시 잇는다(relink)
+    // 1) 근거: 원문과 맞는 것만(verify), 같은 id는 처음 것만
     const aboutPerson = people.includes(section.about);
     const valid: StoredSection["evidence"] = [];
     for (const e of section.evidence) {
-      const quote = toNewlines(e.quote);
-      if (quote.trim() === "" || valid.some((v) => v.id === e.id)) {
-        drop("evidence_unmatched");
-        continue;
-      }
-      const line = idx.get(e.msg_id);
-      if (line && toNewlines(line.text).includes(quote)) {
-        valid.push({ id: e.id, msg_id: e.msg_id, quote, sender: line.sender, at: line.at });
-        continue;
-      }
-      const found = relink(lines(), e.msg_id, quote, aboutPerson ? section.about : null);
-      if (!found) {
-        drop("evidence_unmatched");
-        continue;
-      }
-      checks.relinked++;
-      valid.push({ id: e.id, msg_id: found[0], quote, sender: found[2].sender, at: found[2].at });
+      const ok = e.quote.trim() === "" || valid.some((v) => v.id === e.id) ? null : verify(e, aboutPerson ? section.about : null);
+      if (ok === null) drop("evidence_unmatched");
+      else valid.push(ok);
     }
     const verified = new Set(valid.map((e) => e.id));
 
-    // 2) 문단: 글 검사(빈 글·자리표시자·금지 표현·개인정보·글자 수·큰따옴표 인용)와 가짜 근거 검사.
-    // 근거를 달았는데 원문과 맞는 것이 하나도 없으면 지운다. evidence_ids는 원문과 맞은 것만 남긴다
-    const written = section.paragraphs.flatMap((p): (Paragraph & { placeholders: number })[] => {
-      const text = named(p.text);
-      const placeholders = placeholderCount(text, stats);
-      const ids = p.evidence_ids.filter((id) => verified.has(id));
-      // 지울 까닭을 앞에서부터 하나 고른다(빈 글 → 자리표시자 → 글자 수·금지 표현·개인정보 → 글 안 인용 → 가짜 근거)
-      const reason = (): DropReason | null => {
-        if (text.trim() === "") return "empty";
-        if (placeholders === null) return "placeholder";
-        const bad = unstorable(text, MAX_CHARS.paragraph, stats);
-        if (bad !== null) return bad;
-        if (!inlineQuotesOk(text, corpus, opts.members)) return "inline_quote";
-        return p.evidence_ids.length > 0 && ids.length === 0 ? "fake_evidence" : null;
-      };
-      const why = reason();
-      if (why !== null || placeholders === null) {
-        drop(why ?? "placeholder");
+    // 2) 문단: 원문과 안 맞는 인용은 따옴표만 떼고(v2.5), 글 검사(빈 글·자리표시자·글자 수·금지 표현·개인정보)에 걸리면 지운다.
+    // evidence_ids는 원문과 맞은 것만 남긴다. 근거를 모두 잃었거나 근거가 없는 사람 문단도 남는다(v2.5)
+    const paragraphs = section.paragraphs.flatMap((p): Paragraph[] => {
+      const fixed = unquoteUnmatched(named(p.text), corpus, opts.members);
+      const text = fixed.text;
+      // 지울 까닭을 앞에서부터 하나 고른다(빈 글 → 자리표시자 → 글자 수·금지 표현·개인정보)
+      const why: DropReason | null =
+        text.trim() === "" ? "empty" : placeholderCount(text, stats) === null ? "placeholder" : unstorable(text, MAX_CHARS.paragraph, stats);
+      if (why !== null) {
+        drop(why);
         return [];
       }
-      return [{ ...p, text, evidence_ids: ids, placeholders }];
+      checks.unquoted += fixed.unquoted;
+      return [{ ...p, text, evidence_ids: p.evidence_ids.filter((id) => verified.has(id)) }];
     });
-    // 3) 사람 근거(섹션 단위): 근거를 달지 않은 문단만 본다. 원문과 맞은 근거를 쓰는 문단이나 자리표시자가 섹션 어디든 있으면 된다.
-    // 근거를 단 문단은 2)를 지났으면 원문과 맞은 근거가 있으므로 grounded가 참이라 여기서 지워지지 않는다
-    const grounded = written.some((p) => p.evidence_ids.length > 0 || p.placeholders > 0);
-    const isPerson = (text: string) => aboutPerson || people.some((name) => text.includes(name));
-    const paragraphs = written.filter((p) => grounded || !isPerson(p.text)).map(({ placeholders: _placeholders, ...p }) => p);
-    drop("ungrounded", written.length - paragraphs.length);
     // 남는 문단이 쓰는 근거만 몫을 센다(고아 근거는 버린다)
     const used = new Set(paragraphs.flatMap((p) => p.evidence_ids));
     drop("evidence_orphan", valid.filter((e) => !used.has(e.id)).length);
@@ -417,7 +439,7 @@ export function validateReport(
       ...j.section,
       part: parts.has(j.section.part) ? j.section.part : "",
       icon: cleanIcon(j.section.icon),
-      title: clean(named(j.section.title), MAX_CHARS.title, stats, corpus, opts.members),
+      title: clean(named(j.section.title), MAX_CHARS.title, stats, corpus, opts.members, checks),
       about: ABOUT_FIXED.has(j.section.about) || j.aboutPerson ? j.section.about : "group",
       paragraphs: j.paragraphs.map((p, i) => ({ ...p, key: `p${i + 1}`, evidence_ids: p.evidence_ids.filter((id) => kept.has(id)) })),
       evidence,
@@ -430,8 +452,8 @@ export function validateReport(
     ...report,
     checks,
     reading_notes: sanitizeNotes(report.reading_notes.map((n) => ({ ...n, note: named(n.note) }))),
-    headline: clean(named(report.headline), MAX_CHARS.headline, stats, corpus, opts.members),
-    dek: clean(named(report.dek), MAX_CHARS.dek, stats, corpus, opts.members),
+    headline: clean(named(report.headline), MAX_CHARS.headline, stats, corpus, opts.members, checks),
+    dek: clean(named(report.dek), MAX_CHARS.dek, stats, corpus, opts.members, checks),
     sections,
   };
   const partial = opts.truncated || dropped.paragraphs / paragraphsIn >= PARTIAL_DROP_RATIO;

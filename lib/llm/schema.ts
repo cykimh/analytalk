@@ -56,9 +56,9 @@ export const reportSchema = z.object({
 export type Report = z.infer<typeof reportSchema>;
 
 /**
- * 검증이 문단·근거를 지운 까닭(v2.4). 문단: empty(빈 글)·placeholder(풀리지 않는 자리표시자)·too_long·banned(금지 표현)·pii·
- * inline_quote(원문에 없거나 말한 사람이 다른 글 안 인용)·fake_evidence(단 근거가 하나도 원문과 맞지 않음)·ungrounded(근거 없는 사람 문단).
- * 근거: evidence_unmatched(원문과 맞지 않고 다시 이을 곳도 없음)·evidence_orphan(남은 문단이 안 씀)·evidence_over_budget(인용 몫 초과)
+ * 검증이 문단·근거를 지운 까닭(v2.4). 문단: empty(빈 글)·placeholder(풀리지 않는 자리표시자)·too_long·banned(금지 표현)·pii.
+ * 근거: evidence_unmatched(원문과 맞지 않고 다시 이을 곳도 없음)·evidence_orphan(남은 문단이 안 씀)·evidence_over_budget(인용 몫 초과).
+ * inline_quote·fake_evidence·ungrounded는 v2.4 행에만 있다(v2.5부터 그런 문단을 지우지 않는다: 따옴표만 떼거나 근거 id만 뺀다)
  */
 export const DROP_REASONS = [
   "empty",
@@ -74,12 +74,26 @@ export const DROP_REASONS = [
   "evidence_over_budget",
 ] as const;
 export type DropReason = (typeof DROP_REASONS)[number];
-/** 저장하는 검증 기록. 숫자뿐이다(대화 원문·이름 없음). relinked: m번호가 틀려 quote가 든 메시지로 다시 이은 근거 수 */
-export type ValidationChecks = { relinked: number; dropped_by: Partial<Record<DropReason, number>> };
+/**
+ * 저장하는 검증 기록. 숫자·열거값뿐이다(대화 원문·이름 없음).
+ * - relinked: m번호가 틀려 quote가 든 다른 메시지로 다시 이은 근거 수
+ * - requoted(v2.5): 정규화·글자 겹침으로 맞춰 quote를 그 메시지의 원문 글자로 바꾼 근거 수
+ * - unquoted(v2.5): 원문과 안 맞아 따옴표 문자만 뗀 글 안 인용 수
+ * - calls(v2.5): 나눠 쓴 호출마다 결과(ok 또는 오류 코드: max_tokens·timeout·refused·retryable·fatal·limit·invalid_output·not_started)
+ * - off_stage(v2.5): 다른 호출 몫의 구성이거나 앞 호출과 같은 사람이라 뺀 섹션 수(삭제율에 넣지 않는다)
+ */
+export type ValidationChecks = {
+  relinked: number;
+  requoted: number;
+  unquoted: number;
+  dropped_by: Partial<Record<DropReason, number>>;
+  calls?: Record<string, string>;
+  off_stage?: number;
+};
 
 /**
  * 저장하는 리포트. 근거에는 페이로드에서 찾은 발신자 표시 이름과 시각(ISO +09:00)을 채운다. part는 구성 키이거나 "".
- * checks는 v2.4부터 저장한다(예전 행에는 없다)
+ * checks는 v2.4부터 저장한다(예전 행에는 없고, v2.4 행에는 requoted·unquoted·calls가 없다)
  */
 export type StoredReport = Omit<Report, "sections"> & {
   checks?: ValidationChecks;
