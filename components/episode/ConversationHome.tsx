@@ -147,7 +147,7 @@ function DeleteBox({ id }: { id: string }) {
       <h2 id="delete-title" className="text-base font-bold">
         대화 지우기
       </h2>
-      <p className="text-base text-muted-foreground">리포트와 통계, 이 대화로 남긴 피드백이 모두 지워지고 되돌릴 수 없어요.</p>
+      <p className="text-base text-muted-foreground">리포트와 통계가 모두 지워지고 되돌릴 수 없어요.</p>
       {asking ? (
         <div className="flex flex-wrap gap-2">
           <Button variant="destructive" disabled={busy} onClick={remove}>

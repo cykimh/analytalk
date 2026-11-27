@@ -26,7 +26,7 @@ export function PageFrame({ children }: { children: ReactNode }) {
 export const REPORT_CAPTURE_ID = "report-capture";
 
 /**
- * 읽는 리포트(제목 → 본문 → 근거 인용)를 감싼다. 공유 패널·조작 버튼(다시 쓰기·피드백·삭제·공유)은 이 바깥 아래에 둔다.
+ * 읽는 리포트(제목 → 본문 → 근거 인용)를 감싼다. 공유 패널·조작 버튼(다시 쓰기·삭제·공유)은 이 바깥 아래에 둔다.
  * 위아래 여백은 테이프가 잘리지 않게 둔다
  */
 export function ReportCapture({ children }: { children: ReactNode }) {

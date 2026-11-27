@@ -96,7 +96,6 @@ export interface AppRepo {
    */
   setShare(id: string, inviteId: string, share: { tokenHash: string | null; expectHash?: string | null }): Promise<boolean>;
   getByShareHash(hash: string): Promise<ConversationRow | null>;
-  addFeedback(a: { id: string; paragraphKey: string; reason: string }): Promise<void>;
 }
 
 /** 지금(now ms) 새 생성을 멈춰 둔 상태인가. claim_conversation의 paused 판정(paused_until > now())과 같은 비교다 */
@@ -121,7 +120,6 @@ const FINISHED = new Set(["done", "partial", "refused", "safety"]);
 const CONCEPTS = new Set(["group", "couple"]);
 const TONES = new Set<string>(TONE_KEYS);
 const KINDS = new Set(["pair", "group", "work"]);
-const FEEDBACK_REASONS = new Set(["wrong_person", "wrong_fact", "tone", "other"]);
 
 /** cost_usd_est numeric(10,4)처럼 1만분의 1달러 정수로 들고 있어 합계가 정확하다 */
 const toUnits = (usd: number) => Math.round(usd * 10_000);
@@ -431,12 +429,6 @@ export function memoryRepo(seed: { invites?: { code: string; monthlyLimit: numbe
       for (const c of conversations.values()) if (c.shareTokenHash === hash && live(c, now)) return toRow(c);
       return null;
     },
-
-    // 피드백을 읽는 API가 없어 제약(이유 check·대화 FK)만 확인하고 버린다
-    async addFeedback(a) {
-      if (!FEEDBACK_REASONS.has(a.reason)) throw new Error("[memoryRepo] feedback reason check");
-      if (!conversations.has(a.id)) throw new Error("[memoryRepo] feedback conversation fk");
-    },
   };
 }
 
@@ -628,13 +620,6 @@ function supabaseRepo(db: PrivilegedDb): AppRepo {
         await conversations().select(CONVERSATION_COLUMNS).eq("share_token_hash", hash).gt("expires_at", nowIso()).maybeSingle(),
       );
       return data ? fromDb(data as unknown as DbConversation) : null;
-    },
-
-    async addFeedback(a) {
-      check(
-        "addFeedback",
-        await db.from("feedback").insert({ conversation_id: a.id, n: REPORT_N, paragraph_key: a.paragraphKey, reason: a.reason }),
-      );
     },
   };
 }

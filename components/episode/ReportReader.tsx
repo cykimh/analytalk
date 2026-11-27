@@ -1,7 +1,7 @@
 "use client";
 
 // /c/[id]/report: 검증을 통과해 저장된 리포트를 읽는다. 아직 쓰는 중이거나 못 쓴 리포트는 상태 카드와 [대화 홈에서 진행 보기]로 안내한다.
-// 리포트(표지 → 폴라로이드 → 섹션 → 근거)는 #report-capture 안에, 문단 [틀렸어요]는 그 바깥 아래에 둔다
+// 리포트(표지 → 폴라로이드 → 종합·멤버별·마무리 섹션 → 근거)는 #report-capture 안에 둔다
 import Link from "next/link";
 import { Paper } from "@/components/scrap/Paper";
 import { tapeAt } from "@/components/scrap/tilt";
@@ -10,7 +10,6 @@ import { buttonVariants } from "@/components/ui/button";
 import { CoverStickers } from "./CoverStickers";
 import { AI_NOTICE, type ConversationView, reportPhase, SAFETY_HELP, SERIES_TITLE } from "./model";
 import { blocking, PageFrame, PageState, ReportCapture } from "./PageState";
-import { ParagraphFeedback } from "./ParagraphFeedback";
 import { ReportView } from "./ReportView";
 import { useConversation } from "./useConversation";
 
@@ -43,7 +42,6 @@ export function ReportReaderView({ id, conversation: c }: { id: string; conversa
               snapshot={<KpiPolaroids stats={c.stats} />}
             />
           </ReportCapture>
-          <ParagraphFeedback id={id} content={content} stats={c.stats} />
         </>
       ) : (
         <Paper tilt="left" tape={tapeAt(0)} className="grid gap-3 pt-6 text-base">

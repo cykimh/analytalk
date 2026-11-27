@@ -613,7 +613,7 @@ describe("memoryRepo partial 다시 쓰기가 실패해도 앞의 글을 남긴�
   });
 });
 
-describe("memoryRepo 삭제·공유·피드백", () => {
+describe("memoryRepo 삭제·공유", () => {
   it("다른 코드로는 지우지 못하고, 같은 코드로 지우면 사라진다", async () => {
     const { repo, many, two } = await fixture();
     const id = await created(claim(repo, many));
@@ -663,14 +663,6 @@ describe("memoryRepo 삭제·공유·피드백", () => {
     const b = await created(claim(repo, many));
     await repo.setShare(a, many, { tokenHash: "hash-1" });
     await expect(repo.setShare(b, many, { tokenHash: "hash-1" })).rejects.toThrow();
-  });
-
-  it("피드백은 정해진 이유로, 있는 대화에만 남긴다", async () => {
-    const { repo, many } = await fixture();
-    const id = await created(claim(repo, many));
-    await expect(repo.addFeedback({ id, paragraphKey: "s1p1", reason: "tone" })).resolves.toBeUndefined();
-    await expect(repo.addFeedback({ id, paragraphKey: "s1p1", reason: "boring" })).rejects.toThrow();
-    await expect(repo.addFeedback({ id: randomUUID(), paragraphKey: "s1p1", reason: "tone" })).rejects.toThrow();
   });
 
   it("돌려준 값을 고쳐도 저장된 값은 그대로다", async () => {
@@ -882,18 +874,13 @@ describe("supabaseRepo (PostgREST 요청·응답 흉내, Review Focus 4)", () =>
     ]);
   });
 
-  it("공유 발급은 scope 'all'·hidden []도 써 두고(v1 코드로 되돌려도 링크가 산다), 폐기는 해시만 비운다. 피드백은 n = 1", async () => {
-    const { repo, calls } = supabase(Response.json([{ id: ID }]), Response.json([{ id: ID }]), new Response(null, { status: 201 }));
+  it("공유 발급은 scope 'all'·hidden []도 써 두고(v1 코드로 되돌려도 링크가 산다), 폐기는 해시만 비운다", async () => {
+    const { repo, calls } = supabase(Response.json([{ id: ID }]), Response.json([{ id: ID }]));
     expect(await repo.setShare(ID, INVITE, { tokenHash: "hash-1", expectHash: null })).toBe(true);
     expect(await repo.setShare(ID, INVITE, { tokenHash: null })).toBe(true);
-    await repo.addFeedback({ id: ID, paragraphKey: "s1.p1", reason: "tone" });
-    const [issue, revoke, feedback] = calls();
+    const [issue, revoke] = calls();
     expect([issue.method, issue.body]).toEqual(["PATCH", { share_token_hash: "hash-1", share_scope: "all", share_hidden: [] }]);
     expect(issue.url.searchParams.get("share_token_hash")).toBe("is.null");
     expect([revoke.method, revoke.body]).toEqual(["PATCH", { share_token_hash: null }]);
-    expect([feedback.url.pathname, feedback.body]).toEqual([
-      "/rest/v1/feedback",
-      { conversation_id: ID, n: 1, paragraph_key: "s1.p1", reason: "tone" },
-    ]);
   });
 });
