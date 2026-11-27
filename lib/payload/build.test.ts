@@ -3,8 +3,22 @@ import type { ChatMessage } from "@/lib/parse/parse";
 import { MAX_PAYLOAD_BYTES, PROMPT_RESERVE_TOKENS, SAMPLE_CHUNKS_PER_MONTH } from "@/lib/config";
 import { computeStats } from "@/lib/stats/compute";
 import { statsForPrompt } from "@/lib/stats/view";
-import { syntheticGroupChat } from "@/test/syntheticChat";
-import { buildPayload, buildPayloadForBudget, legendText, memberCodes, payloadIndex, payloadTokens, readBlock } from "./build";
+import { syntheticBurstyChat, syntheticGroupChat } from "@/test/syntheticChat";
+import {
+  BUNDLE_MAX_CHARS,
+  BUNDLE_MAX_PARTS,
+  BUNDLE_SEP,
+  buildPayload,
+  buildPayloadForBudget,
+  foldedCount,
+  isReaction,
+  legendText,
+  memberCodes,
+  payloadIndex,
+  payloadTokens,
+  REACTION_MAX_CHARS,
+  readBlock,
+} from "./build";
 import { applyDisplayNames, type NameMap } from "./names";
 import { validatePayload } from "./validate";
 
@@ -497,9 +511,247 @@ describe("payload v2 형식", () => {
   });
 
   it("readBlock: 메시지 줄은 기호와 날짜 헤더를 돌려준다", () => {
-    const [h, m, bad] = readBlock("# 2026-10-01\nm7|09:05|AB|안녕|여기\nm8|09:05|a|x");
+    const [h, m, bad, bundle] = readBlock("# 2026-10-01\nm7|09:05|AB|안녕|여기\nm8|09:05|a|x\nm9+2|09:06|A|가 ¦ 나 ¦ 다");
     expect(h).toEqual({ type: "header", date: "2026-10-01" });
-    expect(m).toEqual({ type: "message", ref: "m7", id: 7, time: "09:05", code: "AB", body: "안녕|여기", header: "2026-10-01" });
+    expect(m).toEqual({ type: "message", ref: "m7", id: 7, more: 0, time: "09:05", code: "AB", body: "안녕|여기", header: "2026-10-01" });
     expect(bad).toEqual({ type: "bad" });
+    // v2.7: 묶음 줄은 m<번호>+<k>(k개 더)
+    expect(bundle).toEqual({ type: "message", ref: "m9", id: 9, more: 2, time: "09:06", code: "A", body: "가 ¦ 나 ¦ 다", header: "2026-10-01" });
+    expect(readBlock("# 2026-10-01\nm9+0|09:06|A|가")[1]).toEqual({ type: "bad" });
+  });
+});
+
+// ===== v2.7: 같은 예산으로 더 많이 읽기(연속 메시지 묶기, 미디어·짧은 반응 접기) =====
+
+describe("isReaction·foldedCount", () => {
+  it("짧은 반응: 자모·기호만이고 REACTION_MAX_CHARS자 이하", () => {
+    for (const s of ["ㅋㅋ", "ㅇㅇ", "ㄷㄷ", "ㅠㅠ", "ㄱㄱ", "ㅇㅋ", "?", "!!", "~", "^^", "ㅋㅋ ⏎ ㅋㅋ", "😂😂", "ㅋ".repeat(REACTION_MAX_CHARS)]) {
+      expect([s, isReaction(s)]).toEqual([s, true]);
+    }
+    for (const s of ["ㅋㅋ 진짜", "ㅋㅋ5", "응", "ㅋㅋx5", "ㅋㅋ×5", "ㅋ".repeat(REACTION_MAX_CHARS + 1), "", " ", "[사진]", "a ¦ b"]) {
+      expect([s, isReaction(s)]).toEqual([s, false]);
+    }
+  });
+
+  it("묶음 줄의 칸: 접은 미디어·반응은 그 메시지 수, 글은 null", () => {
+    expect(foldedCount("[사진]")).toBe(1);
+    expect(foldedCount("[사진×3]")).toBe(3);
+    expect(foldedCount("[삭제된 메시지×2]")).toBe(2);
+    expect(foldedCount("ㅋㅋ×5")).toBe(5);
+    expect(foldedCount("ㅋㅋ")).toBe(1);
+    for (const s of ["치킨?", "ㅋㅋx5", "[사진x3]", "[링크:youtube.com]", "[가림:전화]", "ㅋㅋ 진짜×2"]) expect([s, foldedCount(s)]).toEqual([s, null]);
+  });
+});
+
+describe("buildPayload v2.7: 다 들어가면 예전 줄 모양, 모자라면 묶고 접는다", () => {
+  const group = (messages: ChatMessage[], tokenBudget: number, compact?: boolean) =>
+    buildPayload({ messages, tone: "warm", concept: "group", kind: "group", tokenBudget, tokensPerChar: 1, ...(compact === undefined ? {} : { compact }) });
+  /** 한 줄에 하나씩(예전 모양)으로 대화 전체를 보낸 transcript의 비용 */
+  const plainCost = (messages: ChatMessage[]) => payloadTokens(group(messages, 10_000_000), 1).text;
+  const t = (h: number, mi: number, d = 1) => kst(2026, 10, d, h, mi);
+
+  // 0~4: A가 같은 분에 글 둘·사진 둘·반응 하나. 5: B. 6: B의 혼자 반응(3분 뒤). 7: A의 혼자 반응(앞 줄이 B). 8~9: 구분자·×숫자가 든 글
+  const rows: Raw[] = [
+    ["P1", t(9, 0), "오늘 저녁 뭐 먹을까?"],
+    ["P1", t(9, 0), "치킨?"],
+    ["P1", t(9, 0), "", "photo"],
+    ["P1", t(9, 0), "", "photo"],
+    ["P1", t(9, 0), "ㅋㅋ"],
+    ["P2", t(9, 0), "좋아"],
+    ["P2", t(9, 3), "ㅋㅋㅋ"],
+    ["P1", t(9, 4), "ㅇㅇ"],
+    ["P1", t(9, 5), "a ¦ b"],
+    ["P1", t(9, 5), "ㅋㅋ×5"],
+    ["P2", t(9, 6), "끝"],
+  ];
+  const messages = chat(rows);
+
+  it("대화 전체가 한 줄에 하나씩 들어가면 예전 줄 모양 그대로다(묶지도 접지도 않는다)", () => {
+    const p = group(messages, 10_000_000);
+    expect(lines(p.transcript)).toEqual([
+      "# 2026-10-01",
+      "m0|09:00|A|오늘 저녁 뭐 먹을까?",
+      "m1|09:00|A|치킨?",
+      "m2|09:00|A|[사진]",
+      "m3|09:00|A|[사진]",
+      "m4|09:00|A|ㅋㅋ",
+      "m5|09:00|B|좋아",
+      "m6|09:03|B|ㅋㅋㅋ",
+      "m7|09:04|A|ㅇㅇ",
+      "m8|09:05|A|a ¦ b",
+      "m9|09:05|A|ㅋㅋ×5",
+      "m10|09:06|B|끝",
+    ]);
+    expect(p.msgSent).toBe(11);
+  });
+
+  it("모자라면 1단계: 같은 사람이 같은 분에 연달아 보낸 메시지를 한 줄로 묶는다(m<번호>+<k>, 구분자 ' ¦ '). 혼자인 반응·미디어는 그대로 둔다", () => {
+    const p = group(messages, plainCost(messages) - 1);
+    expect(lines(p.transcript)).toEqual([
+      "# 2026-10-01",
+      `m0+4|09:00|A|오늘 저녁 뭐 먹을까?${BUNDLE_SEP}치킨?${BUNDLE_SEP}[사진×2]${BUNDLE_SEP}ㅋㅋ`,
+      "m5|09:00|B|좋아",
+      "m6|09:03|B|ㅋㅋㅋ",
+      "m7|09:04|A|ㅇㅇ",
+      // 글 안의 구분자 글자는 전각으로, 접은 반응처럼 보이는 ×숫자는 x로 바꾼다(묶음 칸 수가 어긋나지 않게)
+      `m8+1|09:05|A|a ￤ b${BUNDLE_SEP}ㅋㅋx5`,
+      "m10|09:06|B|끝",
+    ]);
+    expect(p.msgSent).toBe(11);
+    expect(p.msgTotal).toBe(11);
+    expect(validatePayload(p).ok).toBe(true);
+  });
+
+  it("그래도 모자라면 2단계: 혼자인 반응·미디어는 같은 사람의 바로 앞 줄 끝에 접고, 접을 곳이 없으면 뺀다", () => {
+    const bundled = payloadTokens(group(messages, plainCost(messages) - 1), 1).text;
+    const p = group(messages, bundled - 1);
+    expect(lines(p.transcript)).toEqual([
+      "# 2026-10-01",
+      `m0+4|09:00|A|오늘 저녁 뭐 먹을까?${BUNDLE_SEP}치킨?${BUNDLE_SEP}[사진×2]${BUNDLE_SEP}ㅋㅋ`,
+      // B의 3분 뒤 반응은 B의 바로 앞 줄에 접는다
+      `m5+1|09:00|B|좋아${BUNDLE_SEP}ㅋㅋㅋ`,
+      // A의 m7(앞 줄이 B)은 접을 곳이 없어 뺐다
+      `m8+1|09:05|A|a ￤ b${BUNDLE_SEP}ㅋㅋx5`,
+      "m10|09:06|B|끝",
+    ]);
+    expect(p.msgSent).toBe(10);
+    expect(validatePayload(p).ok).toBe(true);
+  });
+
+  it("payloadIndex: 묶음의 글 메시지마다 제 번호·보낸 사람·시각·본문이 남고, 접은 미디어·반응은 근거로 쓰지 않는다", () => {
+    const bundled = payloadTokens(group(messages, plainCost(messages) - 1), 1).text;
+    const idx = payloadIndex(group(messages, bundled - 1));
+    const at = (mi: number) => `2026-10-01T09:${String(mi).padStart(2, "0")}:00+09:00`;
+    expect([...idx]).toEqual([
+      ["m0", { sender: "P1", at: at(0), text: "오늘 저녁 뭐 먹을까?", lineRef: "m0" }],
+      ["m1", { sender: "P1", at: at(0), text: "치킨?", lineRef: "m0" }],
+      ["m5", { sender: "P2", at: at(0), text: "좋아", lineRef: "m5" }],
+      ["m8", { sender: "P1", at: at(5), text: "a ￤ b", lineRef: "m8" }],
+      ["m9", { sender: "P1", at: at(5), text: "ㅋㅋx5", lineRef: "m8" }],
+      ["m10", { sender: "P2", at: at(6), text: "끝" }],
+    ]);
+  });
+
+  it("compact: false면 예산이 모자라도 예전처럼 한 줄에 하나씩 고른다(측정용)", () => {
+    const p = group(messages, plainCost(messages) - 1, false);
+    expect(p.transcript).not.toContain("+");
+    expect(p.msgSent).toBeLessThan(11);
+  });
+
+  it("같은 분의 같은 반응은 1단계에서도 ×n으로 접고, 2단계는 ㅋ 개수가 달라도 같은 반응으로 접는다", () => {
+    const m = chat([
+      ["P1", t(9, 0), "웃기다"],
+      ["P1", t(9, 0), "ㅋㅋ"],
+      ["P1", t(9, 0), "ㅋㅋ"],
+      ["P1", t(9, 0), "ㅋㅋㅋㅋ"],
+      ["P1", t(9, 0), "ㅠㅠ"],
+      ["P2", t(9, 1), "뭐가"],
+      ["P2", t(9, 30), "", "emoticon"],
+    ]);
+    const one = group(m, plainCost(m) - 1);
+    expect(lines(one.transcript).slice(1)).toEqual([
+      `m0+4|09:00|A|웃기다${BUNDLE_SEP}ㅋㅋ×2${BUNDLE_SEP}ㅋㅋㅋㅋ${BUNDLE_SEP}ㅠㅠ`,
+      "m5|09:01|B|뭐가",
+      "m6|09:30|B|[이모티콘]",
+    ]);
+    const two = group(m, payloadTokens(one, 1).text - 1);
+    expect(lines(two.transcript).slice(1)).toEqual([
+      `m0+4|09:00|A|웃기다${BUNDLE_SEP}ㅋㅋ×3${BUNDLE_SEP}ㅠㅠ`,
+      `m5+1|09:01|B|뭐가${BUNDLE_SEP}[이모티콘]`,
+    ]);
+    expect([one.msgSent, two.msgSent]).toEqual([7, 7]);
+  });
+
+  it("마지막 메시지는 접을 곳이 없어도 빼지 않는다(transcript는 늘 마지막 메시지로 끝난다)", () => {
+    const m = chat([
+      ["P1", t(9, 0), "안녕"],
+      ["P2", t(9, 1), "ㅋㅋ"],
+      ["P2", t(9, 5), "뭐해"],
+      ["P1", t(9, 10), "ㅋㅋ"],
+    ]);
+    const p = group(m, plainCost(m) - 1);
+    expect(lines(p.transcript).slice(1)).toEqual(["m0|09:00|A|안녕", "m2|09:05|B|뭐해", "m3|09:10|A|ㅋㅋ"]);
+    expect(p.msgSent).toBe(3);
+  });
+
+  it("날짜가 바뀌거나 메시지 번호가 이어지지 않으면(사이에 알림) 묶지도 접지도 않는다", () => {
+    const m = chat([
+      ["P1", t(23, 59, 1), "자기 전에"],
+      ["P1", t(0, 0, 2), "", "photo"],
+      ["P2", t(0, 1, 2), "아직 안 잤어?"],
+      [null, t(0, 1, 2), "P3님이 들어왔습니다."],
+      ["P2", t(0, 1, 2), "나도"],
+      ["P1", t(0, 2, 2), "끝"],
+    ]);
+    const p = group(m, plainCost(m) - 1);
+    expect(lines(p.transcript)).toEqual(["# 2026-10-01", "m0|23:59|A|자기 전에", "# 2026-10-02", "m2|00:01|B|아직 안 잤어?", "m4|00:01|B|나도", "m5|00:02|A|끝"]);
+    expect(validatePayload(p).ok).toBe(true);
+  });
+
+  it(`묶음 한 줄은 칸 ${BUNDLE_MAX_PARTS}개·본문 ${BUNDLE_MAX_CHARS}자까지다. 그보다 긴 메시지 하나는 혼자 한 줄이다`, () => {
+    const many: Raw[] = Array.from({ length: BUNDLE_MAX_PARTS + 4 }, (_, i): Raw => ["P1", t(9, 0), `말${i}`]);
+    const long = "가".repeat(BUNDLE_MAX_CHARS + 50);
+    const m = chat([...many, ["P1", t(9, 0), long], ["P1", t(9, 0), "또 짧게"], ["P2", t(9, 1), "끝"]]);
+    const p = group(m, plainCost(m) - 1);
+    const heads = lines(p.transcript).slice(1).map((l) => l.split("|")[0]);
+    expect(heads).toEqual([`m0+${BUNDLE_MAX_PARTS - 1}`, `m${BUNDLE_MAX_PARTS}+3`, `m${BUNDLE_MAX_PARTS + 4}`, `m${BUNDLE_MAX_PARTS + 5}`, `m${BUNDLE_MAX_PARTS + 6}`]);
+    for (const l of lines(p.transcript).slice(1, 3)) expect(l.length).toBeLessThan(BUNDLE_MAX_CHARS + 20);
+    expect(validatePayload(p).ok).toBe(true);
+  });
+});
+
+describe("buildPayload v2.7: 몰아 보내는 큰 단톡방(전체 기간에서 고를 때)", () => {
+  const messages = syntheticBurstyChat({ people: 6, days: 150 });
+  const byId = new Map(messages.map((m) => [m.id, m]));
+  const group = (tokenBudget: number, compact = true) =>
+    buildPayload({ messages, tone: "warm", concept: "group", kind: "group", tokenBudget, tokensPerChar: 1, compact });
+  /** 줄마다 덮는 메시지 번호 구간 */
+  const covered = (block: string) => readBlock(block).flatMap((l) => (l.type === "message" ? Array.from({ length: l.more + 1 }, (_, k) => l.id + k) : []));
+
+  it("예산을 넘지 않고, 모든 달이 들고, 마지막 메시지로 끝나고, msgSent는 줄이 덮는 원본 메시지 수다", () => {
+    for (const budget of [20_000, 60_000]) {
+      const p = group(budget);
+      expect([budget, payloadTokens(p, 1).text <= budget]).toEqual([budget, true]);
+      expect([budget, payloadTokens(p, 1).text > budget * 0.9]).toEqual([budget, true]);
+      expect([budget, validatePayload(p).ok]).toEqual([budget, true]);
+      const ids = covered(p.transcript);
+      expect(p.msgSent).toBe(ids.length);
+      expect(ids.at(-1)).toBe(messages.at(-1)!.id);
+      const months = new Set(messages.map((m) => new Date(m.ts + 9 * HOUR).toISOString().slice(0, 7)));
+      expect(new Set(sentLines(p.transcript).map((l) => l.day.slice(0, 7)))).toEqual(months);
+      // 덮는 번호는 모두 원본 메시지이고, 빠진 메시지(접을 곳 없는 반응·미디어)는 덮지 않는다
+      for (const id of ids) expect(byId.get(id)?.sender).not.toBeNull();
+    }
+  });
+
+  it("msg_id 왕복: payloadIndex의 번호마다 원본 메시지의 보낸 사람·분 단위 시각·본문이 그대로다", () => {
+    const p = group(40_000);
+    const idx = payloadIndex(p);
+    expect(idx.size).toBeGreaterThan(500);
+    for (const [ref, line] of idx) {
+      const m = byId.get(Number(ref.slice(1)))!;
+      expect([ref, m.kind, isReaction(m.text)]).toEqual([ref, "text", false]);
+      expect([ref, line.sender]).toEqual([ref, m.sender]);
+      expect([ref, line.at]).toEqual([ref, `${iso(m.ts).slice(0, 16)}:00+09:00`]);
+      expect([ref, line.text]).toEqual([ref, m.text.replace(/\n/g, " ⏎ ")]);
+    }
+    // 접은 것만 든 줄은 마지막 줄뿐이다(혼자인 반응·미디어는 앞 줄에 접거나 뺀다)
+    const bodies = readBlock(p.transcript).flatMap((l) => (l.type === "message" ? [l.body] : []));
+    for (const b of bodies.slice(0, -1)) expect(b.split(BUNDLE_SEP).some((part) => foldedCount(part) === null)).toBe(true);
+  });
+
+  it("회귀: 같은 예산에서 한 줄에 하나씩일 때보다 원본 메시지를 20% 넘게 더 보낸다", () => {
+    for (const budget of [20_000, 60_000]) {
+      const before = group(budget, false).msgSent;
+      const after = group(budget).msgSent;
+      expect([budget, after >= before * 1.2]).toEqual([budget, true]);
+    }
+  });
+
+  it("예산을 0.95배로 줄이면(413 재요청) 보내는 몫도 줄어든다", () => {
+    const a = group(60_000);
+    const b = group(57_000);
+    expect(payloadTokens(b, 1).text).toBeLessThan(payloadTokens(a, 1).text);
+    expect(b.msgSent).toBeLessThanOrEqual(a.msgSent);
   });
 });

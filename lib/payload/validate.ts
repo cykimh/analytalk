@@ -4,7 +4,7 @@ import { z } from "zod";
 import { MAX_PAYLOAD_BYTES } from "@/lib/config";
 import { PICKABLE_TONES } from "@/lib/llm/concepts";
 import type { ChatStats } from "@/lib/stats/compute";
-import { memberCodes, type Payload, readBlock } from "./build";
+import { bundleSize, memberCodes, type Payload, readBlock } from "./build";
 import { maskPII } from "./mask";
 import { checkDisplayName } from "./names";
 
@@ -103,8 +103,8 @@ function fail(error: string): { ok: false; error: string } {
 
 /**
  * 크기(4MB)·구조(zod, v2·tone·members 2명 이상·me 없음)·꺾쇠 괄호·concept와 kind·members 이름·줄 형식·
- * 날짜 헤더(메시지 줄 앞에 있어야 한다)·msg_id 순서·기호(범례 안)·가리기 누락·msgSent·stats의 사람 키를 차례로 본다. msg_id는 anchors에서 transcript까지 이어서 커지기만 해야 하고,
- * transcript에는 메시지가 1개 이상 있어야 한다
+ * 날짜 헤더(메시지 줄 앞에 있어야 한다)·msg_id 순서·묶음 칸 수·기호(범례 안)·가리기 누락·msgSent·stats의 사람 키를 차례로 본다. msg_id는 anchors에서 transcript까지 이어서 커지기만 해야 하고
+ * (v2.7 묶음 줄 `m<id>+<k>`는 id + k까지 덮으므로 다음 줄은 그 뒤), transcript에는 메시지가 1개 이상 있어야 한다. msgSent는 줄들이 덮는 메시지 수다
  */
 export function validatePayload(raw: unknown): { ok: true; payload: Payload } | { ok: false; error: string } {
   let json: string | undefined;
@@ -148,10 +148,12 @@ export function validatePayload(raw: unknown): { ok: true; payload: Payload } | 
       if (line.type === "header") continue;
       if (line.header === null) return fail(`날짜 헤더: ${at}`);
       if (line.id <= prevId) return fail(`msg_id 순서: ${at}`);
-      prevId = line.id;
+      // v2.7 묶음 줄(m<id>+<k>)은 id부터 id + k까지 덮는다. 칸 수(접은 칸은 ×n만큼)가 k + 1이어야 한다
+      if (line.more > 0 && bundleSize(line.body) !== line.more + 1) return fail(`묶음 칸 수: ${at}`);
+      prevId = line.id + line.more;
       if (!codes.has(line.code)) return fail(`범례 밖의 기호: ${at}`);
       if (maskPII(line.body).text !== line.body) return fail(`가리기 누락: ${at}`);
-      if (name === "transcript") sent++;
+      if (name === "transcript") sent += line.more + 1;
     }
   }
   if (sent !== p.msgSent) return fail("msgSent가 transcript 메시지 수와 다르다");

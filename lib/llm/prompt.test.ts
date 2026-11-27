@@ -64,10 +64,10 @@ const allIns = (p: Payload) => buildRequests(p).map((c) => instructionOf(c.req))
 /** 범례 기호 목록 */
 const codesOf = (p: Payload, names: string[]) => names.map((n) => memberCodes(p.members)[p.members.indexOf(n)]).join(", ");
 
-/** 40명 × 60개월 단톡: 예산이 작아 전체 기간에서 골라 보낸다(689개, medium 분량) */
+/** 40명 × 60개월 단톡: 예산이 작아 전체 기간에서 골라 보낸다(v2.7: 혼자 보낸 사진·이모티콘을 빼고 649개, medium 분량) */
 const bigPayload = (tone: PickableTone = "fact") =>
   buildPayload({ messages: syntheticGroupChat(40, 60), tone, concept: "group", kind: "group", tokenBudget: 20_000, tokensPerChar: 1 });
-/** 같은 40명 단톡을 예산을 키워 7,022개 보낸다(full 분량) */
+/** 같은 40명 단톡을 예산을 키워 6,641개 보낸다(full 분량) */
 const hugePayload = (tone: PickableTone = "fact") =>
   buildPayload({ messages: syntheticGroupChat(40, 60), tone, concept: "group", kind: "group", tokenBudget: 200_000, tokensPerChar: 1 });
 /** 1:1 800일 = 1,600개(full 분량) */
@@ -589,7 +589,8 @@ describe("buildRequest", () => {
     expect(ins(medium, "intro")).toContain("- nag_open 「첫 잔소리」: 섹션 하나, about은 group(1:1이면 pair), 문단 3~4개. ");
     expect(ins(medium, "outro")).toContain("분량: 이번 응답은 마무리 섹션 1개다.");
     expect(ins(medium, "people")).toContain("이번 응답의 본문(문단 글)은 적어도 2,250자, 많아야 6,000자다. 근거 인용은 섹션마다 1~3개");
-    expect(ins(medium, "intro")).toContain("재료: 보낸 대화가 689개로 많지 않다.");
+    expect(medium.msgSent).toBe(649);
+    expect(ins(medium, "intro")).toContain("재료: 보낸 대화가 649개로 많지 않다.");
   });
 
   it("문단 합계(v2.5, 호출마다): 구성 줄이 시키는 최대 문단 수 × 400자가 그 호출의 본문 상한이고, full은 그 호출의 출력 창(①은 0초 시작, 나머지는 ①의 첫 토큰 뒤 시작) 안이다", () => {

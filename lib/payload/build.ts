@@ -1,5 +1,13 @@
 // AI용 페이로드를 만들고 읽는다. 이름 정리(applyDisplayNames)를 거친 메시지만 받는다. DOM 없이 브라우저(Worker)·node 공용.
-// 줄 형식(KST): 날짜가 바뀌면 `# YYYY-MM-DD`, 메시지는 `m<id>|HH:mm|<기호>|<본문>`. 기호(A, B, … AA)는 범례(legendText)로 표시 이름과 짝지어진다
+// 줄 형식(KST): 날짜가 바뀌면 `# YYYY-MM-DD`, 메시지는 `m<id>|HH:mm|<기호>|<본문>`. 기호(A, B, … AA)는 범례(legendText)로 표시 이름과 짝지어진다.
+// v2.7(같은 예산으로 더 많이 읽기): 대화가 예산에 다 안 들어가면 줄을 줄인다(compactUnits).
+//   1단계 묶기: 같은 사람이 같은 날 같은 분(HH:mm)에 번호가 이어지게 보낸 메시지를 한 줄로 묶는다. 머리는 `m<첫 id>+<k>`(k개 더, 모두 k + 1개),
+//     본문은 메시지 사이를 BUNDLE_SEP(" ¦ ")로 잇는다. 같은 분이라 묶음의 글 메시지는 모두 머리의 시각이 제 시각이다(근거 카드의 시각이 맞다).
+//     미디어(사진 등)와 짧은 반응(자모·기호뿐인 ㅋㅋ·ㅇㅇ·ㅠㅠ)이 같은 것끼리 이어지면 한 칸에 `[사진×3]`·`ㅋㅋ×2`로 접는다.
+//   2단계 접기: 미디어·짧은 반응만 따로 보낸 것(같은 분 덩어리에 글이 없는 것)은 같은 사람의 바로 앞 줄 끝에 접고, 접을 곳이 없으면 뺀다.
+//     마지막 메시지는 빼지 않는다. 짧은 반응은 ㅋ 개수가 달라도 같은 반응으로 접는다(ㅋㅋ·ㅋㅋㅋ → ㅋㅋ×2).
+//   한 줄에 하나씩(예전 모양) → 1단계 → 2단계 순서로, 대화 전체가 처음 들어가는 단계를 쓰고 셋 다 안 들어가면 2단계에서 고른다(sampleRanges).
+//   payloadIndex는 묶음을 메시지마다 풀어 제 번호·본문을 기억한다(접은 칸은 근거로 쓰지 않는다). msgSent는 줄이 덮는 원본 메시지 수다.
 import {
   MAX_PAYLOAD_BYTES,
   PROMPT_RESERVE_TOKENS,
@@ -30,7 +38,7 @@ export interface Payload {
   cutoffAt: string;
   /** 시스템 메시지를 뺀 전체 메시지 수 */
   msgTotal: number;
-  /** transcript에 담은 메시지 수(anchors 제외). 화면의 "전체 기간에서 N개" */
+  /** transcript에 담은 원본 메시지 수(anchors 제외, v2.7: 묶음·접은 칸이 덮는 메시지까지, 뺀 반응·미디어는 빼고). 화면의 "전체 기간에서 N개" */
   msgSent: number;
   /** 전체 통계. 서버의 자리표시자 해석이 쓴다. 모델에게는 statsForPrompt로 줄여 보낸다 */
   stats: ChatStats;
@@ -42,20 +50,24 @@ export interface Payload {
   /**
    * 보낸 메시지 전부(시간순). 대화 전체가 tokenBudget에 들어가면 전부이고, 아니면 처음부터 끝까지 전체 기간에서 고른 것이다:
    * 달마다 연속 덩어리, 가장 활발했던 날들, 마지막 메시지까지 이어지는 최근 구간(조금 더 많이). 1건 이상이고 늘 마지막 메시지로 끝난다.
-   * 가장 최근 메시지가 예산보다 길면 그 본문을 자른(끝에 …) 한 줄이다
+   * v2.7: 한 줄에 하나씩으로 다 안 들어가면 묶고 접은 줄 모양(이 파일 머리 주석)을 쓴다. 마지막 줄은 늘 마지막 메시지를 덮는다.
+   * 가장 최근 줄이 예산보다 길면 가장 최근 메시지 하나만, 그래도 길면 그 본문을 자른(끝에 …) 한 줄이다
    */
   transcript: string;
   /** anchors·transcript에서 가린 개수. 키: phone·email·account·rrn·url */
   maskCounts: Record<string, number>;
 }
 
-const MESSAGE_LINE = /^m(\d+)\|(\d{2}:\d{2})\|([A-Z]{1,3})\|(.*)$/u;
+const MESSAGE_LINE = /^m(\d+)(?:\+([1-9]\d*))?\|(\d{2}:\d{2})\|([A-Z]{1,3})\|(.*)$/u;
 const DAY_HEADER = /^# (\d{4}-\d{2}-\d{2})$/;
 
-/** message의 header는 이 줄 앞의 가장 가까운 날짜 헤더(YYYY-MM-DD)이고, 없으면 null이다 */
+/**
+ * message의 header는 이 줄 앞의 가장 가까운 날짜 헤더(YYYY-MM-DD)이고, 없으면 null이다.
+ * more는 묶음 줄(`m<id>+<k>`)의 k다: 이 줄은 id부터 id + k까지 k + 1개 메시지를 덮는다. 한 메시지 줄은 0
+ */
 export type BlockLine =
   | { type: "header"; date: string }
-  | { type: "message"; ref: string; id: number; time: string; code: string; body: string; header: string | null }
+  | { type: "message"; ref: string; id: number; more: number; time: string; code: string; body: string; header: string | null }
   | { type: "bad" };
 
 /** anchors·transcript 한 덩어리를 줄 단위로 읽는다. 빈 문자열은 줄 0개 */
@@ -70,8 +82,54 @@ export function readBlock(block: string): BlockLine[] {
     }
     const m = MESSAGE_LINE.exec(line);
     if (!m) return { type: "bad" };
-    return { type: "message", ref: `m${m[1]}`, id: Number(m[1]), time: m[2], code: m[3], body: m[4], header };
+    return { type: "message", ref: `m${m[1]}`, id: Number(m[1]), more: m[2] ? Number(m[2]) : 0, time: m[3], code: m[4], body: m[5], header };
   });
+}
+
+/** 묶음 줄에서 메시지 사이 경계(v2.7). 묶음 안 글의 "¦"는 전각 "￤"로 바꿔 두어 경계는 늘 이것뿐이다 */
+export const BUNDLE_SEP = " ¦ ";
+/** 묶음 한 줄의 칸 수 상한(접은 칸 포함). 넘으면 다음 줄로 */
+export const BUNDLE_MAX_PARTS = 10;
+/** 묶음 한 줄의 본문 글자 수 상한. 칸을 더하면 넘을 때 다음 줄로(그보다 긴 메시지 하나는 혼자 한 줄) */
+export const BUNDLE_MAX_CHARS = 300;
+/** 짧은 반응의 글자 수 상한(공백·줄바꿈 표시 제외, 코드 포인트) */
+export const REACTION_MAX_CHARS = 10;
+/** 짧은 반응에 쓰는 글자: 한글 호환 자모(ㅋ·ㅎ·ㅠ·ㅇ·ㄷ·ㄱ…), 공백·줄바꿈 표시, 흔한 문장부호·기호, 그림 문자. 숫자·글자·×·¦는 없다 */
+const REACTION_CHARS = /^[\u3131-\u318E\s!?.,~…^;:'"*\-_♡♥★☆♪♬·⏎\p{Extended_Pictographic}\u200D\uFE0E\uFE0F\u{1F3FB}-\u{1F3FF}]+$/u;
+
+/** 본문(가린 뒤)이 짧은 반응인가: 자모·기호만이고 REACTION_MAX_CHARS자 이하 */
+export function isReaction(body: string): boolean {
+  const visible = body.replace(/[\s⏎]/gu, "");
+  return visible !== "" && Array.from(visible).length <= REACTION_MAX_CHARS && REACTION_CHARS.test(body);
+}
+
+const MEDIA: Record<Exclude<MsgKind, "text">, string> = {
+  photo: "[사진]",
+  video: "[동영상]",
+  emoticon: "[이모티콘]",
+  file: "[파일]",
+  deleted: "[삭제된 메시지]",
+  call: "[통화]",
+  other: "[기타]",
+  system: "[알림]",
+};
+/** 묶음 칸 중 미디어: `[사진]` 또는 접은 `[사진×3]` */
+const MEDIA_PART = new RegExp(`^\\[(${Object.values(MEDIA).map((m) => m.slice(1, -1)).join("|")})(?:×([1-9]\\d*))?\\]$`, "u");
+/** 묶음 칸 중 접은 짧은 반응: `ㅋㅋ×5` */
+const REACTION_RUN = /^(.+)×([1-9]\d*)$/u;
+
+/** 묶음 줄의 한 칸이 미디어·짧은 반응이면 그 칸이 덮는 메시지 수(×n이면 n, 아니면 1), 글이면 null */
+export function foldedCount(part: string): number | null {
+  const media = MEDIA_PART.exec(part);
+  if (media) return media[2] ? Number(media[2]) : 1;
+  const run = REACTION_RUN.exec(part);
+  if (run && isReaction(run[1])) return Number(run[2]);
+  return isReaction(part) ? 1 : null;
+}
+
+/** 묶음 줄 본문이 덮는 메시지 수(칸마다 foldedCount, 글 칸은 1) */
+export function bundleSize(body: string): number {
+  return body.split(BUNDLE_SEP).reduce((n, part) => n + (foldedCount(part) ?? 1), 0);
 }
 
 /**
@@ -97,15 +155,33 @@ export function legendText(members: string[]): string {
   return members.map((name, i) => `${codes[i]}=${name}`).join("\n");
 }
 
-/** msg_id → 보낸 줄의 발신자(표시 이름)·시각(날짜 헤더 + 줄의 시각, ISO +09:00)·본문. 범례에 없는 기호의 줄은 뺀다. validatePayload를 통과한 페이로드용 */
-export function payloadIndex(p: Payload): Map<string, { sender: string; at: string; text: string }> {
+/** 보낸 메시지 하나. lineRef는 묶음 줄(v2.7)에서 온 메시지에만 있고, 그 줄 머리의 m번호다(같은 줄 메시지끼리 같다) */
+export type IndexEntry = { sender: string; at: string; text: string; lineRef?: string };
+
+/**
+ * msg_id → 보낸 메시지의 발신자(표시 이름)·시각(날짜 헤더 + 줄의 시각, ISO +09:00)·본문. 범례에 없는 기호의 줄은 뺀다. validatePayload를 통과한 페이로드용.
+ * v2.7 묶음 줄은 칸마다 풀어 글 메시지마다 제 번호(머리 번호 + 앞 칸들이 덮는 수)와 본문을 둔다. 시각은 머리의 것이다(묶음의 글은 같은 분).
+ * 접은 미디어·짧은 반응 칸은 넣지 않는다(인용할 말이 아니고, 앞 줄에 접은 것은 시각도 다르다)
+ */
+export function payloadIndex(p: Payload): Map<string, IndexEntry> {
   const codes = memberCodes(p.members);
-  const index = new Map<string, { sender: string; at: string; text: string }>();
+  const index = new Map<string, IndexEntry>();
   for (const line of [...readBlock(p.anchors), ...readBlock(p.transcript)]) {
     if (line.type !== "message" || line.header === null) continue;
     const who = codes.indexOf(line.code);
     if (who < 0) continue;
-    index.set(line.ref, { sender: p.members[who], at: `${line.header}T${line.time}:00+09:00`, text: line.body });
+    const sender = p.members[who];
+    const at = `${line.header}T${line.time}:00+09:00`;
+    if (line.more === 0) {
+      index.set(line.ref, { sender, at, text: line.body });
+      continue;
+    }
+    let id = line.id;
+    for (const part of line.body.split(BUNDLE_SEP)) {
+      const n = foldedCount(part);
+      if (n === null) index.set(`m${id}`, { sender, at, text: part, lineRef: line.ref });
+      id += n ?? 1;
+    }
   }
   return index;
 }
@@ -130,16 +206,6 @@ export function payloadTokens(
   return { text, total: text + promptStatsTokens(p.stats, tokensPerChar) + blockTokens(legendText(p.members), tokensPerChar) };
 }
 
-const MEDIA: Record<Exclude<MsgKind, "text">, string> = {
-  photo: "[사진]",
-  video: "[동영상]",
-  emoticon: "[이모티콘]",
-  file: "[파일]",
-  deleted: "[삭제된 메시지]",
-  call: "[통화]",
-  other: "[기타]",
-  system: "[알림]",
-};
 const LINE_BREAK = /\r\n|[\r\n\p{Zl}\p{Zp}]/gu;
 const MASK_KINDS: MaskKind[] = ["phone", "email", "account", "rrn", "url"];
 
@@ -156,25 +222,167 @@ function kst(ts: number): { day: string; time: string; iso: string } {
 type ChatLine = ChatMessage & { sender: string };
 interface Rendered {
   day: string;
-  /** 줄 머리 `m<id>|HH:mm|<기호>|`. line = head + 본문 */
+  /** 줄 머리 `m<id>|HH:mm|<기호>|`(묶음이면 `m<id>+<k>|…`). line = head + 본문 */
   head: string;
   line: string;
-  masked: MaskCounts | null;
+  /** 이 줄이 덮는 메시지의 가린 개수 합 */
+  masked: MaskCounts;
+  /** 이 줄이 덮는 첫 메시지의 chat 자리와 덮는 메시지 수(chat에서 이어진 자리, 번호도 1씩 이어진다) */
+  from: number;
+  count: number;
 }
 
-/** 미디어는 표시로, 나머지는 줄바꿈·꺾쇠를 바꾼 뒤 개인정보를 가린다 */
-function render(m: ChatLine, code: string): Rendered {
-  const { day, time } = kst(m.ts);
-  let body: string;
-  let masked: MaskCounts | null = null;
-  if (m.kind !== "text") body = MEDIA[m.kind];
-  else {
-    const r = maskPII(m.text.replace(LINE_BREAK, " ⏎ ").replace(/</g, "＜").replace(/>/g, "＞"));
-    body = r.text;
-    masked = r.counts;
+/** 메시지 하나의 본문: 미디어는 표시로, 글은 줄바꿈·꺾쇠를 바꾼 뒤 개인정보를 가린다. 가린 글이 짧은 반응이면 reaction */
+interface Piece {
+  kind: "text" | "media" | "reaction";
+  body: string;
+  masked: MaskCounts | null;
+}
+function piece(m: ChatLine): Piece {
+  if (m.kind !== "text") return { kind: "media", body: MEDIA[m.kind], masked: null };
+  const r = maskPII(m.text.replace(LINE_BREAK, " ⏎ ").replace(/</g, "＜").replace(/>/g, "＞"));
+  return { kind: isReaction(r.text) ? "reaction" : "text", body: r.text, masked: r.counts };
+}
+
+/** 줄 모양 단계(v2.7): 한 줄에 하나씩(예전 모양) → 1단계 묶기 → 2단계 접기 */
+type LineStyle = "plain" | "bundle" | "compact";
+
+/** 줄 하나의 칸. n은 그 칸이 덮는 메시지 수(접은 미디어·반응만 2 이상), key는 접을 때 같은 것으로 보는 값, text는 묶음 줄에 쓰는 글(partText) */
+interface Part {
+  kind: Piece["kind"];
+  body: string;
+  n: number;
+  key: string;
+  text: string;
+}
+/** 줄 하나: chat의 [from, to) 자리 메시지를 덮는다 */
+interface Unit {
+  from: number;
+  to: number;
+  parts: Part[];
+  /** 본문 글자 수(칸 글자 + 구분자). 한 메시지 줄의 본문(바꾸지 않은 글)과 글자 수가 같다: 바꾸는 글자는 모두 한 칸이다 */
+  chars: number;
+  masked: MaskCounts;
+}
+
+/**
+ * 묶음 칸의 글. 글 칸은 "¦"를 전각 "￤"로 바꾸고, 접은 칸으로 읽히는 모양(`ㅋㅋ×5`·`[사진×3]`)이면 ×를 x로 바꾼다(칸 수가 어긋나지 않게).
+ * 접은 칸은 n이 2 이상이면 ×n을 붙인다
+ */
+function partText(p: Pick<Part, "kind" | "body" | "n">): string {
+  if (p.kind === "text") {
+    if (!p.body.includes("¦") && !p.body.includes("×")) return p.body;
+    const out = p.body.replaceAll("¦", "￤");
+    return (foldedCount(out) ?? 1) > 1 ? out.replace(/×(?=[1-9]\d*\]?$)/u, "x") : out;
   }
-  const head = `m${m.id}|${time}|${code}|`;
-  return { day, head, line: head + body, masked };
+  if (p.n === 1) return p.body;
+  return p.kind === "media" ? `${p.body.slice(0, -1)}×${p.n}]` : `${p.body}×${p.n}`;
+}
+
+/** 짧은 반응을 같은 반응으로 볼 값: 공백·줄바꿈 표시를 지우고 이어진 같은 글자를 하나로(ㅋㅋㅋ → ㅋ) */
+const reactionKey = (body: string) =>
+  Array.from(body.replace(/[\s⏎]/gu, ""))
+    .filter((c, k, all) => k === 0 || c !== all[k - 1])
+    .join("");
+
+type Stamp = ReturnType<typeof kst>;
+
+/**
+ * 줄 모양 단계(style)에 따라 chat을 줄(Unit)로 나눈다. plain은 메시지마다 한 줄이다.
+ * bundle·compact는 같은 분 덩어리(같은 사람, 번호가 1씩 이어지고, 같은 날 같은 HH:mm)를 BUNDLE_MAX_PARTS칸·BUNDLE_MAX_CHARS자까지 한 줄로 묶는다.
+ * 같은 미디어끼리, 같은 반응끼리(bundle은 글자까지 같을 때, compact는 reactionKey가 같을 때) 이어지면 한 칸에 접는다(상한과 상관없이).
+ * compact는 글 없는 덩어리(미디어·반응뿐)를 같은 사람의 바로 앞 줄(번호가 이어지고 같은 날)에 접고, 접을 곳이 없으면 뺀다.
+ * 마지막 메시지가 든 덩어리는 빼지 않는다
+ */
+function compactUnits(chat: ChatLine[], pieces: Piece[], stamp: Stamp[], style: LineStyle): Unit[] {
+  const n = chat.length;
+  const keyOf = (p: Piece) => (p.kind === "reaction" && style === "compact" ? reactionKey(p.body) : p.body);
+  const partOf = (i: number): Part => {
+    const p = pieces[i];
+    return { kind: p.kind, body: p.body, n: 1, key: p.kind === "text" ? "" : keyOf(p), text: partText({ kind: p.kind, body: p.body, n: 1 }) };
+  };
+  const unitOf = (i: number): Unit => {
+    const part = partOf(i);
+    const m = pieces[i].masked;
+    const masked: MaskCounts = m ? { ...m } : { phone: 0, email: 0, account: 0, rrn: 0, url: 0 };
+    return { from: i, to: i + 1, parts: [part], chars: part.text.length, masked };
+  };
+  if (style === "plain") return chat.map((_, i) => unitOf(i));
+
+  /** i번째 메시지를 u 끝에 붙인다(u는 i - 1번째까지 덮는다). 같은 것끼리면 마지막 칸에 접고, 아니면 상한 안에서만 새 칸 */
+  const add = (u: Unit, i: number): boolean => {
+    const p = pieces[i];
+    const last = u.parts[u.parts.length - 1];
+    if (p.kind !== "text" && last.kind === p.kind && last.key === keyOf(p)) {
+      last.n++;
+      u.chars -= last.text.length;
+      last.text = partText(last);
+      u.chars += last.text.length;
+    } else {
+      const part = partOf(i);
+      if (u.parts.length >= BUNDLE_MAX_PARTS || u.chars + BUNDLE_SEP.length + part.text.length > BUNDLE_MAX_CHARS) return false;
+      u.parts.push(part);
+      u.chars += BUNDLE_SEP.length + part.text.length;
+    }
+    if (p.masked) for (const k of MASK_KINDS) u.masked[k] += p.masked[k];
+    u.to = i + 1;
+    return true;
+  };
+  /** i번째가 앞 메시지와 같은 사람이고 번호가 이어지고 같은 날이다 */
+  const follows = (i: number) =>
+    i > 0 && chat[i].sender === chat[i - 1].sender && chat[i].id === chat[i - 1].id + 1 && stamp[i].day === stamp[i - 1].day;
+
+  const out: Unit[] = [];
+  const pushRun = (a: number, b: number) => {
+    let u: Unit | null = null;
+    for (let i = a; i < b; i++) {
+      if (u && add(u, i)) continue;
+      u = unitOf(i);
+      out.push(u);
+    }
+  };
+  for (let a = 0; a < n; ) {
+    let b = a + 1;
+    let textless = pieces[a].kind !== "text";
+    while (b < n && follows(b) && stamp[b].time === stamp[a].time) {
+      if (pieces[b].kind === "text") textless = false;
+      b++;
+    }
+    if (style !== "compact" || !textless) pushRun(a, b);
+    else {
+      // 미디어·반응뿐인 덩어리: 같은 사람의 바로 앞 줄 끝에 접는다. 못 접은 나머지는 빼되, 마지막 메시지가 들었으면 따로 한 줄로 둔다
+      const target = out.at(-1);
+      let i = a;
+      if (target && target.to === a && follows(a)) while (i < b && add(target, i)) i++;
+      if (i < b && b === n) pushRun(i, b);
+    }
+    a = b;
+  }
+  return out;
+}
+
+/** 줄 머리 `m<id>[+<k>]|HH:mm|<기호>|` */
+const headOf = (u: Unit, chat: ChatLine[], stamp: Stamp[], codes: Map<string, string>) =>
+  `m${chat[u.from].id}${u.to - u.from > 1 ? `+${u.to - u.from - 1}` : ""}|${stamp[u.from].time}|${codes.get(chat[u.from].sender)!}|`;
+
+/** 줄 전부를 joinBlock했을 때의 글자 수(줄마다 머리 + 본문 + 줄바꿈, 날짜가 바뀔 때마다 헤더). 줄 글을 만들지 않고 센다 */
+function unitsCost(units: Unit[], chat: ChatLine[], stamp: Stamp[], codes: Map<string, string>): number {
+  let sum = 0;
+  units.forEach((u, k) => {
+    const more = u.to - u.from - 1;
+    const head = 1 + String(chat[u.from].id).length + (more > 0 ? 1 + String(more).length : 0) + 7 + codes.get(chat[u.from].sender)!.length + 1;
+    sum += head + u.chars + 1;
+    if (k === 0 || stamp[units[k - 1].from].day !== stamp[u.from].day) sum += HEADER_CHARS;
+  });
+  return sum;
+}
+
+/** 줄(Unit) → 줄 글. 한 메시지 줄은 예전 모양 그대로(본문을 바꾸지 않는다) */
+function renderUnit(u: Unit, chat: ChatLine[], stamp: Stamp[], codes: Map<string, string>): Rendered {
+  const head = headOf(u, chat, stamp, codes);
+  const count = u.to - u.from;
+  const body = count === 1 ? u.parts[0].body : u.parts.map((p) => p.text).join(BUNDLE_SEP);
+  return { day: stamp[u.from].day, head, line: head + body, masked: u.masked, from: u.from, count };
 }
 
 // 자른 본문 끝에서 뗄 글자. 가리기 규칙(링크·이메일·숫자 묶음)의 머리와 끝이 이 글자들이라, 이것들을 떼면
@@ -209,6 +417,8 @@ export type BuildInput = {
   tone: PickableTone;
   tokenBudget: number;
   tokensPerChar: number;
+  /** false면 예산이 모자라도 묶거나 접지 않는다(v2.6까지의 줄 모양, 측정·비교용). 기본은 묶고 접는다 */
+  compact?: boolean;
 };
 
 /** buildPayloadForBudget이 anchors + transcript에 남겨야 하는 최소 몫 */
@@ -225,9 +435,11 @@ function chatLines(messages: ChatMessage[]): ChatLine[] {
  * 표시 이름으로 바뀐 메시지로 페이로드를 만든다. stats는 시스템 메시지를 뺀 전체 메시지로 계산한다.
  * tokenBudget은 transcript 몫이다(payloadTokens(p).text ≤ tokenBudget, 줄바꿈과 날짜 헤더 포함). anchors는 늘 비어 있다.
  * stats·system 프롬프트 몫은 호출하는 쪽이 빼고 넘긴다(buildPayloadForBudget). 예산을 줄여 다시 만들면 이 몫도 그만큼 줄어든다.
- * - 대화 전체가 tokenBudget에 들어가면 전부 보낸다
- * - 아니면 전체 기간에서 고른다(sampleRanges): 최근 구간, 가장 활발했던 날들, 달마다 고르게 띄운 연속 덩어리. 남은 몫은 최근 구간이 마저 쓴다
- * - 가장 최근 메시지 한 줄조차 tokenBudget보다 길면 그 본문을 잘라(끝에 …) 넣는다. transcript는 늘 1건 이상이다
+ * - 대화 전체가 tokenBudget에 들어가면 전부 보낸다. v2.7: 한 줄에 하나씩(예전 모양) → 1단계 묶기 → 2단계 접기 중 처음 들어가는 모양으로
+ *   (compact: false면 예전 모양만)
+ * - 아니면 2단계 모양(compact: false면 예전 모양)의 줄에서 전체 기간에서 고른다(sampleRanges): 최근 구간, 가장 활발했던 날들,
+ *   달마다 고르게 띄운 연속 덩어리. 남은 몫은 최근 구간이 마저 쓴다
+ * - 가장 최근 줄조차 tokenBudget보다 길면 가장 최근 메시지 하나만 넣고, 그래도 길면 그 본문을 잘라(끝에 …) 넣는다. transcript는 늘 1건 이상이다
  * 시스템 메시지를 뺀 메시지가 없거나, 잘라도 날짜 헤더와 줄 머리조차 안 들어가는 tokenBudget이면 던진다.
  */
 export function buildPayload(input: BuildInput): Payload {
@@ -258,24 +470,40 @@ function assemble(chat: ChatLine[], stats: ChatStats, input: BuildInput): Payloa
   const { concept, kind, tone, tokenBudget, tokensPerChar } = input;
   const members = [...new Set(chat.map((m) => m.sender))];
   const codes = new Map(memberCodes(members).map((c, i) => [members[i], c]));
-  const rendered = chat.map((m) => render(m, codes.get(m.sender)!));
+  const pieces = chat.map(piece);
 
   // 예산은 글자 단위 정수로 센다(줄마다 글자 수 + 줄바꿈 1). 글자 × tokensPerChar ≤ tokenBudget이 되게 내림하고,
   // 소수점 오차로 넘치면 한 글자씩 줄인다
   let budget = Math.floor(tokenBudget / tokensPerChar);
   while (budget > 0 && budget * tokensPerChar > tokenBudget) budget--;
   const lineChars = (r: Rendered) => r.line.length + 1;
+  const stamp = chat.map((m) => kst(m.ts));
 
-  // 가장 최근 메시지 한 줄(과 날짜 헤더)조차 예산보다 길면 본문을 잘라 둔다. 아래 고르기는 잘린 줄을 쓴다.
-  // 본문 글자 수 n은 예산에서 헤더·줄 머리·…·줄바꿈을 뺀 값이다
-  const lastIdx = chat.length - 1;
+  // v2.7: 대화 전체가 처음 들어가는 줄 모양을 쓴다. 셋 다 안 들어가면 가장 짧은 모양(compact)에서 고른다
+  const styles: LineStyle[] = input.compact === false ? ["plain"] : ["plain", "bundle", "compact"];
+  let units: Unit[] = [];
+  for (const style of styles) {
+    units = compactUnits(chat, pieces, stamp, style);
+    if (unitsCost(units, chat, stamp, codes) <= budget) break;
+  }
+  const rendered = units.map((u) => renderUnit(u, chat, stamp, codes));
+
+  // 가장 최근 줄(과 날짜 헤더)조차 예산보다 길면 가장 최근 메시지 하나만 한 줄로 두고, 그래도 길면 본문을 잘라 둔다.
+  // 아래 고르기는 그 줄을 쓴다. 본문 글자 수 n은 예산에서 헤더·줄 머리·…·줄바꿈을 뺀 값이다
+  const lastIdx = rendered.length - 1;
   const fitsAlone = (r: Rendered) => lineChars(r) + HEADER_CHARS <= budget;
-  const newest = rendered[lastIdx];
-  if (!fitsAlone(newest)) {
-    let n = budget - HEADER_CHARS - 1 - newest.head.length - "…".length;
-    while (n >= 0 && !fitsAlone(cutLine(newest, n))) n--;
-    if (n < 0) throw new Error("예산이 모자라다: 날짜 헤더와 줄 머리조차 들어가지 않는다");
-    rendered[lastIdx] = cutLine(newest, n);
+  if (!fitsAlone(rendered[lastIdx])) {
+    const newestAt = chat.length - 1;
+    const masked = pieces[newestAt].masked ?? { phone: 0, email: 0, account: 0, rrn: 0, url: 0 };
+    const only: Part = { kind: pieces[newestAt].kind, body: pieces[newestAt].body, n: 1, key: "", text: pieces[newestAt].body };
+    const alone = renderUnit({ from: newestAt, to: chat.length, parts: [only], chars: only.text.length, masked }, chat, stamp, codes);
+    if (fitsAlone(alone)) rendered[lastIdx] = alone;
+    else {
+      let n = budget - HEADER_CHARS - 1 - alone.head.length - "…".length;
+      while (n >= 0 && !fitsAlone(cutLine(alone, n))) n--;
+      if (n < 0) throw new Error("예산이 모자라다: 날짜 헤더와 줄 머리조차 들어가지 않는다");
+      rendered[lastIdx] = cutLine(alone, n);
+    }
   }
 
   const busyDays = Object.entries(stats.dailyCounts)
@@ -286,18 +514,16 @@ function assemble(chat: ChatLine[], stats: ChatStats, input: BuildInput): Payloa
     {
       chars: rendered.map(lineChars),
       days: rendered.map((r) => r.day),
-      sessionStart: chat.map((m, i) => i === 0 || m.ts - chat[i - 1].ts >= SILENCE_GAP_MS),
+      // 줄이 덮는 첫 메시지가 앞 메시지(뺀 반응·미디어 포함)와 SILENCE_GAP_MS 이상 떨어졌으면 대화가 시작하는 곳이다
+      sessionStart: rendered.map((r) => r.from === 0 || chat[r.from].ts - chat[r.from - 1].ts >= SILENCE_GAP_MS),
       busyDays,
     },
     budget,
   );
-  const sentIdx = ranges.flatMap(([a, b]) => Array.from({ length: b - a }, (_, k) => a + k));
+  const sent = ranges.flatMap(([a, b]) => rendered.slice(a, b));
 
   const maskCounts: Record<string, number> = { phone: 0, email: 0, account: 0, rrn: 0, url: 0 };
-  for (const i of sentIdx) {
-    const r = rendered[i];
-    if (r.masked) for (const k of MASK_KINDS) maskCounts[k] += r.masked[k];
-  }
+  for (const r of sent) for (const k of MASK_KINDS) maskCounts[k] += r.masked[k];
 
   // 메시지가 10만 개를 넘을 수 있어 Math.min(...배열) 대신 한 번 훑는다
   let first = chat[0].ts;
@@ -313,12 +539,12 @@ function assemble(chat: ChatLine[], stats: ChatStats, input: BuildInput): Payloa
     tone,
     members,
     period: { start: kst(first).day, end: kst(last).day },
-    cutoffAt: kst(chat[sentIdx[0]].ts).iso,
+    cutoffAt: kst(chat[sent[0].from].ts).iso,
     msgTotal: stats.total,
-    msgSent: sentIdx.length,
+    msgSent: sent.reduce((n, r) => n + r.count, 0),
     stats,
     anchors: "",
-    transcript: joinBlock(sentIdx.map((i) => rendered[i])),
+    transcript: joinBlock(sent),
     maskCounts,
   };
 }
@@ -326,12 +552,13 @@ function assemble(chat: ChatLine[], stats: ChatStats, input: BuildInput): Payloa
 /** 날짜 헤더 한 줄 `# YYYY-MM-DD`(+ 줄바꿈)의 글자 수 */
 const HEADER_CHARS = "# YYYY-MM-DD".length + 1;
 
+/** 고르는 단위는 줄이다(v2.7: 묶음 줄은 메시지 여러 개). 아래 "메시지"는 그 줄이다 */
 interface SampleInput {
-  /** 메시지마다 줄 글자 수 + 1(줄바꿈) */
+  /** 메시지(줄)마다 줄 글자 수 + 1(줄바꿈) */
   chars: number[];
-  /** 메시지마다 KST 날짜 YYYY-MM-DD */
+  /** 메시지(줄)마다 KST 날짜 YYYY-MM-DD */
   days: string[];
-  /** 메시지마다 대화가 시작하는 곳인가(첫 메시지이거나 앞 메시지와 SILENCE_GAP_MS 이상 떨어짐) */
+  /** 메시지(줄)마다 대화가 시작하는 곳인가(첫 메시지이거나 앞 메시지와 SILENCE_GAP_MS 이상 떨어짐) */
   sessionStart: boolean[];
   /** 메시지가 가장 많은 날들(많은 순) */
   busyDays: string[];
@@ -351,7 +578,7 @@ function fairShares(need: number[], total: number): number[] {
 }
 
 /**
- * 보낼 메시지 번호 구간 [a, b)들(시간순, 겹치거나 붙은 것은 합침). 구간을 이어 joinBlock한 덩어리는 budget 글자를 넘지 않는다.
+ * 보낼 줄 번호 구간 [a, b)들(시간순, 겹치거나 붙은 것은 합침). 구간을 이어 joinBlock한 덩어리는 budget 글자를 넘지 않는다.
  * 대화 전체가 들어가면 [[0, n)]. 아니면:
  * 1. 최근 구간: 마지막 메시지부터 거꾸로 budget × SAMPLE_TAIL_SHARE까지(마지막 메시지는 늘 넣는다)
  * 2. 가장 활발했던 날들: 그날 첫 메시지부터 이어서, budget × SAMPLE_BUSY_SHARE를 날짜끼리 공평하게

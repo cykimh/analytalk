@@ -135,6 +135,38 @@ describe("validatePayload", () => {
   });
 });
 
+describe("validatePayload v2.7: 묶음 줄", () => {
+  /** transcript 끝에 묶음 줄 하나(m<다음 번호>+<more>)를 붙이고 msgSent를 그 줄이 덮는 수만큼 늘린다 */
+  function appendBundle(p: Payload, more: number, body: string, sent = more + 1): Payload {
+    const [, id, stamp] = /^m(\d+)\|([^|]+)\|/.exec(p.transcript.split("\n").at(-1)!)!;
+    return { ...p, transcript: `${p.transcript}\nm${Number(id) + 1}+${more}|${stamp}|A|${body}`, msgSent: p.msgSent + sent };
+  }
+
+  it("칸 수(접은 칸은 ×n만큼)가 머리의 k + 1과 같으면 받고, msgSent는 줄이 덮는 메시지 수다", () => {
+    expect(reject(appendBundle(payload(), 2, "가 ¦ 나 ¦ 다"))).toBe("ok");
+    expect(reject(appendBundle(payload(), 4, "가 ¦ [사진×3] ¦ ㅋㅋ"))).toBe("ok");
+    expect(reject(appendBundle(payload(), 5, "가 ¦ ㅋㅋ×5"))).toBe("ok");
+    expect(reject(appendBundle(payload(), 2, "가 ¦ 나 ¦ 다", 1))).toMatch(/msgSent/);
+  });
+
+  it("칸 수가 머리와 다르면 → 거부", () => {
+    expect(reject(appendBundle(payload(), 3, "가 ¦ 나 ¦ 다"))).toMatch(/묶음/);
+    expect(reject(appendBundle(payload(), 1, "가 ¦ [사진×3]"))).toMatch(/묶음/);
+  });
+
+  it("다음 줄의 번호는 앞 줄이 덮는 구간 뒤여야 한다", () => {
+    const p = appendBundle(payload(), 2, "가 ¦ 나 ¦ 다");
+    const [, id] = /^m(\d+)\+/.exec(p.transcript.split("\n").at(-1)!)!;
+    const next = (n: number) => ({ ...p, transcript: `${p.transcript}\nm${n}|10:39|B|라`, msgSent: p.msgSent + 1 });
+    expect(reject(next(Number(id) + 2))).toMatch(/msg_id/);
+    expect(reject(next(Number(id) + 3))).toBe("ok");
+  });
+
+  it("머리에 +가 없는 줄(예전 사본)은 본문에 구분자가 있어도 메시지 하나다", () => {
+    expect(reject(appendLine(payload(), "가 ¦ 나 ¦ [사진×3]"))).toBe("ok");
+  });
+});
+
 describe("sha256Hex", () => {
   it("WebCrypto SHA-256 16진수", async () => {
     expect(await sha256Hex("abc")).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
