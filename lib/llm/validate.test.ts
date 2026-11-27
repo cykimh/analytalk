@@ -161,7 +161,8 @@ describe("validateReport", () => {
     ]);
   });
 
-  it("가짜 근거를 단 사람 문단도 섹션에 다른 근거가 남으면 남고, evidence_ids에서 가짜만 빠진다", () => {
+  // Fix 1: 근거를 달았는데 원문과 맞는 것이 하나도 없는 문단은 섹션에 다른 근거가 남아도 지운다(사람 문단이든 아니든)
+  it("원문과 맞는 근거가 하나도 없는 문단(가짜 근거만 단 문단)은 섹션에 다른 근거가 남아도 지운다", () => {
     const r = run(
       report([
         sec(
@@ -170,17 +171,46 @@ describe("validateReport", () => {
             para("p1", "철수는 늘 먼저 물었어요", ["e1"]),
             para("p2", "저녁 8시에 대화가 몰려요", ["e1"]),
             para("p3", "민지의 답은 짧고 빨랐어요", ["e2"]),
+            para("p4", "민지는 웃음이 많아요", ["e1", "e2"]),
           ],
           [ev("e1", "m999", "없는 메시지"), ev("e2", "m3", "좋아!")],
         ),
       ]),
     );
-    expect(r.content?.sections[0].paragraphs.map((p) => [p.text, p.evidence_ids])).toEqual([
-      ["철수는 늘 먼저 물었어요", []],
-      ["저녁 8시에 대화가 몰려요", []],
-      ["민지의 답은 짧고 빨랐어요", ["e2"]],
+    expect(r.content?.sections[0].paragraphs.map((p) => [p.key, p.text, p.evidence_ids])).toEqual([
+      ["p1", "민지의 답은 짧고 빨랐어요", ["e2"]],
+      ["p2", "민지는 웃음이 많아요", ["e2"]],
     ]);
     expect(r.content?.sections[0].evidence.map((e) => e.id)).toEqual(["e2"]);
+    expect(r.dropped).toEqual({ paragraphs: 2, evidence: 1 });
+  });
+
+  it("문단 안 큰따옴표 인용(4자 이상)은 보낸 메시지의 부분 문자열이어야 한다: 지어낸 인용이 든 문단은 지운다", () => {
+    const r = run(
+      report([
+        sec(
+          "민지",
+          [
+            para("p1", "민지는 \"집에서 쉬는 중\"이라고 답했어요", ["e1"]),
+            para("p2", "철수는 “영화 볼래? ⏎ 내일 저녁”이라고 물었어요"),
+            para("p3", "민지는 \"나는 철수가 제일 좋아\"라고 했어요", ["e1"]),
+            para("p4", "철수는 “내일 꼭 만나자”라고 했어요"),
+            para("p5", "답은 늘 \"좋아\"였고, 별명은 '저녁 8시 담당'이에요"),
+          ],
+          [ev("e1", "m1", "쉬는 중")],
+          "민지",
+        ),
+      ], { headline: "\"철수 사랑해\"의 방", dek: "\"오늘 뭐해?\"로 시작하는 저녁" }),
+    );
+    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual([
+      "민지는 \"집에서 쉬는 중\"이라고 답했어요",
+      "철수는 “영화 볼래? ⏎ 내일 저녁”이라고 물었어요",
+      "답은 늘 \"좋아\"였고, 별명은 '저녁 8시 담당'이에요",
+    ]);
+    expect(r.dropped.paragraphs).toBe(2);
+    // 제목·headline·dek의 지어낸 인용은 비운다
+    expect(r.content?.headline).toBe("");
+    expect(r.content?.dek).toBe("\"오늘 뭐해?\"로 시작하는 저녁");
   });
 
   it("자리표시자만 있는 사람 섹션도 남는다(섹션 어디든 하나)", () => {
@@ -227,19 +257,52 @@ describe("validateReport", () => {
     expect(r.dropped.evidence).toBe(10);
   });
 
-  it("몫이 다 떨어진 뒤의 사람 섹션은 근거를 잃고, 자리표시자도 없으면 이름이 든 문단이 지워진다", () => {
+  it("몫이 다 떨어져 근거 카드를 못 단 사람 섹션도 원문과 맞은 근거를 단 문단은 남는다(카드만 빠진다)", () => {
     const r = run(
       report([
         sec("앞", [para("p1", "저녁 대화가 이어져요", ids("a", 30))], evidence("a", 30)),
-        sec("민지", [para("p1", "민지는 짧게 답했어요", ["b1"])], evidence("b", 1), "민지"),
-        sec("철수", [para("p1", "철수는 {{stat:initiations.철수}}번 먼저 말을 걸었어요", ["c1"])], evidence("c", 1), "철수"),
+        sec("민지", [para("p1", "민지는 짧게 답했어요", ["b1"]), para("p2", "민지는 저녁마다 보였어요")], evidence("b", 1), "민지"),
+        sec("철수", [para("p1", "철수는 질문을 자주 했어요")], [], "철수"),
       ]),
     );
-    expect(r.content?.sections.map((s) => [s.title, s.evidence.length])).toEqual([
-      ["앞", 30],
-      ["철수", 0],
+    expect(r.content?.sections.map((s) => [s.title, s.evidence.length, s.paragraphs.length])).toEqual([
+      ["앞", 30, 1],
+      ["민지", 0, 2],
     ]);
-    expect(r.content?.sections[1].paragraphs[0].evidence_ids).toEqual([]);
+    expect(r.content?.sections[1].paragraphs.map((p) => p.evidence_ids)).toEqual([[], []]);
+  });
+
+  it("마무리 구성 섹션 몫: 앞 섹션이 30개를 다 쓰려 해도 마무리 섹션이 쓰는 근거 2개는 남겨 둔다", () => {
+    const r = run(
+      report([
+        sec("카드", [para("p1", "민지는 저녁마다 짧게 답했어요", ids("a", 30))], evidence("a", 30), "민지", "nag_cards"),
+        sec("마지막 한마디", [para("p1", "민지, 철수. 저녁 8시는 이제 둘의 시간이다", ["e1", "e2", "e3"])], evidence("e", 3), "pair", "nag_last"),
+      ]),
+    );
+    expect(r.content?.sections.map((s) => [s.part, s.evidence.length])).toEqual([
+      ["nag_cards", 28],
+      ["nag_last", 2],
+    ]);
+    expect(r.content?.sections[1].paragraphs[0].evidence_ids).toEqual(["e1", "e2"]);
+    expect(r.content?.sections.flatMap((s) => s.evidence)).toHaveLength(30);
+    // 마무리 섹션이 근거를 쓰지 않으면 몫을 떼어 두지 않는다
+    const noClosing = run(
+      report([
+        sec("카드", [para("p1", "민지는 저녁마다 짧게 답했어요", ids("a", 30))], evidence("a", 30), "민지", "nag_cards"),
+        sec("마지막 한마디", [para("p1", "저녁 8시는 이제 둘의 시간이다")], [], "pair", "nag_last"),
+      ]),
+    );
+    expect(noClosing.content?.sections.map((s) => s.evidence.length)).toEqual([30, 0]);
+    // 다른 말투에서는 그 말투의 마지막 구성(care_letter)이 몫을 받는다
+    const warm = run(
+      report([
+        sec("사람", [para("p1", "민지는 저녁마다 짧게 답했어요", ids("a", 30))], evidence("a", 30), "민지", "care_people"),
+        sec("편지", [para("p1", "민지, 철수. 저녁 8시를 잘 지켜 왔어요", ["e1"])], evidence("e", 1), "pair", "care_letter"),
+      ]),
+      false,
+      "warm",
+    );
+    expect(warm.content?.sections.map((s) => s.evidence.length)).toEqual([29, 1]);
   });
 
   it("어느 문단도 쓰지 않는 고아 근거는 상한 전에 버린다: 뒤 섹션이 쓰는 근거가 남는다", () => {

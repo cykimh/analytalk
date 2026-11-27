@@ -4,8 +4,9 @@ import { DEFAULT_MODEL, inputTokenBudgetFor } from "@/lib/config";
 
 export type Effort = "low" | "medium" | "high";
 /**
- * 출력 상한(생각 토큰 포함). v2.2 분량(본문 7,000자, 많아도 9,000자 + 인용 30개)은 약 1만 2천~1만 4천 토큰이라 그대로 담는다.
- * 270초 마감 안에 나올 수 있는 양(초당 약 60토큰 가정, lib/llm/prompt.ts VOLUME)이 이 상한보다 작아 마감이 먼저 온다
+ * 출력 상한(생각 토큰 포함). v2.2 full 분량(본문 6,000자, 많아도 8,000자 + 인용 30개 + 생각 약 2,000토큰 가정)은
+ * 약 1만 1천~1만 3천 토큰이라 그대로 담는다. 270초 마감 안에 나올 수 있는 출력은 약 13,500토큰(초당 약 60토큰 × 225초 가정,
+ * lib/llm/prompt.ts VOLUMES)으로 이 상한보다 작아서 실제 한계는 마감이다. 속도·생각 토큰·첫 토큰 시간은 pnpm measure로 실측해야 한다
  */
 export const DEFAULT_REPORT_MAX_TOKENS = 32_000;
 export const DEFAULT_EFFORT: Effort = "medium";

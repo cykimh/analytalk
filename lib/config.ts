@@ -41,7 +41,7 @@ export const MAX_REPORT_RUNS = 3; // 리포트의 유료 실행 상한(처음 1�
 export const CYCLE_ANCHOR_DAY = 1; // 크레딧 주기 기준일(서울 00:00 시작). settings.cycle_anchor_day 기본값과 같다
 
 // 검증
-export const MAX_QUOTES_PER_REPORT = 30; // 리포트 전체 근거 인용 상한(v2.2: 섹션 6~10개 × 2~4개라 16 → 30)
+export const MAX_QUOTES_PER_REPORT = 30; // 리포트 전체 근거 인용 상한(v2.2: 섹션 최대 10개 × 섹션당 최대 3개라 16 → 30. 분량 단계별 목표는 lib/llm/prompt.ts VOLUMES)
 export const PARTIAL_DROP_RATIO = 0.3; // 문단 30% 이상 삭제되면 partial
 export const RECOGNITION_WARN = 0.98; // 줄 인식률 경고 기준
 export const NOTE_MAX_CHARS = 60;
