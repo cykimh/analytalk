@@ -21,7 +21,7 @@ const paragraph = z.object({
 
 const evidence = z.object({
   id: z.string(),
-  msg_id: z.string().describe("줄 앞의 m번호 그대로"),
+  msg_id: z.string().describe("줄 머리의 m번호(m<번호>+<k>면 m<번호>)"),
   quote: z.string().describe("그 메시지 본문을 글자 그대로 잘라 온 부분"),
 });
 

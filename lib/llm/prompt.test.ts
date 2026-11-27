@@ -139,7 +139,7 @@ describe("CONCEPTS·TONES", () => {
 
 describe("buildRequest", () => {
   it("PROMPT_VERSION", () => {
-    expect(PROMPT_VERSION).toBe("2026-11-report-10");
+    expect(PROMPT_VERSION).toBe("2026-11-report-11");
   });
 
   it("기본값(호출마다): Sonnet 5.5, max_tokens 32000, effort medium, adaptive thinking, 서버 측 fallback, 데이터 블록에 cache_control(ephemeral)", () => {
@@ -746,6 +746,18 @@ describe("buildRequest", () => {
     // 예전 사본(anchors + 최근 구간)은 예전 문구
     const old = instructionOf(buildRequest({ ...big, anchors: "# 2021-01-01\nm0|09:00|A|첫" }));
     expect(old).toContain(`전체 ${big.msgTotal}개 중 최근 ${big.msgSent}개와 발췌를 보냈다.`);
+  });
+
+  it("system의 데이터 계약(v2.7): 묶음 줄 m<번호>+<k>와 ' ¦ ', 접은 표시 ×n, 앞 줄에 접거나 뺀 반응·미디어, 근거는 줄 머리 번호와 메시지 하나", () => {
+    const s = systemOf(buildRequest(payload()));
+    expect(s).toContain("머리가 `m<번호>+<k>`인 줄은 한 사람이 같은 분에 보낸 메시지 k+1개(번호 차례)를 묶은 것이고, \" ¦ \"가 메시지 사이 경계다.");
+    expect(s).toContain("`[사진×3]`은 사진 3장, `ㅋㅋ×5`는 자모·기호뿐인 짧은 반응 5번이다.");
+    expect(s).toContain("미디어·짧은 반응만 따로 보낸 것은 같은 사람의 바로 앞 줄 끝에 접었고(더 늦게 보낸 것일 수 있다), 접을 곳이 없으면 뺐다.");
+    expect(s).toContain("(묶음 줄은 m<번호+k>까지 이어진다)");
+    expect(s).toContain("msg_id는 줄 머리의 m번호(`m<번호>+<k>`면 m<번호>)");
+    expect(s).toContain("quote는 메시지 하나(\" ¦ \" 사이 한 칸)의 본문을 글자 그대로 잘라 온 부분이다. 고치거나 합치지 않고 \" ¦ \"를 넘지 않는다.");
+    expect(s).toContain("접은 표시(×n)는 근거가 아니다");
+    expect(s).not.toContain("msg_id는 줄 앞의 m번호 그대로");
   });
 
   it("system의 데이터 계약: <conversation>은 전체 기간에서 고른 시간순 메시지다", () => {
