@@ -55,7 +55,7 @@ export const sseError = (type: string): Ev => ({ type: "error", error: { type, m
  * - status: JSON 오류 본문의 HTTP 응답
  * - steps: SSE 이벤트를 차례로 보낸다. 함수는 그 자리에서 기다린다(스트림을 붙잡아 둔다). open이면 끝에 닫지 않는다
  */
-export type Reply = { status: number; error: object } | { steps: (Ev | (() => Promise<void>))[]; open?: boolean };
+export type Reply = { status: number; error: object; headers?: Record<string, string> } | { steps: (Ev | (() => Promise<void>))[]; open?: boolean };
 
 /** text를 두 조각으로 보내고 닫는 응답. usage·output은 message_start의 usage와 출력 토큰을 바꾼다 */
 export const whole = (
@@ -78,11 +78,13 @@ export const cut = (text: string): Reply => ({ steps: [messageStart(), textStart
 
 export interface StreamCall {
   body: { model: string; messages: { role: string; content: unknown }[] } & Record<string, unknown>;
+  /** 요청이 들어온 시각(ms) */
+  at: number;
 }
 
 /** JSON 오류 본문의 HTTP 응답 */
-const errorResponse = (r: { status: number; error: object }) =>
-  new Response(JSON.stringify({ type: "error", error: r.error }), { status: r.status, headers: { "content-type": "application/json" } });
+const errorResponse = (r: { status: number; error: object; headers?: Record<string, string> }) =>
+  new Response(JSON.stringify({ type: "error", error: r.error }), { status: r.status, headers: { "content-type": "application/json", ...r.headers } });
 
 /** count_tokens 응답: 토큰 수, 또는 JSON 오류 본문의 HTTP 응답 */
 export type Counted = () => number | { status: number; error: object };
@@ -101,7 +103,7 @@ export function fakeAnthropic(reply: ReplyFn, counted: Counted = () => 1000) {
       const c = counted();
       return typeof c === "number" ? Response.json({ input_tokens: c }) : errorResponse(c);
     }
-    streams.push({ body });
+    streams.push({ body, at: Date.now() });
     const r = reply(streams.length, body);
     if ("status" in r) return errorResponse(r);
     let ctrl!: ReadableStreamDefaultController<Uint8Array>;
@@ -284,8 +286,14 @@ export function partFromInstruction(body: StreamCall["body"]): CallPart {
   return "people";
 }
 
+/** ②·③이 message_start에서 알리는 캐시 읽기 토큰(①이 쓴 캐시를 읽었다). ①은 0이다 */
+export const CACHE_READ = 1_000;
+/** 그 몫의 기본 응답: stageJson을 그대로 끝낸다. ① 뒤의 호출은 캐시를 읽은 것으로 한다 */
+export const stageReply = (part: CallPart): Reply =>
+  whole(JSON.stringify(stageJson(part)), part === "intro" ? {} : { usage: { cache_read_input_tokens: CACHE_READ } });
+
 /** 기본 응답: 몫마다 makePayload(철수·민지)의 stageJson을 그대로 끝낸다. 몇 번째 호출이든 성공한다 */
-export const stagedDefault: ReplyFn = (_call, body) => whole(JSON.stringify(stageJson(partFromInstruction(body))));
+export const stagedDefault: ReplyFn = (_call, body) => stageReply(partFromInstruction(body));
 
 /** 몫마다 응답을 고르는 reply. 몫에 없는 것은 stageJson 그대로 끝낸다. 함수는 그 몫의 몇 번째 시도인지(1부터)를 받는다 */
 export function staged(payload: Payload, over: Partial<Record<CallPart, Reply | ((attempt: number) => Reply)>> = {}): ReplyFn {
@@ -296,7 +304,7 @@ export function staged(payload: Payload, over: Partial<Record<CallPart, Reply | 
     const attempt = (tries.get(part) ?? 0) + 1;
     tries.set(part, attempt);
     const r = over[part];
-    if (r === undefined) return whole(JSON.stringify(stageJson(part)));
+    if (r === undefined) return stageReply(part);
     return typeof r === "function" ? r(attempt) : r;
   };
 }

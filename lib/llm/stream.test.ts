@@ -178,6 +178,22 @@ describe("runReport", () => {
     expect(ok).not.toHaveProperty("thinkingTokens");
   });
 
+  it("오류 응답의 retry-after를 ms로 알린다: retry-after-ms가 먼저, 없으면 초나 HTTP 날짜(리뷰 minor 2)", async () => {
+    const limited = (headers: Record<string, string>) => async () =>
+      new Response(JSON.stringify({ type: "error", error: { type: "rate_limit_error", message: "rate limited" } }), {
+        status: 429,
+        headers: { "content-type": "application/json", ...headers },
+      });
+    const run = (headers: Record<string, string>) => runReport(client(limited(headers)), REQ, opts());
+    expect(await run({ "retry-after-ms": "250", "retry-after": "9" })).toMatchObject({ kind: "error", error: "retryable", retryAfterMs: 250 });
+    expect((await run({ "retry-after": "3" })).retryAfterMs).toBe(3000);
+    const when = new Date(Date.now() + 5_000).toUTCString();
+    const dated = (await run({ "retry-after": when })).retryAfterMs!;
+    expect(dated).toBeGreaterThan(3_000);
+    expect(dated).toBeLessThanOrEqual(5_000);
+    expect(await run({})).not.toHaveProperty("retryAfterMs");
+  });
+
   it("onStreamStart는 message_start에서 정확히 1번, 텍스트 전에 실제 모델로 불린다", async () => {
     const s = sse([messageStart("claude-opus-4-8")], false);
     const o = opts();
@@ -185,7 +201,8 @@ describe("runReport", () => {
     await until(() => o.onStreamStart.mock.calls.length > 0);
     // 아직 텍스트를 하나도 보내지 않았다
     expect(o.onStreamStart).toHaveBeenCalledTimes(1);
-    expect(o.onStreamStart).toHaveBeenCalledWith("claude-opus-4-8");
+    // v2.5: 그때 읽은 캐시 토큰도 알린다(① 뒤 호출의 캐시 놓침을 보려고)
+    expect(o.onStreamStart).toHaveBeenCalledWith("claude-opus-4-8", { cache_read_input_tokens: 0 });
     s.push(textStart, delta(BODY), blockStop, messageDelta("end_turn"), messageStop);
     s.close();
     const r = await done;

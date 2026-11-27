@@ -570,6 +570,13 @@ describe("validateReport", () => {
     ]);
   });
 
+  it("about에 범례 기호(A·B)를 쓰면 그 표시 이름으로 바꿔 사람 섹션으로 둔다(리뷰 minor 6)", () => {
+    // fixture의 범례: A=철수, B=민지
+    const r = run(report([sec("민지", [para("p1", "민지는 저녁마다 짧게 답했어요", ["e1"])], [ev("e1", "m1", "쉬는 중")], "B", "nag_cards")]));
+    expect(r.content?.sections[0].about).toBe("민지");
+    expect(run(report([sec("방", [para("p1", "저녁 대화가 이어져요")], [], "Z")])).content?.sections[0].about).toBe("group");
+  });
+
   it("part: 그 말투의 구성 키만 남기고 나머지(다른 말투의 키, 예전 컨셉 키)는 빈 글. 섹션 순서는 그대로", () => {
     const body = [para("p1", "저녁 대화가 이어져요")];
     const raw = report(

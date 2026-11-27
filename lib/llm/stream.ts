@@ -3,7 +3,7 @@
 // 스트리밍 중에는 NOTES_FLUSH_MS마다 정리된 reading_notes만 내보낸다. 출력 원문은 로그에 남기지 않는다.
 // 응답이 시작된 뒤 끊긴 실행은 출력량을 알 수 없어 max_tokens 상한으로 센다(원장이 차단 원가를 낮게 세지 않게).
 import "server-only";
-import type Anthropic from "@anthropic-ai/sdk";
+import Anthropic from "@anthropic-ai/sdk";
 import type { BetaMessage, BetaMessageStreamParams, BetaUsage } from "@anthropic-ai/sdk/resources/beta/messages";
 import { NOTES_FLUSH_MS } from "@/lib/config";
 import type { Usage } from "./cost";
@@ -25,8 +25,23 @@ export interface RunResult {
   /** 출력 토큰 중 생각(adaptive thinking) 몫. 응답이 알려 줄 때만 */
   thinkingTokens?: number;
   error?: ErrorClass;
+  /** 오류 응답의 retry-after(retry-after-ms 우선, 초 또는 HTTP 날짜). 없으면 undefined */
+  retryAfterMs?: number;
   /** message_start를 받았는지. 받기 전 오류만 같은 함수에서 재시도할 수 있다 */
   startedStream: boolean;
+}
+
+/** API 오류의 retry-after 헤더(ms). retry-after-ms가 먼저, 없으면 retry-after(초 또는 HTTP 날짜) */
+export function retryAfterMs(e: unknown, now = Date.now()): number | undefined {
+  if (!(e instanceof Anthropic.APIError) || !e.headers) return undefined;
+  const ms = Number(e.headers.get("retry-after-ms"));
+  if (e.headers.get("retry-after-ms") !== null && Number.isFinite(ms) && ms >= 0) return ms;
+  const after = e.headers.get("retry-after");
+  if (after === null) return undefined;
+  const seconds = Number(after);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const at = Date.parse(after);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - now);
 }
 
 type Note = { range: string; note: string };
@@ -79,7 +94,12 @@ function cutUsage(u: Usage, maxTokens: number): Usage {
 export async function runReport(
   client: Anthropic,
   req: BetaMessageStreamParams,
-  opts: { deadlineAt: number; onStreamStart: (model: string) => void; onNotes: (notes: Note[]) => void },
+  opts: {
+    deadlineAt: number;
+    /** 첫 message_start에서 실제 모델과 그때의 usage(캐시 읽기·쓰기 토큰)를 알린다 */
+    onStreamStart: (model: string, usage: { cache_read_input_tokens: number }) => void;
+    onNotes: (notes: Note[]) => void;
+  },
 ): Promise<RunResult> {
   const controller = new AbortController();
   const deadline = setTimeout(() => controller.abort(), Math.max(0, opts.deadlineAt - Date.now()));
@@ -106,7 +126,7 @@ export async function runReport(
   stream.on("streamEvent", (event) => {
     if (event.type === "message_start" && startModel === null) {
       startModel = event.message.model;
-      opts.onStreamStart(startModel);
+      opts.onStreamStart(startModel, { cache_read_input_tokens: event.message.usage?.cache_read_input_tokens ?? 0 });
     } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
       raw += event.delta.text;
     }
@@ -141,7 +161,8 @@ export async function runReport(
     };
     // 마감으로 끊은 것은 오류가 아니다: 받은 데까지 partial
     if (controller.signal.aborted || Date.now() >= opts.deadlineAt) return { kind: "partial", ...base };
-    return { kind: "error", error: classifyError(e), ...base };
+    const wait = retryAfterMs(e);
+    return { kind: "error", error: classifyError(e), ...(wait === undefined ? {} : { retryAfterMs: wait }), ...base };
   } finally {
     clearTimeout(deadline);
     clearInterval(ticker);

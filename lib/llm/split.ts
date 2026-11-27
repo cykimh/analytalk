@@ -3,7 +3,8 @@
 //   (별도 내부 라우트 없이 Promise로). 캐시는 첫 응답이 스트리밍을 시작한 뒤에야 읽을 수 있어서, 동시에 모두 보내면 셋 다 캐시를 쓴다.
 //   모든 호출이 같은 마감(① 시작 기준 deadlineAt)을 쓴다.
 // 재시도: 응답 전(message_start 전) 일시 오류는 실행 시작부터 retryWindowMs 안이면 그 호출만 1번 다시 한다(①은 v2.4까지와 같다.
-//   ②·③도 같은 규칙: 응답 전 실패는 원가가 없다). ①이 끝내 응답을 시작하지 못하면 나머지는 시작하지 않는다(캐시 없이 셋이 쓰면 원가가 세 배).
+//   ②·③도 같은 규칙: 응답 전 실패는 원가가 없다). 429에 retry-after가 있으면 그만큼 기다린 뒤 다시 한다(리뷰 minor 2).
+//   기다린 뒤가 재시도 창이나 마감을 넘으면 다시 하지 않는다. ①이 끝내 응답을 시작하지 못하면 나머지는 시작하지 않는다(캐시 없이 셋이 쓰면 원가가 세 배).
 // 합치기: 호출마다 구조를 보고(끊긴 것은 완결 섹션만 살려) ①→②→③ 순서로 섹션을 붙이고 한 번 검증한다(인용 몫·마무리 몫·삭제율이 리포트 단위다).
 //   어느 호출이든 safety면 safety. 실패한 호출의 몫은 빠지고 partial이다. 다른 호출 몫의 섹션(다른 자리의 구성, 다른 개인별 호출이 맡은 사람)은 뺀다.
 //   headline·dek·reading_notes는 ①의 것이다. usage는 호출마다 더하고 원가는 호출마다 계산해 더한다(원장 한 행 = 실행 한 번).
@@ -17,7 +18,7 @@ import type { CallPart, ReportCall } from "./prompt";
 import type { Report, StoredReport } from "./schema";
 import { type RunResult, runReport } from "./stream";
 import { parseReport, validateReport } from "./validate";
-import { type Payload, payloadIndex } from "@/lib/payload/build";
+import { memberCodes, type Payload, payloadIndex } from "@/lib/payload/build";
 import { TONES } from "./concepts";
 
 type Note = { range: string; note: string };
@@ -41,7 +42,8 @@ export async function runReportCalls(
     /** 응답 전 일시 오류를 다시 해 볼 수 있는 시간(실행 시작부터) */
     retryWindowMs: number;
     onNotes: (notes: Note[]) => void;
-    onStreamStart?: (part: CallPart, model: string, requested: string) => void;
+    /** 호출마다 첫 message_start에서: 실제 응답 모델, 요청 모델, 그때 읽은 캐시 토큰 */
+    onStreamStart?: (part: CallPart, model: string, requested: string, cacheRead: number) => void;
   },
 ): Promise<CallResult[]> {
   const startedAt = opts.now();
@@ -49,8 +51,8 @@ export async function runReportCalls(
     const attempt = () =>
       runReport(client, call.req, {
         deadlineAt: opts.deadlineAt,
-        onStreamStart: (model) => {
-          opts.onStreamStart?.(call.part, model, call.req.model);
+        onStreamStart: (model, usage) => {
+          opts.onStreamStart?.(call.part, model, call.req.model, usage.cache_read_input_tokens);
           hooks.onStart?.();
         },
         onNotes: hooks.onNotes ?? (() => {}),
@@ -62,8 +64,12 @@ export async function runReportCalls(
         (): RunResult => ({ kind: "error", error: "fatal", raw: "", stopReason: null, model: call.req.model, usage: null, stopCategory: null, startedStream: false }),
       );
     let r = await safely();
-    if (r.kind === "error" && r.error === "retryable" && !r.startedStream && opts.now() - startedAt <= opts.retryWindowMs) {
-      r = await safely();
+    if (r.kind === "error" && r.error === "retryable" && !r.startedStream) {
+      const wait = r.retryAfterMs ?? 0;
+      if (opts.now() + wait - startedAt <= opts.retryWindowMs && Date.now() + wait < opts.deadlineAt) {
+        if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+        r = await safely();
+      }
     }
     return { call, r };
   };
@@ -168,6 +174,20 @@ function sumUsage(items: Usage[]): Usage | null {
 }
 
 /**
+ * 호출들이 쓴 것: usage 합, 원가 합(호출마다 계산), 응답을 시작한 첫 호출의 실제 모델.
+ * 합치기가 던져도 원장에 남길 수 있게 따로 둔다(리뷰 minor 4: jobs의 catch에서도 쓴다)
+ */
+export function spentOf(results: CallResult[]): { usage: Usage | null; cost: number; model: string | null } {
+  const ran = results.flatMap(({ r }) => (r ? [r] : []));
+  const usages = ran.flatMap((r) => (r.usage ? [{ usage: r.usage, model: r.model }] : []));
+  return {
+    usage: sumUsage(usages.map((u) => u.usage)),
+    cost: usages.reduce((sum, u) => sum + estimateCostUsd(u.usage, u.model), 0),
+    model: ran.find((r) => r.startedStream)?.model ?? null,
+  };
+}
+
+/**
  * 나눠 쓴 결과를 합쳐 저장할 값으로. 순서: safety(어느 호출이든) → 다른 몫 섹션 빼기 → 살린 섹션이 없으면 failed·refused → 검증(합친 리포트 한 번).
  * 응답은 끝났는데 자기 몫 섹션이 하나도 없는 호출은 empty다(그 부분이 빠졌으니 partial: [다시 쓰기]가 보인다).
  * 오류 코드는 한도 오류가 있으면 limit, 아니면 ok가 아닌 첫 호출의 코드. 모든 시작한 호출이 거절했으면 refused
@@ -175,14 +195,11 @@ function sumUsage(items: Usage[]): Usage | null {
 export function mergeReportCalls(payload: Payload, results: CallResult[]): MergedReport {
   const pieces = results.map(pieceOf);
   const started = pieces.filter((x) => x.r !== null && x.r.startedStream);
-  const usages = pieces.flatMap((x) => (x.r?.usage ? [{ usage: x.r.usage, model: x.r.model }] : []));
   const limitHit = pieces.find((x) => x.r?.kind === "error" && (x.r.error === "spend_limit" || x.r.error === "credit_exhausted"));
   const base = {
+    ...spentOf(results),
     limit: limitHit ? (limitHit.r!.error as "spend_limit" | "credit_exhausted") : null,
-    model: started[0]?.r!.model ?? null,
     stopReason: (started.find((x) => x.r!.stopReason !== "end_turn") ?? started[0])?.r!.stopReason ?? null,
-    usage: sumUsage(usages.map((u) => u.usage)),
-    cost: usages.reduce((sum, u) => sum + estimateCostUsd(u.usage, u.model), 0),
   };
   const kindOf = (bad: Piece | undefined) => (bad ? (bad.code === "empty" ? "ok" : (bad.r?.kind ?? "not_started")) : "ok");
   if (pieces.some((x) => x.code === "safety")) {
@@ -195,10 +212,13 @@ export function mergeReportCalls(payload: Payload, results: CallResult[]): Merge
   const assigned = new Map<string, ReportCall>();
   for (const x of pieces) for (const name of x.call.people) assigned.set(name, x.call);
   const members = new Set(payload.members);
+  // 지시가 사람을 범례 기호로 부르므로 about에 기호(B, G…)를 그대로 쓸 수 있다. 맡은 사람 판정 전에 표시 이름으로 바꾼다(리뷰 minor 6)
+  const nameOfCode = new Map(memberCodes(payload.members).map((code, i) => [code, payload.members[i]]));
   const writer = new Map<string, ReportCall>();
   let offStage = 0;
   const sections = pieces.flatMap((x) => {
-    const kept = (x.report?.sections ?? []).filter((s) => {
+    const named = (x.report?.sections ?? []).map((s) => (members.has(s.about) || !nameOfCode.has(s.about) ? s : { ...s, about: nameOfCode.get(s.about)! }));
+    const kept = named.filter((s) => {
       const stage = stageOf.get(s.part);
       const person = x.call.stages.includes("people") && members.has(s.about);
       const other = (owner: ReportCall | undefined) => owner !== undefined && owner !== x.call;

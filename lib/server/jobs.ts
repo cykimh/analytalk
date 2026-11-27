@@ -4,7 +4,7 @@
 import "server-only";
 import { CYCLE_ANCHOR_DAY } from "@/lib/config";
 import { buildRequests } from "@/lib/llm/prompt";
-import { mergeReportCalls, runReportCalls } from "@/lib/llm/split";
+import { type CallResult, mergeReportCalls, runReportCalls, spentOf } from "@/lib/llm/split";
 import type { Payload } from "@/lib/payload/build";
 import type { AppRepo } from "./repo";
 import type { HandlerDeps } from "./route";
@@ -57,6 +57,8 @@ const failure = (id: string, errorCode: string): Finish => ({
  */
 export async function runReportJob(deps: HandlerDeps, a: { id: string; payload: Payload }): Promise<void> {
   const { repo, client } = deps;
+  // 호출이 다 돈 뒤 합치기·저장이 던져도 쓴 돈은 원장에 남긴다(리뷰 minor 4)
+  let results: CallResult[] | null = null;
   try {
     if (!client) {
       await repo.finishReport(failure(a.id, "not_ready"));
@@ -64,13 +66,15 @@ export async function runReportJob(deps: HandlerDeps, a: { id: string; payload: 
     }
     const calls = buildRequests(a.payload);
     const deadlineAt = deps.deadlineAt();
-    const results = await runReportCalls(client, calls, {
+    results = await runReportCalls(client, calls, {
       deadlineAt,
       now: deps.now,
       retryWindowMs: RETRY_WINDOW_MS,
       onNotes: (notes) => repo.saveProgress(a.id, notes),
-      onStreamStart: (part, model, requested) => {
+      onStreamStart: (part, model, requested, cacheRead) => {
         if (model !== requested) console.warn(`[jobs] fallback_on_writer(${part}): ${requested} → ${model}`);
+        // ① 뒤 호출이 캐시를 못 읽으면(타이밍, ①이 다른 모델로 응답) 한 편이 약 $3.5 더 든다. 몫 이름만 남긴다(리뷰 minor 1)
+        if (part !== calls[0].part && cacheRead === 0) console.warn(`[jobs] cache_miss(${part})`);
       },
     });
     const merged = mergeReportCalls(a.payload, results);
@@ -88,6 +92,7 @@ export async function runReportJob(deps: HandlerDeps, a: { id: string; payload: 
   } catch (e) {
     // 오류 문구에 출력 글이 섞일 수 있는 곳(JSON.parse)은 split에서 따로 잡는다. 여기는 DB 오류처럼 문구가 안전한 것들이다
     console.error(`[jobs] 리포트 실행 실패: ${e instanceof Error ? e.message : "unknown"}`);
-    await repo.finishReport(failure(a.id, "internal")).catch(() => {});
+    const spent = results ? spentOf(results) : null;
+    await repo.finishReport({ ...failure(a.id, "internal"), ...(spent ?? {}) }).catch(() => {});
   }
 }

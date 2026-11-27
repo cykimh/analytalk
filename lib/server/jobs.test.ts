@@ -4,10 +4,11 @@ import { hashCode } from "@/lib/invite/code";
 import { estimateCostUsd } from "@/lib/llm/cost";
 import { PROMPT_VERSION } from "@/lib/llm/prompt";
 import type { StoredReport } from "@/lib/llm/schema";
-import { type Payload, payloadIndex } from "@/lib/payload/build";
+import { memberCodes, type Payload, payloadIndex } from "@/lib/payload/build";
 import { sha256Hex } from "@/lib/payload/hash";
 import {
   blockStop,
+  CACHE_READ,
   CODE,
   cut,
   cutInSecondSection,
@@ -28,6 +29,7 @@ import {
   sseError,
   stageJson,
   staged,
+  stageReply,
   textStart,
   until,
   whole,
@@ -71,6 +73,10 @@ async function setup(reply: (payload: Payload) => ReplyFn, o: Parameters<typeof 
 const lastFinish = (finish: { mock: { calls: unknown[][] } }) => finish.mock.calls.at(-1)?.[0] as Record<string, unknown>;
 const ONE = { input_tokens: 100, output_tokens: 200, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
 const times = (n: number) => ({ input_tokens: 100 * n, output_tokens: 200 * n, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 });
+/** ①과 캐시를 읽은 later개(기본 응답)의 usage 합 */
+const withReads = (later: number) => ({ ...times(1 + later), cache_read_input_tokens: CACHE_READ * later });
+const READ_ONE = { ...ONE, cache_read_input_tokens: CACHE_READ };
+const rateLimited = (headers: Record<string, string>): Reply => ({ status: 429, error: { type: "rate_limit_error", message: "rate limited" }, headers });
 const failsAfter = (text: string): Reply => ({ steps: [messageStart(), textStart, delta(text), sseError("overloaded_error")] });
 const http = (status: number, type: string, extra: object = {}): Reply => ({ status, error: { type, message: type, ...extra } });
 const parts = (c: StoredReport) => c.sections.map((s) => s.part);
@@ -95,8 +101,8 @@ describe("runReportJob (v2.5 나눠 쓰기: ① 인트로 → ② 개인별 → 
       model: "claude-sonnet-5-5",
       stopReason: "end_turn",
       errorCode: null,
-      usage: times(3),
-      cost: 3 * estimateCostUsd(ONE, "claude-sonnet-5-5"),
+      usage: withReads(2),
+      cost: estimateCostUsd(ONE, "claude-sonnet-5-5") + 2 * estimateCostUsd(READ_ONE, "claude-sonnet-5-5"),
     });
   });
 
@@ -167,7 +173,7 @@ describe("runReportJob (v2.5 나눠 쓰기: ① 인트로 → ② 개인별 → 
     expect(c.checks?.calls).toEqual({ intro: "ok", people: "fatal", outro: "ok" });
     expect(s.sent()).toEqual(["intro", "people", "outro"]);
     // 응답 전에 실패한 ②는 usage가 없다
-    expect(lastFinish(s.finish).usage).toEqual(times(2));
+    expect(lastFinish(s.finish).usage).toEqual(withReads(1));
   });
 
   it("②가 응답 전 일시 오류면 ②만 한 번 다시 한다", async () => {
@@ -208,7 +214,7 @@ describe("runReportJob (v2.5 나눠 쓰기: ① 인트로 → ② 개인별 → 
     expect(c.sections.map((x) => x.about)).toEqual(["pair", "철수", "pair"]);
     expect(c.checks?.calls).toMatchObject({ people: "timeout" });
     const maxTokens = s.h.streams[0].body.max_tokens as number;
-    expect(lastFinish(s.finish).usage).toEqual({ input_tokens: 300, output_tokens: 200 + maxTokens + 200, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 });
+    expect(lastFinish(s.finish).usage).toEqual({ input_tokens: 300, output_tokens: 200 + maxTokens + 200, cache_creation_input_tokens: 0, cache_read_input_tokens: CACHE_READ });
   });
 
   it("②가 max_tokens로 잘리면 완결된 섹션만 살려 partial", async () => {
@@ -361,9 +367,12 @@ describe("runReportJob (v2.5 나눠 쓰기: ① 인트로 → ② 개인별 → 
       return (_n, body) => whole(JSON.stringify(stageJson(partOf(body))), { model: "claude-sonnet-5" });
     });
     await s.run();
-    expect(warn.mock.calls.map(([m]) => String(m)).sort()).toEqual(
+    const warned = warn.mock.calls.map(([m]) => String(m));
+    expect(warned.filter((m) => m.includes("fallback_on_writer")).sort()).toEqual(
       ["intro", "outro", "people"].map((part) => `[jobs] fallback_on_writer(${part}): claude-sonnet-5-5 → claude-sonnet-5`),
     );
+    // 이 가짜 응답은 캐시를 읽지 않았다(폴백 모델은 캐시가 따로다): ① 뒤 호출마다 cache_miss
+    expect(warned.filter((m) => m.includes("cache_miss")).sort()).toEqual(["[jobs] cache_miss(outro)", "[jobs] cache_miss(people)"]);
     const finish = lastFinish(s.finish);
     expect(finish).toMatchObject({ status: "done", model: "claude-sonnet-5" });
     expect(finish.cost).toBeCloseTo(3 * estimateCostUsd(ONE, "claude-sonnet-5"), 12);
@@ -426,7 +435,81 @@ describe("runReportJob (v2.5 나눠 쓰기: ① 인트로 → ② 개인별 → 
     expect((await s.report()).status).toBe("done");
     expect(c.sections.map((x) => x.about)).toEqual(["group", ...GROUP_NAMES, "group"].map((a) => (a === "group" ? "pair" : a)));
     expect(c.checks).toMatchObject({ calls: { intro: "ok", people: "ok", people_rest: "ok", outro: "ok" }, off_stage: 1 });
-    expect(lastFinish(s.finish).usage).toEqual(times(4));
+    // ②a·②b는 이 테스트에서 캐시 읽기 없이 답했다(마무리만 읽었다)
+    expect(lastFinish(s.finish).usage).toEqual({ ...times(4), cache_read_input_tokens: CACHE_READ });
+  });
+
+  it("about에 범례 기호를 쓴 사람 섹션도 표시 이름으로 바꿔 합치고, 다른 개인별 호출이 맡은 사람이면 뺀다(리뷰 minor 6)", async () => {
+    const payload = makeGroupPayload();
+    const idx = payloadIndex(payload);
+    const code = (name: string) => memberCodes(payload.members)[payload.members.indexOf(name)];
+    const refOf = (name: string) => [...idx].find(([, line]) => line.sender === name)![0];
+    const person = (name: string, about: string) => ({
+      part: "nag_cards",
+      icon: "🙄",
+      title: `${name} 카드`,
+      about,
+      paragraphs: [{ key: "p1", text: `${name}는 저녁마다 먼저 왔다`, evidence_ids: ["e1"] }],
+      evidence: [{ id: "e1", msg_id: refOf(name), quote: `${name} 왔어` }],
+    });
+    const blank = { reading_notes: [], headline: "", dek: "" };
+    const s = await setup(
+      (p) =>
+        staged(p, {
+          people: whole(JSON.stringify(reportJson({ ...blank, sections: [...["민지", "철수", "영희"].map((n) => person(n, n)), person("지훈", code("지훈"))] }))),
+          people_rest: whole(JSON.stringify(reportJson({ ...blank, sections: ["지훈", "수아"].map((n) => person(n, code(n))) }))),
+        }),
+      { payload },
+    );
+    await s.run();
+    const c = await s.content();
+    expect(c.sections.map((x) => x.about)).toEqual(["pair", ...GROUP_NAMES, "pair"]);
+    expect(c.checks?.off_stage).toBe(1);
+  });
+
+  it("②·③이 message_start에서 캐시를 읽지 못했으면(cache_read 0) 몫 이름만 남겨 알린다(리뷰 minor 1)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const s = await setup((p) => staged(p, { outro: whole(JSON.stringify(stageJson("outro"))) }));
+    await s.run();
+    expect(warn.mock.calls.map(([m]) => m)).toEqual(["[jobs] cache_miss(outro)"]);
+    expect((await s.report()).status).toBe("done");
+  });
+
+  it("429(rate limit)면 retry-after만큼 기다렸다 그 호출만 다시 한다(리뷰 minor 2)", async () => {
+    const s = await setup((p) => staged(p, { people: (n) => (n === 1 ? rateLimited({ "retry-after-ms": "120" }) : stageReply("people")) }));
+    await s.run();
+    expect((await s.report()).status).toBe("done");
+    const people = s.h.streams.filter((_, i) => s.sent()[i] === "people");
+    expect(people).toHaveLength(2);
+    expect(people[1].at - people[0].at).toBeGreaterThanOrEqual(120);
+  });
+
+  it("retry-after가 재시도 창(60초)을 넘으면 기다리지 않고 그 몫을 뺀다(partial)", async () => {
+    const s = await setup((p) => staged(p, { people: rateLimited({ "retry-after": "120" }) }));
+    await s.run();
+    expect(await s.report()).toMatchObject({ status: "partial", errorCode: null });
+    expect((await s.content()).checks?.calls).toMatchObject({ people: "retryable" });
+    expect(s.sent().filter((x) => x === "people")).toHaveLength(1);
+  });
+
+  it("호출이 다 돈 뒤 저장에서 예상 못 한 오류가 나도 호출 합 usage·원가를 failed(internal)과 함께 남긴다(리뷰 minor 4)", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const s = await setup((p) => staged(p));
+    s.finish.mockRejectedValueOnce(new Error("[test] DB 끊김"));
+    await s.run();
+    expect(s.finish).toHaveBeenCalledTimes(2);
+    expect(lastFinish(s.finish)).toEqual({
+      id: s.id,
+      status: "failed",
+      content: null,
+      model: "claude-sonnet-5-5",
+      stopReason: null,
+      errorCode: "internal",
+      usage: withReads(2),
+      cost: estimateCostUsd(ONE, "claude-sonnet-5-5") + 2 * estimateCostUsd(READ_ONE, "claude-sonnet-5-5"),
+    });
+    expect(await s.report()).toMatchObject({ status: "failed", errorCode: "internal" });
+    expect(error.mock.calls.map(([m]) => m)).toEqual(["[jobs] 리포트 실행 실패: [test] DB 끊김"]);
   });
 
   it("예상 못 한 오류는 failed(internal)로 남기고 던지지 않는다", async () => {

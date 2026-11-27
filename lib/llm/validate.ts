@@ -344,6 +344,9 @@ export function validateReport(
   const { report } = parsed;
 
   const named = codesToNames(opts.members);
+  // about에 범례 기호(B, G…)를 그대로 쓴 섹션은 그 표시 이름으로 본다(v2.5 지시가 사람을 기호로 부른다, 리뷰 minor 6)
+  const codeNames = new Map(memberCodes(opts.members).map((code, i) => [code, opts.members[i]]));
+  const aboutOf = (about: string) => (opts.members.includes(about) ? about : (codeNames.get(about) ?? about));
   const parts = new Set<string>(TONES[opts.tone].parts.map((p) => p.key));
   const closingPart = TONES[opts.tone].parts.at(-1)?.key;
   const people = Object.keys(stats.byPerson);
@@ -397,10 +400,11 @@ export function validateReport(
   // 1차: 섹션마다 남을 문단과 그 문단이 쓰는 근거를 정한다. 근거 몫과 상관없이 정해진다
   const judged = report.sections.flatMap((section) => {
     // 1) 근거: 원문과 맞는 것만(verify), 같은 id는 처음 것만
-    const aboutPerson = people.includes(section.about);
+    const about = aboutOf(section.about);
+    const aboutPerson = people.includes(about);
     const valid: StoredSection["evidence"] = [];
     for (const e of section.evidence) {
-      const ok = e.quote.trim() === "" || valid.some((v) => v.id === e.id) ? null : verify(e, aboutPerson ? section.about : null);
+      const ok = e.quote.trim() === "" || valid.some((v) => v.id === e.id) ? null : verify(e, aboutPerson ? about : null);
       if (ok === null) drop("evidence_unmatched");
       else valid.push(ok);
     }
@@ -426,7 +430,7 @@ export function validateReport(
     drop("evidence_orphan", valid.filter((e) => !used.has(e.id)).length);
     // 문단이 다 지워진 섹션은 빼고, 그 근거는 몫에서 쓰지 않는다
     if (paragraphs.length === 0) return [];
-    return [{ section, aboutPerson, paragraphs, wanted: valid.filter((e) => used.has(e.id)) }];
+    return [{ section: { ...section, about }, aboutPerson, paragraphs, wanted: valid.filter((e) => used.has(e.id)) }];
   });
 
   // 2차: 근거 몫을 앞 섹션부터 나눈다. 마무리 섹션이 쓰는 근거는 CLOSING_QUOTE_RESERVE개까지 미리 떼어 둔다
