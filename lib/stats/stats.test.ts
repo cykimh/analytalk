@@ -128,6 +128,96 @@ describe("computeStats", () => {
     expect(s.laughLength.민지[10]).toBe(1);
   });
 
+  describe("v2.9 화면 전용 통계", () => {
+    it("nightByPerson: 사람마다 밤(22시~5시 전) 메시지 수(사진 포함). 밤에 안 보낸 사람은 0", () => {
+      const s = computeStats([
+        msg("민지", T0 + 23 * HOUR, "자?"),
+        msg("민지", T0 + 26 * HOUR, "", "photo"),
+        msg("철수", T0 + 12 * HOUR, "점심"),
+        msg("철수", T0 + 29 * HOUR, "아침"),
+      ]);
+      expect(s.nightByPerson).toEqual({ 민지: 2, 철수: 0 });
+    });
+
+    it("style: 글 메시지 수·글자 수(코드 포인트)·50자 이상·5자 이하", () => {
+      const s = computeStats([
+        msg("민지", T0 + HOUR, "가".repeat(50)),
+        msg("민지", T0 + HOUR + MIN, "응"),
+        msg("민지", T0 + HOUR + 2 * MIN, "😂😂😂😂😂"),
+        msg("민지", T0 + HOUR + 3 * MIN, "보통 길이의 메시지"),
+        msg("민지", T0 + HOUR + 4 * MIN, "", "photo"),
+      ]);
+      expect(s.style?.민지).toEqual({ texts: 4, chars: 50 + 1 + 5 + 10, long: 1, short: 2 });
+    });
+
+    it("habits: 버릇이 든 글 메시지 수(감탄·질문·물결·말줄임·이모지·자음 축약·영어·링크). ㅋ·ㅎ만인 자음은 축약이 아니다", () => {
+      const s = computeStats([
+        msg("민지", T0 + HOUR, "진짜?! 대박~~ 😂"),
+        msg("민지", T0 + HOUR + MIN, "음... 그래…"),
+        msg("민지", T0 + HOUR + 2 * MIN, "ㅇㅇ ㄱㄱ"),
+        msg("민지", T0 + HOUR + 3 * MIN, "ㅋㅋㅋ ㅎㅎ"),
+        msg("민지", T0 + HOUR + 4 * MIN, "OK 이거 봐 https://example.com/a.b..c"),
+        msg("민지", T0 + HOUR + 5 * MIN, "a 한 글자 영어는 빼고 ㅇ도 빼"),
+      ]);
+      expect(s.habits?.민지).toEqual({ exclaim: 1, question: 1, tilde: 1, ellipsis: 1, emoji: 1, jamo: 1, english: 1, link: 1 });
+    });
+
+    it("replyMedianAll: 방 전체 답장 간격(6시간 안, 발신자가 바뀔 때)의 중앙값. 답장이 없으면 null", () => {
+      const s = computeStats([
+        msg("철수", T0 + 10 * HOUR),
+        msg("민지", T0 + 10 * HOUR + 2 * MIN),
+        msg("철수", T0 + 10 * HOUR + 6 * MIN),
+        msg("영희", T0 + 10 * HOUR + 16 * MIN),
+      ]);
+      expect(s.replyMedianAll).toBe(4 * MIN);
+      expect(computeStats([msg("철수", T0)]).replyMedianAll).toBeNull();
+    });
+
+    it("unanswered(읽씹): 차례(6시간 안에 이어 보낸 같은 사람의 메시지들)마다 6시간 안에 다른 사람이 답했는지. 마지막 차례는 세지 않는다", () => {
+      const s = computeStats([
+        // 민지 차례 1(두 메시지): 철수가 3분 뒤 답 → 답 받음
+        msg("민지", T0),
+        msg("민지", T0 + MIN),
+        msg("철수", T0 + 4 * MIN),
+        // 철수 차례: 7시간 동안 아무도 → 읽씹. 그 뒤 철수가 또(새 차례) → 또 읽씹(9시간 뒤 민지)
+        msg("철수", T0 + 7 * HOUR + 4 * MIN),
+        msg("민지", T0 + 16 * HOUR + 4 * MIN),
+        // 민지 차례 3: 마지막이라 세지 않는다
+        msg("민지", T0 + 16 * HOUR + 5 * MIN),
+      ]);
+      expect(s.unanswered).toEqual({
+        // 민지: 차례 1은 답 받음(3분), 차례 2(16:04~16:05)는 마지막이라 빠진다
+        민지: { turns: 1, ignored: 0, maxWaitMs: 3 * MIN, maxStreak: 0 },
+        // 철수: 0:04 차례는 7시간 뒤 자기 메시지가 다음 → 읽씹(기다림은 민지가 답한 16:04까지 16시간), 7:04 차례도 9시간 → 읽씹. 연속 2번
+        철수: { turns: 2, ignored: 2, maxWaitMs: 16 * HOUR, maxStreak: 2 },
+      });
+    });
+
+    it("topWords: 사람마다 두 번 이상 쓴 두 글자 이상 한글·영어 단어 TOP 10(많은 순, 같으면 가나다). 조사는 떼고 불용어·ㅋ·숫자·링크·이메일은 뺀다", () => {
+      const rows = [
+        "치킨 먹자",
+        "치킨은 진짜 맛있어",
+        "치킨을 시켜",
+        "피자 피자",
+        "Netflix 보자 netflix",
+        "https://example.com/chicken chicken@example.com 010-1234-5678",
+        "ㅋㅋㅋ 그냥 그냥 근데 근데",
+        "철수 철수야 철수는",
+        "7시에 만나 7시에 3pm 3pm",
+      ];
+      const s = computeStats(rows.map((text, i) => msg("민지", T0 + i * MIN, text)));
+      expect(s.topWords?.민지).toEqual([
+        ["철수", 3],
+        ["치킨", 3],
+        ["netflix", 2],
+        ["피자", 2],
+      ]);
+      // 많아야 10개
+      const many = Array.from({ length: 12 }, (_, i) => `단어${String.fromCharCode(0xac00 + i)} 단어${String.fromCharCode(0xac00 + i)}`);
+      expect(computeStats(many.map((text, i) => msg("철수", T0 + i * MIN, text))).topWords?.철수).toHaveLength(10);
+    });
+  });
+
   it("호칭은 구간당 한 번만 센다 (자기야가 자기로 중복되지 않음)", () => {
     const s = computeStats([
       msg("민지", T0 + HOUR, "자기야 뭐해 자기 ㅋ"),

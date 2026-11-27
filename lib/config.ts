@@ -63,6 +63,11 @@ export const SAMPLE_MIN_CHUNK_CHARS = 1500; // 덩어리 하나의 최소 몫(�
 export const SILENCE_GAP_MS = 21_600_000; // 6시간
 export const NIGHT_START = 22;
 export const NIGHT_END = 5;
+/** v2.9 글 모양: 이 글자 수 이상이면 장문, 이하면 단문 */
+export const LONG_MESSAGE_CHARS = 50;
+export const SHORT_MESSAGE_CHARS = 5;
+/** v2.9 자주 쓰는 단어: 사람마다 이만큼 */
+export const TOP_WORDS = 10;
 
 // 클라이언트·세션
 export const POLL_MS = 3000;

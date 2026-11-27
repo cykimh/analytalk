@@ -1,9 +1,10 @@
 // 서버가 받은 페이로드를 다시 검사한다(PRD 4장: 줄 형식, 크기, 가리기 누락). DOM 없이 브라우저·node 공용.
 // 오류 문구에는 본문·이름·키 값을 싣지 않는다. 응답이나 로그에 남을 수 있어서다.
 import { z } from "zod";
-import { MAX_PAYLOAD_BYTES } from "@/lib/config";
+import { MAX_PAYLOAD_BYTES, TOP_WORDS } from "@/lib/config";
 import { PICKABLE_TONES } from "@/lib/llm/concepts";
 import type { ChatStats } from "@/lib/stats/compute";
+import { WORD_MAX_CHARS } from "@/lib/stats/words";
 import { bundleSize, memberCodes, type Payload, readBlock } from "./build";
 import { maskPII } from "./mask";
 import { checkDisplayName } from "./names";
@@ -16,6 +17,8 @@ const count = z.number().int().nonnegative();
 const byPerson = z.record(z.string(), z.number());
 const byPersonNullable = z.record(z.string(), z.number().nullable());
 const metric = z.enum(["replySpeed", "questionRate", "avgLen", "count"]);
+/** v2.9 자주 쓰는 단어: 한글 음절·영어 소문자만(숫자·기호가 없어 가릴 것이 들어올 수 없다) */
+const WORD = new RegExp(`^(?:[가-힣]{2,${WORD_MAX_CHARS}}|[a-z]{2,${WORD_MAX_CHARS}})$`);
 
 const statsSchema = z.strictObject({
   total: count,
@@ -45,6 +48,20 @@ const statsSchema = z.strictObject({
   laughLength: z.record(z.string(), z.array(z.number()).length(11)),
   // v2.8: ㅋ 글자 수(화면 전용). 이 브라우저에 남은 예전 페이로드([다시 쓰기])에는 없다
   laughChars: z.record(z.string(), count).optional(),
+  // v2.9 화면 전용 통계(통계 카드·읽씹 리포트·대화 버릇·자주 쓰는 단어). 예전 페이로드에는 없다
+  nightByPerson: z.record(z.string(), count).optional(),
+  replyMedianAll: z.number().nonnegative().nullable().optional(),
+  style: z.record(z.string(), z.strictObject({ texts: count, chars: count, long: count, short: count })).optional(),
+  habits: z
+    .record(
+      z.string(),
+      z.strictObject({ exclaim: count, question: count, tilde: count, ellipsis: count, emoji: count, jamo: count, english: count, link: count }),
+    )
+    .optional(),
+  unanswered: z
+    .record(z.string(), z.strictObject({ turns: count, ignored: count, maxWaitMs: z.number().nonnegative().nullable(), maxStreak: count }))
+    .optional(),
+  topWords: z.record(z.string(), z.array(z.tuple([z.string().regex(WORD), count.min(1)])).max(TOP_WORDS)).optional(),
   questionRate: byPerson,
   media: z.record(z.string(), z.strictObject({ photo: z.number(), emoticon: z.number(), link: z.number() })),
   addressTerms: z.record(z.string(), z.record(z.string(), z.number())),
@@ -92,6 +109,11 @@ function statsPeople(s: ChatStats): string[] {
     s.replyP75Ms,
     s.laughLength,
     s.laughChars ?? {},
+    s.nightByPerson ?? {},
+    s.style ?? {},
+    s.habits ?? {},
+    s.unanswered ?? {},
+    s.topWords ?? {},
     s.questionRate,
     s.media,
     s.addressTerms,

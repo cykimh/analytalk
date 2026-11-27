@@ -4,7 +4,9 @@ import { PROMPT_STATS_MAX_CROSSED, PROMPT_STATS_MAX_MONTHS, PROMPT_STATS_MAX_PEO
 import type { ChatStats, MonthStats } from "./compute";
 
 /** dailyCounts를 빼고 사람·달·엇갈린 패턴을 줄인 stats. omitted는 빠진 사람 수와 달 수다 */
-export type PromptStats = Omit<ChatStats, "dailyCounts" | "laughChars"> & { omitted: { people: number; months: number } };
+/** 화면 전용 통계(v2.8·v2.9). 모델에게 보여 주는 <stats>에는 싣지 않는다 */
+export type ScreenOnlyStats = "laughChars" | "nightByPerson" | "replyMedianAll" | "style" | "habits" | "unanswered" | "topWords";
+export type PromptStats = Omit<ChatStats, "dailyCounts" | ScreenOnlyStats> & { omitted: { people: number; months: number } };
 
 const byName = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -15,7 +17,8 @@ const byName = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
  * - 달: monthly의 가장 최근 PROMPT_STATS_MAX_MONTHS개
  * - crossed: 남은 사람·남은 달의 것 중 가장 최근 PROMPT_STATS_MAX_CROSSED개(달 순서)
  * - dailyCounts는 뺀다. 총계·히스토그램·nightRatio·longestStreakDays·busiestDay는 그대로다
- * - laughChars(v2.8, ㅋ 글자 수)는 화면의 하이라이트 카드만 쓰므로 싣지 않는다(모델이 보는 <stats>는 v2.7과 같다)
+ * - 화면 전용 통계(v2.8 laughChars, v2.9 nightByPerson·replyMedianAll·style·habits·unanswered·topWords)는 화면 카드만 쓰므로 싣지 않는다
+ *   (모델이 보는 <stats>는 v2.7과 같다. 자주 쓰는 단어도 모델에게 따로 보내지 않는다)
  * ChatStats에 사람이 키인 맵을 더하면 여기에도 더한다
  */
 export function statsForPrompt(stats: ChatStats): PromptStats {

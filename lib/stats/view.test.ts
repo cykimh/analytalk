@@ -96,13 +96,14 @@ describe("statsForPrompt: 40명 × 60개월", () => {
 });
 
 describe("statsForPrompt: 작은 대화와 동률", () => {
-  it("3명·3개월이면 dailyCounts·laughChars(v2.8 화면 전용) 말고는 원래 stats와 같고 omitted는 0", () => {
+  it("3명·3개월이면 dailyCounts·화면 전용 통계(v2.8·v2.9) 말고는 원래 stats와 같고 omitted는 0", () => {
     const full = computeStats(syntheticGroupChat(3, 3));
     expect(Object.keys(full.byPerson)).toHaveLength(3);
     expect(Object.keys(full.monthly)).toHaveLength(3);
-    const { dailyCounts, laughChars, ...rest } = full;
+    const { dailyCounts, laughChars, nightByPerson, replyMedianAll, style, habits, unanswered, topWords, ...rest } = full;
     expect(Object.keys(dailyCounts).length).toBeGreaterThan(0);
-    expect(Object.keys(laughChars ?? {})).toHaveLength(3);
+    for (const screenOnly of [laughChars, nightByPerson, style, habits, unanswered, topWords]) expect(Object.keys(screenOnly ?? {})).toHaveLength(3);
+    expect(replyMedianAll).not.toBeUndefined();
     expect(statsForPrompt(full)).toStrictEqual({ ...rest, omitted: { people: 0, months: 0 } });
   });
 

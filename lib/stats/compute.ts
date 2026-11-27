@@ -1,7 +1,8 @@
 // 대화 통계. ChatMessage(이름 정리를 거친 것)만 받는 순수 함수라 브라우저·node 어디서나 돈다.
-import { NIGHT_END, NIGHT_START, SILENCE_GAP_MS } from "@/lib/config";
+import { LONG_MESSAGE_CHARS, NIGHT_END, NIGHT_START, SHORT_MESSAGE_CHARS, SILENCE_GAP_MS, TOP_WORDS } from "@/lib/config";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { findCrossedPatterns } from "./crossed";
+import { topOf, wordsOf } from "./words";
 
 export interface MonthStats {
   count: Record<string, number>;
@@ -23,6 +24,28 @@ export interface CrossedPattern {
   down: MonthlyMetric;
   upPct: number;
   downPct: number;
+}
+
+export interface MessageStyle {
+  texts: number;
+  chars: number;
+  long: number;
+  short: number;
+}
+
+/** 버릇: 감탄(!)·질문(?)·물결(~)·말줄임(… ..)·이모지·자음 축약(ㅇㅇ·ㄱㄱ, ㅋ·ㅎ만인 것은 빼고)·영어 단어(두 글자 이상)·링크 */
+export const HABIT_KEYS = ["exclaim", "question", "tilde", "ellipsis", "emoji", "jamo", "english", "link"] as const;
+export type Habits = Record<(typeof HABIT_KEYS)[number], number>;
+
+export interface Unanswered {
+  /** 다음 메시지가 있는(대화 맨 끝이 아닌) 차례 수 */
+  turns: number;
+  /** 그중 6시간 안에 다른 사람이 답하지 않은 차례 수 */
+  ignored: number;
+  /** 차례 끝에서 다른 사람의 다음 메시지까지 가장 오래 기다린 시간. 그런 메시지가 없으면 null */
+  maxWaitMs: number | null;
+  /** 연달아 답을 못 받은 차례의 최대 수(그 사람의 차례 순서로) */
+  maxStreak: number;
 }
 
 export interface ChatStats {
@@ -56,6 +79,20 @@ export interface ChatStats {
    * v2.8 전에 만든 대화(DB·이 브라우저의 예전 페이로드)에는 없다
    */
   laughChars?: Record<string, number>;
+  // ── v2.9 화면 전용(통계 카드·읽씹 리포트·대화 버릇·자주 쓰는 단어). 모델에게 보여 주는 통계(statsForPrompt)에는 넣지 않는다.
+  //    v2.9 전에 만든 대화에는 없다(화면은 없으면 그 카드를 뺀다)
+  /** 사람마다 밤(NIGHT_START~NIGHT_END 전) 메시지 수(사진 포함) */
+  nightByPerson?: Record<string, number>;
+  /** 방 전체 답장 간격(발신자가 바뀌고 6시간 안)의 중앙값. 답장이 없으면 null */
+  replyMedianAll?: number | null;
+  /** 글 메시지 모양: 수·글자 수(코드 포인트)·LONG_MESSAGE_CHARS자 이상·SHORT_MESSAGE_CHARS자 이하 */
+  style?: Record<string, MessageStyle>;
+  /** 버릇이 든 글 메시지 수 */
+  habits?: Record<string, Habits>;
+  /** 읽씹 리포트: 차례(6시간 안에 이어 보낸 같은 사람의 메시지들)마다 6시간 안에 다른 사람이 답했는지. 대화 맨 끝 차례는 세지 않는다 */
+  unanswered?: Record<string, Unanswered>;
+  /** 자주 쓰는 단어 TOP_WORDS개(두 번 이상, [단어, 수], 많은 순). lib/stats/words */
+  topWords?: Record<string, [string, number][]>;
   /** 텍스트 메시지 중 물음표가 든 비율 */
   questionRate: Record<string, number>;
   media: Record<string, { photo: number; emoticon: number; link: number }>;
@@ -70,6 +107,18 @@ const LAUGH_MAX = 10;
 const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 const LAUGH_RE = /[ㅋㅎ]+/g;
 const KEK_RE = /ㅋ/g;
+// v2.9 버릇. 링크를 지운 글에서 본다(링크 속 점·영어를 버릇으로 세지 않게)
+const HABIT_RE: Record<Exclude<(typeof HABIT_KEYS)[number], "jamo" | "link">, RegExp> = {
+  exclaim: /[!！]/,
+  question: /[?？]/,
+  tilde: /[~～]/,
+  ellipsis: /…|\.{2,}/,
+  emoji: /\p{Extended_Pictographic}/u,
+  english: /[A-Za-z]{2,}/,
+};
+/** 자음만으로 된 두 글자 이상 덩어리(앞뒤가 한글·자모가 아닌 것) */
+const JAMO_RE = /(?<![ㄱ-ㅣ가-힣])[ㄱ-ㅎ]{2,}(?![ㄱ-ㅣ가-힣])/g;
+const LAUGH_ONLY = /^[ㅋㅎ]+$/;
 const QUESTION_RE = /[?？]/;
 
 // 호칭 사전. 앞뒤가 한글이면 다른 단어의 일부라서 세지 않는다(조사는 허용).
@@ -120,6 +169,11 @@ export function computeStats(messages: ChatMessage[]): ChatStats {
   const dailyCounts: Record<string, number> = {};
   const laughLength: Record<string, number[]> = {};
   const laughChars: Record<string, number> = {};
+  const nightByPerson: Record<string, number> = {};
+  const style: Record<string, MessageStyle> = {};
+  const habits: Record<string, Habits> = {};
+  const words: Record<string, Map<string, number>> = {};
+  const allIntervals: number[] = [];
   const media: ChatStats["media"] = {};
   const addressTerms: ChatStats["addressTerms"] = {};
   const textCount: Record<string, number> = {};
@@ -154,7 +208,9 @@ export function computeStats(messages: ChatMessage[]): ChatStats {
     bump(dailyCounts, day);
     hourHistogram[hour]++;
     weekdayHistogram[kst.getUTCDay()]++;
-    if (hour >= NIGHT_START || hour < NIGHT_END) night++;
+    const isNight = hour >= NIGHT_START || hour < NIGHT_END;
+    if (isNight) night++;
+    bump(nightByPerson, who, isNight ? 1 : 0);
 
     const gapBefore = prev ? m.ts - prev.ts : null;
     if (gapBefore !== null && gapBefore >= SILENCE_GAP_MS) bump(initiations, who);
@@ -164,6 +220,7 @@ export function computeStats(messages: ChatMessage[]): ChatStats {
     if (prev && prev.sender !== who && gapBefore !== null && gapBefore < SILENCE_GAP_MS) {
       (intervals[who] ??= []).push(gapBefore);
       (acc.intervals[who] ??= []).push(gapBefore);
+      allIntervals.push(gapBefore);
     }
 
     // 답장 받음: 이 메시지 뒤 처음 나오는 다른 사람의 메시지가 6시간 안에 있는가
@@ -188,6 +245,20 @@ export function computeStats(messages: ChatMessage[]): ChatStats {
       const hist = (laughLength[who] ??= new Array<number>(LAUGH_MAX + 1).fill(0));
       for (const run of m.text.match(LAUGH_RE) ?? []) hist[Math.min(run.length, LAUGH_MAX)]++;
       bump(laughChars, who, m.text.match(KEK_RE)?.length ?? 0);
+      // v2.9 글 모양·버릇·단어
+      const len = [...m.text].length;
+      const st = (style[who] ??= { texts: 0, chars: 0, long: 0, short: 0 });
+      st.texts++;
+      st.chars += len;
+      if (len >= LONG_MESSAGE_CHARS) st.long++;
+      if (len <= SHORT_MESSAGE_CHARS) st.short++;
+      const hb = (habits[who] ??= { exclaim: 0, question: 0, tilde: 0, ellipsis: 0, emoji: 0, jamo: 0, english: 0, link: 0 });
+      const plain = m.text.replace(URL_RE, " ");
+      for (const key of Object.keys(HABIT_RE) as (keyof typeof HABIT_RE)[]) if (HABIT_RE[key].test(plain)) hb[key]++;
+      if ((plain.match(JAMO_RE) ?? []).some((t) => !LAUGH_ONLY.test(t))) hb.jamo++;
+      if (plain !== m.text) hb.link++;
+      const counts = (words[who] ??= new Map());
+      for (const w of wordsOf(m.text)) counts.set(w, (counts.get(w) ?? 0) + 1);
       const body = m.text.replace(URL_RE, " ");
       for (const hit of body.matchAll(ADDRESS_RE)) bump((addressTerms[who] ??= {}), hit[1], 1);
     }
@@ -252,6 +323,35 @@ export function computeStats(messages: ChatMessage[]): ChatStats {
     longestStreakDays = Math.max(longestStreakDays, run);
   });
 
+  // v2.9 읽씹: 차례를 나누고, 차례 끝마다 다음 메시지(답했는지)와 다른 사람의 다음 메시지(기다린 시간)를 본다
+  const unanswered: Record<string, Unanswered> = Object.fromEntries(
+    Object.keys(byPerson).map((who) => [who, { turns: 0, ignored: 0, maxWaitMs: null, maxStreak: 0 }]),
+  );
+  // nextOther[i]: i 뒤에 처음 나오는 다른 사람의 메시지 번호(없으면 -1)
+  const nextOther = new Array<number>(msgs.length).fill(-1);
+  for (let i = msgs.length - 2; i >= 0; i--) nextOther[i] = msgs[i + 1].sender !== msgs[i].sender ? i + 1 : nextOther[i + 1];
+  const streak: Record<string, number> = {};
+  for (let i = 0; i < msgs.length; ) {
+    const who = msgs[i].sender;
+    let end = i;
+    while (end + 1 < msgs.length && msgs[end + 1].sender === who && msgs[end + 1].ts - msgs[end].ts < SILENCE_GAP_MS) end++;
+    const next = msgs[end + 1];
+    if (next) {
+      const u = unanswered[who];
+      u.turns++;
+      const answered = next.sender !== who && next.ts - msgs[end].ts < SILENCE_GAP_MS;
+      if (answered) streak[who] = 0;
+      else {
+        u.ignored++;
+        streak[who] = (streak[who] ?? 0) + 1;
+        u.maxStreak = Math.max(u.maxStreak, streak[who]);
+      }
+      const other = nextOther[end];
+      if (other >= 0) u.maxWaitMs = Math.max(u.maxWaitMs ?? 0, msgs[other].ts - msgs[end].ts);
+    }
+    i = end + 1;
+  }
+
   let busiestDay: ChatStats["busiestDay"] = null;
   for (const [date, count] of Object.entries(dailyCounts).sort(([a], [b]) => (a < b ? -1 : 1))) {
     if (busiestDay === null || count > busiestDay.count) busiestDay = { date, count };
@@ -275,6 +375,12 @@ export function computeStats(messages: ChatMessage[]): ChatStats {
     busiestDay,
     laughLength,
     laughChars,
+    nightByPerson,
+    replyMedianAll: summarize(allIntervals).median,
+    style,
+    habits,
+    unanswered,
+    topWords: Object.fromEntries(Object.entries(words).map(([who, counts]) => [who, topOf(counts, TOP_WORDS)])),
     questionRate,
     media,
     addressTerms,

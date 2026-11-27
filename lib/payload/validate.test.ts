@@ -88,6 +88,31 @@ describe("validatePayload", () => {
     expect(reject({ ...p, stats: { ...p.stats, laughChars: { [name]: 1.5 } } })).toMatch(/구조/);
   });
 
+  it("v2.9 화면 전용 통계(밤·글 모양·버릇·읽씹·단어)는 없어도 받고, 있으면 모양과 키(members 안)를 본다", () => {
+    const p = payload();
+    const [name] = p.members;
+    for (const key of ["nightByPerson", "style", "habits", "unanswered", "topWords"] as const) {
+      expect(p.stats[key], key).toBeDefined();
+      const { [key]: _, ...old } = p.stats;
+      expect(reject({ ...p, stats: old }), key).toBe("ok");
+      expect(reject({ ...p, stats: { ...p.stats, [key]: { ...p.stats[key], 김민지: p.stats[key]![name] } } }), key).toMatch(/stats/);
+    }
+    expect(reject({ ...p, stats: { ...p.stats, replyMedianAll: undefined } })).toBe("ok");
+    expect(reject({ ...p, stats: { ...p.stats, replyMedianAll: null } })).toBe("ok");
+    expect(reject({ ...p, stats: { ...p.stats, style: { [name]: { texts: 1, chars: 1, long: 0 } } } })).toMatch(/구조/);
+    expect(reject({ ...p, stats: { ...p.stats, habits: { [name]: { ...p.stats.habits![name], extra: 1 } } } })).toMatch(/구조/);
+  });
+
+  it("v2.9 자주 쓰는 단어: 한글·영어 소문자 2~20자 단어와 1 이상 정수, 사람마다 10개까지만. 숫자·기호·꺾쇠가 든 단어는 거부", () => {
+    const p = payload();
+    const [name] = p.members;
+    const words = (list: unknown) => reject({ ...p, stats: { ...p.stats, topWords: { [name]: list } } });
+    expect(words([["치킨", 3], ["netflix", 2]])).toBe("ok");
+    expect(words(Array.from({ length: 11 }, (_, i) => [`단어${String.fromCharCode(0xac00 + i)}`, 2]))).toMatch(/구조/);
+    for (const bad of ["010", "a1", "치킨!", "가", "Netflix", "<b>", "가".repeat(21), "치 킨"]) expect(words([[bad, 2]]), bad).toMatch(/구조|꺾쇠/);
+    expect(words([["치킨", 0]])).toMatch(/구조/);
+  });
+
   it("concept couple + kind group → 거부", () => {
     expect(reject({ ...payload(), kind: "group" })).toMatch(/concept/);
     expect(reject({ ...payload(), concept: "group", kind: "pair" })).toMatch(/concept/);
