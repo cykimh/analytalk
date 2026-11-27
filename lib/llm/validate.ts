@@ -20,6 +20,9 @@
 //   - 근거 카드는 실제 메시지처럼 말풍선으로 보이므로 원문 확인은 그대로 하되, 정규화로 맞으면 그 메시지의 원문 글자로 바꿔 넣는다
 //     (checks.requoted). m번호의 메시지와 정규화로 안 맞으면 relink(글자 그대로 → 정규화 순)로 찾고, 그래도 없으면 m번호 메시지와
 //     글자 겹침 80% 이상일 때 그 메시지 전체를 넣는다. 그래도 못 찾는 카드만 뺀다.
+// v2.7: 같은 분에 연달아 보낸 메시지는 한 줄(m<첫 id>+<k>)로 묶여 간다. 근거는 m번호 메시지와 같은 줄의 메시지들을 먼저(그 메시지부터 줄 순서로)
+//   글자 그대로 → 정규화 순으로 보고, 맞은 메시지의 번호·보낸 사람·시각·원문으로 바꿔 넣는다(말풍선은 늘 실제 메시지 하나다. relink로 세지 않는다).
+//   모델이 줄 머리를 그대로 옮긴 m<id>+<k>는 m<id>로 읽는다. 접은 미디어·반응 칸은 payloadIndex에 없어 근거가 되지 않는다.
 // 나머지 모델 글(headline·dek·제목)도 같은 검사(금지 표현·개인정보·글자 수)에 걸리면 비운다. icon·about·part는 허용 모양만 남긴다.
 // 자리표시자 경로 속 범례 기호(A, B…)는 표시 이름으로 바꾼다(모델이 줄의 기호를 그대로 옮겨 쓴 경우).
 import "server-only";
@@ -297,6 +300,8 @@ function placeholderCount(text: string, stats: ChatStats): number | null {
 
 /** m번호(m123) → 123. 모양이 다르면 null */
 const refNumber = (ref: string) => (/^m\d+$/.test(ref) ? Number(ref.slice(1)) : null);
+/** 묶음 줄 머리를 그대로 옮긴 m번호(m123+4)는 m123으로 읽는다(v2.7) */
+const claimedRef = (ref: string) => ref.trim().replace(/^(m\d+)\+\d+$/, "$1");
 
 /**
  * quote가 든 메시지 중 claimed(모델이 적은 m번호)에 가장 가까운 것(v2.4 relink). 글자 그대로 든 메시지가 있으면 그것만,
@@ -366,33 +371,57 @@ export function validateReport(
       return { ref, n: refNumber(ref) ?? -1, line, norm: () => (norm ??= normalizeQuote(toNewlines(line.text))) };
     }).filter((x) => x.n >= 0));
 
+  // 묶음 줄(lineRef)마다 그 줄의 메시지들(줄 순서). 묶음 근거가 있을 때 한 번만 만든다
+  let byLine: Map<string, [string, IndexLine][]> | null = null;
+  /** ref 메시지와 같은 줄의 메시지들: ref가 먼저, 나머지는 줄 순서. 묶음이 아니면 ref 하나 */
+  const lineOf = (ref: string, line: IndexLine): [string, IndexLine][] => {
+    if (line.lineRef === undefined) return [[ref, line]];
+    if (byLine === null) {
+      const map = new Map<string, [string, IndexLine][]>();
+      for (const entry of idx) {
+        if (entry[1].lineRef === undefined) continue;
+        const list = map.get(entry[1].lineRef) ?? [];
+        list.push(entry);
+        map.set(entry[1].lineRef, list);
+      }
+      byLine = map;
+    }
+    return [[ref, line], ...(byLine.get(line.lineRef) ?? []).filter(([r]) => r !== ref)];
+  };
+
   /**
-   * 근거 하나를 원문에 맞춘다(v2.5). 글자 그대로 → m번호 메시지의 정규화 구간 → relink(글자 그대로·정규화) → m번호 메시지와 글자 겹침 순.
-   * 정규화·겹침으로 맞으면 quote를 그 메시지의 원문 글자로 바꾼다. 못 찾으면 null
+   * 근거 하나를 원문에 맞춘다(v2.5, v2.7). m번호 메시지와 같은 줄의 메시지들에서 글자 그대로 → 정규화 구간, 그다음 relink(글자 그대로·정규화),
+   * 마지막으로 같은 줄 메시지와 글자 겹침 순. 정규화·겹침으로 맞으면 quote를 그 메시지의 원문 글자로 바꾼다. 못 찾으면 null
    */
   const verify = (e: Report["sections"][number]["evidence"][number], prefer: string | null): StoredSection["evidence"][number] | null => {
     const quote = toNewlines(e.quote);
-    const line = idx.get(e.msg_id);
-    const original = line ? toNewlines(line.text) : null;
-    if (line && original!.includes(quote)) return { id: e.id, msg_id: e.msg_id, quote, sender: line.sender, at: line.at };
+    const claimed = claimedRef(e.msg_id);
+    const line = idx.get(claimed);
+    const mates = line ? lineOf(claimed, line).map(([ref, l]) => ({ ref, l, text: toNewlines(l.text) })) : [];
+    const card = (ref: string, l: IndexLine, q: string) => ({ id: e.id, msg_id: ref, quote: q, sender: l.sender, at: l.at });
+    const exact = mates.find((x) => x.text.includes(quote));
+    if (exact) return card(exact.ref, exact.l, quote);
     const nq = normalizeQuote(quote);
     if (nq === "") return null;
-    const span = original === null ? null : originalSpan(original, nq);
-    if (line && span !== null) {
-      checks.requoted++;
-      return { id: e.id, msg_id: e.msg_id, quote: span, sender: line.sender, at: line.at };
+    for (const x of mates) {
+      const span = originalSpan(x.text, nq);
+      if (span !== null) {
+        checks.requoted++;
+        return card(x.ref, x.l, span);
+      }
     }
-    const found = relink(lines(), e.msg_id, quote, nq, prefer);
+    const found = relink(lines(), claimed, quote, nq, prefer);
     if (found) {
       const text = toNewlines(found.line.text);
-      const exact = text.includes(quote);
+      const isExact = text.includes(quote);
       checks.relinked++;
-      if (!exact) checks.requoted++;
-      return { id: e.id, msg_id: found.ref, quote: exact ? quote : originalSpan(text, nq)!, sender: found.line.sender, at: found.line.at };
+      if (!isExact) checks.requoted++;
+      return card(found.ref, found.line, isExact ? quote : originalSpan(text, nq)!);
     }
-    if (line && overlapRatio(nq, normalizeQuote(original!)) >= OVERLAP_MIN) {
+    const close = mates.find((x) => overlapRatio(nq, normalizeQuote(x.text)) >= OVERLAP_MIN);
+    if (close) {
       checks.requoted++;
-      return { id: e.id, msg_id: e.msg_id, quote: original!, sender: line.sender, at: line.at };
+      return card(close.ref, close.l, close.text);
     }
     return null;
   };

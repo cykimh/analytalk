@@ -932,6 +932,72 @@ describe("validateReport", () => {
     expect(ms, `검증 ${Math.round(ms)}ms`).toBeLessThan(1_000);
   });
 
+  // v2.7: 같은 분에 연달아 보낸 메시지는 한 줄(m<첫 id>+<k>)로 묶여 간다. 모델이 줄 머리 번호를 들어도 말풍선은 실제 메시지 하나다
+  describe("v2.7 묶음 줄", () => {
+    const bundled = () => {
+      const rows: [string, number, string][] = [
+        ["철수", kst(1, 20, 0), "오늘 영화 볼래?"],
+        ["민지", kst(1, 20, 5), "집에서 쉬는 중"],
+        ["민지", kst(1, 20, 5), "넷플릭스 보는 중이야"],
+        ["민지", kst(1, 20, 5), "같이 볼래?"],
+        ["철수", kst(1, 20, 6), "영화 볼래?\n내일 저녁"],
+        ["철수", kst(1, 20, 6), "ㅋㅋ"],
+        ["민지", kst(1, 20, 10), "좋아!"],
+      ];
+      const messages: ChatMessage[] = rows.map(([sender, ts, text], id) => ({ id, ts, sender, kind: "text", text, line: id + 1 }));
+      const build = (tokenBudget: number) => buildPayload({ messages, tone: "fact", concept: "couple", kind: "pair", tokenBudget, tokensPerChar: 1 });
+      const p = build(build(1_000_000).transcript.length);
+      return { p, idx: payloadIndex(p) };
+    };
+    const { p, idx: bIdx } = bundled();
+    const runB = (raw: unknown) => validateReport(raw, bIdx, p.stats, { truncated: false, tone: "fact", members: p.members });
+    const one = (msg_id: string, quote: string, about = "group") =>
+      runB(report([sec("근거", [para("p1", "저녁 대화가 이어졌다", ["e1"])], [ev("e1", msg_id, quote)], about)]));
+
+    it("전제: 민지의 세 메시지가 m1+2 한 줄, 철수의 글·반응이 m4+1 한 줄로 갔다", () => {
+      expect(p.transcript.split("\n").map((l) => l.split("|")[0])).toEqual(["# 2026-10-01", "m0", "m1+2", "m4+1", "m6"]);
+    });
+
+    it("줄 머리 번호(m1)를 들어도 quote가 든 같은 줄의 메시지(m3)로 잇고, 보낸 사람·시각은 그 메시지의 것이다(relink로 세지 않는다)", () => {
+      const r = one("m1", "같이 볼래?");
+      expect(r.content?.sections[0].evidence).toEqual([{ id: "e1", msg_id: "m3", quote: "같이 볼래?", sender: "민지", at: "2026-10-01T20:05:00+09:00" }]);
+      expect(r.content?.checks).toMatchObject({ relinked: 0, requoted: 0, dropped_by: {} });
+    });
+
+    it("머리를 그대로 옮긴 m1+2도 m1로 읽는다", () => {
+      expect(one("m1+2", "넷플릭스 보는 중").content?.sections[0].evidence.map((e) => [e.msg_id, e.quote])).toEqual([["m2", "넷플릭스 보는 중"]]);
+    });
+
+    it("같은 줄 메시지를 먼저 본다: 짧은 quote가 번호가 더 가까운 다른 사람 메시지(m0)에도 있어도 같은 줄의 m3", () => {
+      expect(one("m1", "볼래?").content?.sections[0].evidence.map((e) => [e.msg_id, e.sender])).toEqual([["m3", "민지"]]);
+    });
+
+    it("같은 줄 메시지와 정규화로 맞으면 그 메시지의 원문 글자로 바꿔 넣는다(requoted)", () => {
+      const r = one("m1", "넷플릭스보는중이야");
+      expect(r.content?.sections[0].evidence.map((e) => [e.msg_id, e.quote])).toEqual([["m2", "넷플릭스 보는 중이야"]]);
+      expect(r.content?.checks).toMatchObject({ relinked: 0, requoted: 1 });
+    });
+
+    it("두 메시지에 걸친 근거는 이어 붙인 글로 보이지 않는다: 같은 줄 메시지 하나와 80% 넘게 겹치면 그 메시지 전체, 아니면 뺀다(문단은 남는다)", () => {
+      const close = one("m1", "쉬는 중 넷플릭스");
+      expect(close.content?.sections[0].evidence.map((e) => [e.msg_id, e.quote])).toEqual([["m2", "넷플릭스 보는 중이야"]]);
+      const r = one("m1", "중 같이");
+      expect(r.content?.sections[0].evidence).toEqual([]);
+      expect(r.content?.sections[0].paragraphs[0].evidence_ids).toEqual([]);
+      expect(r.content?.checks).toMatchObject({ dropped_by: { evidence_unmatched: 1 } });
+    });
+
+    it("문단 안 따옴표 대사는 묶음의 메시지들(연속 두세 개 이어 붙인 것 포함)과 대 본다", () => {
+      const r = runB(
+        report([
+          sec("민지", [para("p1", '민지는 "집에서 쉬는 중 넷플릭스 보는 중이야"라고 했다. 그리고 "같이 볼래?" 하고 물었다. 철수는 "영화 볼래"라고 했다')], [], "민지"),
+        ]),
+      );
+      expect(r.content?.sections[0].paragraphs[0].text).toContain('"집에서 쉬는 중 넷플릭스 보는 중이야"');
+      expect(r.content?.checks).toMatchObject({ unquoted: 0 });
+    });
+  });
+
   it("truncated: 빠진 뒤쪽 필드에 기본값을 넣고, 결과는 partial", () => {
     const raw: Partial<Report> = report([sec("s", [para("p1", "저녁 대화가 이어져요")])]);
     delete raw.dek;
