@@ -216,6 +216,23 @@ describe("computeStats", () => {
       const many = Array.from({ length: 12 }, (_, i) => `단어${String.fromCharCode(0xac00 + i)} 단어${String.fromCharCode(0xac00 + i)}`);
       expect(computeStats(many.map((text, i) => msg("철수", T0 + i * MIN, text))).topWords?.철수).toHaveLength(10);
     });
+
+    it("topWords: hiddenNames(뺀 멤버·봇의 원래 이름)는 누구의 단어 목록에도 없다. 넣은 멤버 이름은 남는다", () => {
+      const rows: [string, string][] = [
+        ["철수", "영희야 영희는 김영희 어디 갔어"],
+        ["철수", "영희한테 물어봐 영희 영희랑 민지"],
+        ["민지", "영희가 그랬어? 영희 진짜 영희 영희야"],
+        ["민지", "철수야 철수 철수는 오픈채팅봇 오픈채팅봇"],
+      ];
+      const messages = rows.map(([sender, text], i) => msg(sender, T0 + i * MIN, text));
+      const s = computeStats(messages, { hiddenNames: ["김영희", "오픈채팅봇"] });
+      const all = Object.values(s.topWords ?? {}).flat().map(([w]) => w);
+      for (const w of all) expect(w).not.toMatch(/영희|오픈채팅봇/);
+      expect(s.topWords?.민지?.map(([w]) => w)).toContain("철수");
+      expect(s.topWords?.철수).toEqual([]);
+      // 거르지 않으면 영희가 들어간다(전제)
+      expect(computeStats(messages).topWords?.철수?.map(([w]) => w)).toContain("영희");
+    });
   });
 
   it("호칭은 구간당 한 번만 센다 (자기야가 자기로 중복되지 않음)", () => {

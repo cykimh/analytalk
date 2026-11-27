@@ -8,6 +8,7 @@ import {
   defaultNames,
   isBotOrUnknown,
   type NameOptions,
+  nameForms,
 } from "./names";
 import { reportNames } from "./names";
 
@@ -224,5 +225,17 @@ describe("reportNames: 리포트에는 성을 뺀 이름", () => {
       { map: { a: "김민지", b: "박철수" } },
     );
     expect(r.ok && r.messages.map((m) => m.sender)).toEqual(["민지", "철수"]);
+  });
+});
+
+describe("nameForms (v2.9 자주 쓰는 단어에서 거를 이름 꼴)", () => {
+  it("이름과 성을 뺀 이름(dropSurname과 같은 규칙)을 두 글자 이상의 한글·영어(소문자) 덩어리로", () => {
+    expect(nameForms("김민지")).toEqual(["김민지", "민지"]);
+    expect(nameForms(" 김부장 ")).toEqual(["김부장"]);
+    expect(nameForms("Tom Lee")).toEqual(["tom", "lee"]);
+    expect(nameForms("AI봇")).toEqual(["ai"]);
+    expect(nameForms("민지 엄마")).toEqual(["민지", "엄마"]);
+    expect(nameForms("(알 수 없음)")).toEqual(["없음"]);
+    expect(nameForms("민")).toEqual([]);
   });
 });

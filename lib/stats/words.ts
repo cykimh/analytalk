@@ -1,7 +1,11 @@
 // 자주 쓰는 단어(v2.9): 글 메시지를 단어로 나눈다. 브라우저 Worker의 통계 계산(computeStats)이 쓰는 순수 함수다.
 // 단어 = 두 글자 이상의 한글 덩어리 또는 영어 덩어리(소문자로). 숫자는 단어가 아니라서 전화·계좌·카드·주민번호는 처음부터 들어오지 않고,
 // 링크·이메일은 나누기 전에 지운다. 한글 단어 끝의 흔한 조사는 떼고(남는 말이 두 글자 이상일 때만), 불용어·감탄·웃음(ㅋ·ㅎ는 한글 음절이 아니라 애초에 빠진다)은 뺀다.
-// 멤버 이름은 빼지 않는다(재미 요소, 2026-11-27 사용자 승인). 단어 목록은 stats에 실려 DB에 30일 남고 공유 링크에 보인다
+// 멤버 이름은 빼지 않는다(재미 요소, 2026-11-27 사용자 승인). 단어 목록은 stats에 실려 DB에 30일 남고 공유 링크에 보인다.
+// 다만 분석에서 뺀 멤버·봇·알 수 없음의 이름은 페이로드 어디에도 없어야 하므로(CLAUDE.md), 다른 사람이 본문에 그 이름을 써도
+// 단어에서 거른다(hiddenWordFilter): 원래 이름·성을 뺀 이름(nameForms)과 그 뒤에 조사·호칭이 붙은 꼴(민지야·민지는, 세 글자까지).
+// 넣은 멤버와 같은 꼴은 누구를 부른 것인지 몰라 거르지 않는다(넣은 멤버 이름은 거르지 않는다)
+import { nameForms } from "@/lib/payload/names";
 
 const URL_RE = /https?:\/\/[^\s<>"']+|www\.[^\s<>"']+/gi;
 const EMAIL_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
@@ -39,13 +43,39 @@ function stem(word: string): string {
   return word;
 }
 
-/** 글 메시지 하나의 단어들(센 순서대로, 같은 단어가 여러 번 나오면 여러 번) */
-export function wordsOf(text: string): string[] {
+/** 이름 뒤에 붙어도 그 이름을 부른 것으로 보는 꼬리 길이(조사·호칭: 야·는·한테·랑은·씨) */
+const NAME_TAIL_MAX = 3;
+
+/**
+ * 뺀 멤버·봇·알 수 없음의 원래 이름(hidden)을 단어에서 거르는 판정. 단어(소문자 영어·조사 떼기 전후의 한글 덩어리)가
+ * 그 이름의 꼴과 같거나, 한글 꼴 뒤에 한글이 NAME_TAIL_MAX자까지 붙은 것이면 거른다.
+ * 넣은 멤버(included, 표시 이름)의 꼴과 같은 꼴은 거르지 않고, 넣은 멤버의 더 긴 이름으로 시작하는 단어(민지수·민지수는)도 남긴다.
+ * 거를 꼴이 없으면 null
+ */
+export function hiddenWordFilter(hidden: readonly string[], included: readonly string[]): ((word: string) => boolean) | null {
+  const keep = new Set(included.flatMap(nameForms));
+  const keepList = [...keep];
+  const forms = [...new Set(hidden.flatMap(nameForms))].filter((f) => !keep.has(f));
+  if (forms.length === 0) return null;
+  const tailed = (word: string, form: string) => {
+    const rest = word.slice(form.length);
+    return /^[가-힣]/.test(form) && word.startsWith(form) && rest.length <= NAME_TAIL_MAX && /^[가-힣]+$/.test(rest);
+  };
+  return (word) => {
+    if (keep.has(word)) return false;
+    return forms.some((f) => (word === f || tailed(word, f)) && !keepList.some((k) => k.length > f.length && word.startsWith(k)));
+  };
+}
+
+/** 글 메시지 하나의 단어들(센 순서대로, 같은 단어가 여러 번 나오면 여러 번). hidden이 참인 단어는 뺀다 */
+export function wordsOf(text: string, hidden?: (word: string) => boolean): string[] {
   const body = text.replace(URL_RE, " ").replace(EMAIL_RE, " ");
   const out: string[] = [];
   for (const [raw] of body.matchAll(TOKEN_RE)) {
-    const word = /^[A-Za-z]/.test(raw) ? raw.toLowerCase() : stem(raw);
+    const english = /^[A-Za-z]/.test(raw);
+    const word = english ? raw.toLowerCase() : stem(raw);
     if (word.length > WORD_MAX_CHARS || STOPWORDS.has(word)) continue;
+    if (hidden && (hidden(word) || (!english && hidden(raw)))) continue;
     out.push(word);
   }
   return out;

@@ -74,6 +74,13 @@ describe("runOp rename", () => {
     expect(r.safetyDropped).toBe(0);
   });
 
+  it("v2.9: 뺀 사람과 봇·알 수 없음의 원래 이름을 hiddenNames로 돌려준다(자주 쓰는 단어에서 거를 이름)", async () => {
+    const input = rename({ messages: [msg(0, "김민지", "안녕"), msg(1, "(알 수 없음)", "안녕"), msg(2, "철수", "응"), msg(3, "영희", "응"), msg(4, "AI봇", "x")], map: { 김민지: "민지", 철수: "철수", 영희: "영희" }, excluded: ["영희"] });
+    const r = await runOp({ op: "rename", input });
+    if (!("messages" in r)) throw new Error("ok가 아니다");
+    expect([...r.hiddenNames].sort()).toEqual(["(알 수 없음)", "AI봇", "영희"].sort());
+  });
+
   it("이름 정리가 실패하면 이유만 돌려준다", async () => {
     expect(await runOp({ op: "rename", input: rename({ map: { 김민지: "P1", 철수: "P1" } }) })).toEqual({ ok: false, reason: "collision" });
     expect(await runOp({ op: "rename", input: rename({ map: { 김민지: "P1", 철수: "a|b" } }) })).toEqual({ ok: false, reason: "invalid" });
@@ -105,5 +112,41 @@ describe("handleMessage", () => {
       input: { messages: [], tone: "fact", concept: "group", kind: "group", tokensPerChar: 1, tokenBudget: 100 },
     });
     expect(failed).toEqual({ id: 8, ok: false, error: "보낼 메시지가 없다" });
+  });
+});
+
+describe("Worker 흐름(v2.9): 뺀 멤버의 이름은 어떤 자주 쓰는 단어 목록에도 없다", () => {
+  it("parse → rename(영희 빼기) → build(hiddenNames): 다른 사람이 본문에 영희를 불러도 topWords에 영희가 없고, 페이로드에 hiddenNames가 없다", async () => {
+    // 철수·민지가 본문에서 뺀 멤버(김영희)와 봇을 자꾸 부른다. 본문은 고치지 않으므로 transcript에는 남지만 단어 목록에는 없어야 한다
+    const lines = Array.from({ length: 6 }, (_, i) => [
+      `2024년 3월 15일 오후 8:${String(i * 4).padStart(2, "0")}, 철수 : 영희야 영희는 어디야 김영희 치킨 오픈채팅봇`,
+      `2024년 3월 15일 오후 8:${String(i * 4 + 1).padStart(2, "0")}, 민지 : 영희한테 물어봐 영희 치킨 철수야`,
+      `2024년 3월 15일 오후 8:${String(i * 4 + 2).padStart(2, "0")}, 김영희 : 나 여기 있어 치킨`,
+      `2024년 3월 15일 오후 8:${String(i * 4 + 3).padStart(2, "0")}, 오픈채팅봇 : 공지 확인 치킨`,
+    ]).flat();
+    const text = ["\uFEFF테스트방 님과 카카오톡 대화", "저장한 날짜 : 2024년 3월 16일 오전 9:00", "", "2024년 3월 15일 오후 8:00", ...lines, ""].join("\n");
+    const parsed = await runOp({ op: "parse", files: [new File([text], "KakaoTalkChats.txt")] });
+    expect(parsed.messages.length).toBe(24);
+    const renamed = await runOp({
+      op: "rename",
+      input: { messages: parsed.messages, map: { 철수: "철수", 민지: "민지", 김영희: "영희" }, merged: [], excluded: ["김영희"] },
+    });
+    if (!renamed.ok) throw new Error("ok가 아니다");
+    expect([...renamed.hiddenNames].sort()).toEqual(["김영희", "오픈채팅봇"]);
+    const build = { messages: renamed.messages, concept: "group" as const, kind: "group" as const, tone: "fact" as const, tokensPerChar: TOKENS_PER_CHAR };
+    for (const payload of [
+      await runOp({ op: "build", input: { ...build, inputBudget: FALLBACK_INPUT_TOKEN_BUDGET, hiddenNames: renamed.hiddenNames } }),
+      await runOp({ op: "build", input: { ...build, tokenBudget: 100_000, hiddenNames: renamed.hiddenNames } }),
+    ]) {
+      expect(payload.members.sort()).toEqual(["민지", "철수"]);
+      const words = Object.values(payload.stats.topWords ?? {}).flat().map(([w]) => w);
+      expect(words).toContain("치킨");
+      expect(words).toContain("철수");
+      for (const w of words) expect(w).not.toMatch(/영희|오픈채팅봇/);
+      expect(JSON.stringify(payload.stats)).not.toMatch(/영희|오픈채팅봇/);
+      expect(Object.keys(payload)).not.toContain("hiddenNames");
+      // 본문은 고치지 않는다: 다른 사람이 부른 이름은 transcript에 남는다(전제)
+      expect(payload.transcript).toContain("영희야");
+    }
   });
 });

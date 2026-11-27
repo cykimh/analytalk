@@ -2,7 +2,7 @@
 import { LONG_MESSAGE_CHARS, NIGHT_END, NIGHT_START, SHORT_MESSAGE_CHARS, SILENCE_GAP_MS, TOP_WORDS } from "@/lib/config";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { findCrossedPatterns } from "./crossed";
-import { topOf, wordsOf } from "./words";
+import { hiddenWordFilter, topOf, wordsOf } from "./words";
 
 export interface MonthStats {
   count: Record<string, number>;
@@ -155,11 +155,16 @@ function ratio(num: number, den: number): number {
   return den === 0 ? 0 : num / den;
 }
 
-/** 시스템 메시지(발신자 없음 포함)를 뺀 통계를 계산하고 마지막에 엇갈린 패턴을 붙인다 */
-export function computeStats(messages: ChatMessage[]): ChatStats {
+/**
+ * 시스템 메시지(발신자 없음 포함)를 뺀 통계를 계산하고 마지막에 엇갈린 패턴을 붙인다.
+ * hiddenNames(v2.9): 분석에서 뺀 멤버·봇·알 수 없음의 원래 이름. 다른 사람이 본문에 써도 자주 쓰는 단어에서 거른다(lib/stats/words).
+ * 이 목록은 거르는 데만 쓰고 결과(stats)에는 싣지 않는다
+ */
+export function computeStats(messages: ChatMessage[], opts: { hiddenNames?: readonly string[] } = {}): ChatStats {
   const msgs = messages
     .filter((m): m is ChatMessage & { sender: string } => m.sender !== null && m.kind !== "system")
     .sort((a, b) => a.ts - b.ts || a.id - b.id);
+  const hidden = hiddenWordFilter(opts.hiddenNames ?? [], [...new Set(msgs.map((m) => m.sender))]) ?? undefined;
 
   const byPerson: Record<string, number> = {};
   const initiations: Record<string, number> = {};
@@ -258,7 +263,7 @@ export function computeStats(messages: ChatMessage[]): ChatStats {
       if ((plain.match(JAMO_RE) ?? []).some((t) => !LAUGH_ONLY.test(t))) hb.jamo++;
       if (plain !== m.text) hb.link++;
       const counts = (words[who] ??= new Map());
-      for (const w of wordsOf(m.text)) counts.set(w, (counts.get(w) ?? 0) + 1);
+      for (const w of wordsOf(m.text, hidden)) counts.set(w, (counts.get(w) ?? 0) + 1);
       const body = m.text.replace(URL_RE, " ");
       for (const hit of body.matchAll(ADDRESS_RE)) bump((addressTerms[who] ??= {}), hit[1], 1);
     }

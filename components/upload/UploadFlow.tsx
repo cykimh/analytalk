@@ -131,6 +131,8 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
         tone,
         tokensPerChar: TOKENS_PER_CHAR,
         inputBudget,
+        // 뺀 멤버·봇의 이름은 자주 쓰는 단어에서 거른다(페이로드에는 싣지 않는다)
+        hiddenNames: r.hiddenNames,
       };
       const payload = await buildInWorker(input);
       // 위험 신호 메시지를 빼고 나니 한 사람만 남았으면 리포트를 만들 수 없다

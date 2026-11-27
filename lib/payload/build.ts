@@ -419,6 +419,11 @@ export type BuildInput = {
   tokensPerChar: number;
   /** false면 예산이 모자라도 묶거나 접지 않는다(v2.6까지의 줄 모양, 측정·비교용). 기본은 묶고 접는다 */
   compact?: boolean;
+  /**
+   * v2.9: 분석에서 뺀 멤버·봇·알 수 없음의 원래 이름(Worker의 이름 정리가 돌려준다). 통계의 자주 쓰는 단어에서만 거르고
+   * 페이로드에는 싣지 않는다(뺀 멤버의 이름은 페이로드 어디에도 없다)
+   */
+  hiddenNames?: readonly string[];
 };
 
 /** buildPayloadForBudget이 anchors + transcript에 남겨야 하는 최소 몫 */
@@ -444,7 +449,7 @@ function chatLines(messages: ChatMessage[]): ChatLine[] {
  */
 export function buildPayload(input: BuildInput): Payload {
   const chat = chatLines(input.messages);
-  return assemble(chat, computeStats(chat), input);
+  return assemble(chat, computeStats(chat, { hiddenNames: input.hiddenNames }), input);
 }
 
 /**
@@ -455,7 +460,7 @@ export function buildPayload(input: BuildInput): Payload {
 export function buildPayloadForBudget(input: Omit<BuildInput, "tokenBudget"> & { inputBudget: number }): Payload {
   const { inputBudget, ...rest } = input;
   const chat = chatLines(rest.messages);
-  const stats = computeStats(chat);
+  const stats = computeStats(chat, { hiddenNames: rest.hiddenNames });
   const { tokensPerChar } = rest;
   const legend = blockTokens(legendText([...new Set(chat.map((m) => m.sender))]), tokensPerChar);
   const byInput = inputBudget - PROMPT_RESERVE_TOKENS - promptStatsTokens(stats, tokensPerChar) - legend;

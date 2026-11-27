@@ -61,6 +61,19 @@ function dropSurname(name: string): string {
   return rest;
 }
 
+/**
+ * 이름이 대화 본문에 단어로 나올 수 있는 꼴(v2.9, 자주 쓰는 단어 거르기): 이름과 성을 뺀 이름(dropSurname)을
+ * 단어 나누기(lib/stats/words)와 같게 두 글자 이상의 한글 덩어리·영어 덩어리(소문자)로 나눈 것(김민지 → 김민지·민지, AI봇 → ai, 민지 엄마 → 민지·엄마)
+ */
+export function nameForms(name: string): string[] {
+  const t = name.trim();
+  const out = new Set<string>();
+  for (const c of [t, dropSurname(t)]) {
+    for (const [m] of c.matchAll(/[가-힣]{2,}|[A-Za-z]{2,}/g)) out.add(/^[A-Za-z]/.test(m) ? m.toLowerCase() : m);
+  }
+  return [...out];
+}
+
 /** 기본 표시 이름: 금지 글자를 정리하고(cleanDisplayName) 성을 뺀 이름. 화면의 입력칸에서 바로 고칠 수 있다 */
 export function defaultDisplayName(name: string): string {
   return dropSurname(cleanDisplayName(name));
