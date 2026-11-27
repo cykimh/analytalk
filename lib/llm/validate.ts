@@ -5,9 +5,11 @@
 //   마지막 구성(마무리) 섹션이 쓰는 근거 몫은 CLOSING_QUOTE_RESERVE개까지 따로 남겨 둔다(앞 섹션이 몫을 다 써도 마무리가 인용을 단다).
 // 문단: 풀리지 않는 자리표시자, 금지 표현·개인정보가 든 문단, 너무 긴 문단을 지운다. 남은 문단 키는 섹션마다 p1, p2…
 // 가짜 인용(v2.2 Fix 1): 근거를 달았는데 그중 원문과 맞는 것이 하나도 없는 문단은 지운다(사람 문단이든 아니든).
-//   문단 안 인용은 보낸 메시지 어느 하나의 부분 문자열이어야 한다. 아니면 문단을 지운다(제목·headline·dek는 비운다).
-//   인용으로 보는 것(Fix 2): "…"·“…”·‘…’·「…」·『…』 전부, 그리고 말을 옮기는 토씨(라고·이라고·라며·하고·하며·며)가 바로 뒤에 붙은 '…'.
-//   토씨 없는 '…'(별명·상 이름·자막)와 '…'이라고 부르는 별명은 인용으로 보지 않는다. 길이 하한은 없다(빈 칸만 든 것만 건너뛴다).
+//   문단 안 인용은 보낸 메시지의 부분 문자열이어야 하고, 인용이 든 문장에 멤버 이름이 나오면 그 멤버가 보낸 메시지여야 한다(Fix 3).
+//   아니면 문단을 지운다(제목·headline·dek는 비운다).
+//   인용으로 보는 것: "…"·“…”·＂…＂·‘…’·「…」·『…』·〈…〉·《…》 전부, 그리고 말을 옮기는 말(라고·라는·란·라 했다·고 했다·하고·했다·며 등)이
+//   바로 뒤에 붙거나 캐치프레이즈·말버릇 같은 말이 바로 앞에 있는 '…'(Fix 3). 토씨 없는 '…'(별명·상 이름·자막),
+//   '…'이라고 불린다·'…'라는 별명은 인용으로 보지 않는다. 길이 하한은 없다(빈 칸만 든 것만 건너뛴다).
 // 사람 근거(v2.2): 근거를 하나도 달지 않은 문단만 섹션 단위로 본다. 사람을 다루는 섹션(about이 참여자이거나 문단에 이름이 나온다)은
 //   원문과 맞는 근거를 쓰는 문단이나 풀리는 자리표시자가 섹션 어디든 하나 있으면 된다. 둘 다 없으면 이름이 든 문단(about이 사람이면 전부)을 지운다.
 //   몫 때문에 근거 카드가 빠져도 원문과 맞은 근거를 단 문단은 남는다(카드만 빠진다). 문단을 지우는 것은 몫과 상관없이 정해진다.
@@ -45,29 +47,133 @@ const STAT = "stat:";
 const TRUNCATED_DEFAULTS = { declined_topics: [], reading_notes: [], headline: "", dek: "", sections: [] };
 
 /** 모델 글의 글자 수 상한(코드 포인트). 넘으면 자르지 않고 비운다(자르면 자리표시자가 반쪽이 될 수 있다). system 프롬프트도 알린다 */
-/** v2.2: 문단이 3~5문장으로 길어져 문단 상한을 800 → 1000자로 올렸다(5문장 × 80자 = 400자의 두 배 넘는 여유) */
+/** v2.2: 문단이 3~4문장(120~200자)으로 길어져 문단 상한을 800 → 1000자로 올렸다(지시 상한 200자의 다섯 배 여유) */
 export const MAX_CHARS = { headline: 80, dek: 200, title: 60, paragraph: 1000, icon: 8 } as const;
 const length = (text: string) => Array.from(text).length;
 
 /** 마지막 구성(마무리) 섹션 몫으로 따로 남겨 두는 근거 수. 그 섹션이 쓰는 만큼만(많아야 이만큼) 남긴다 */
 export const CLOSING_QUOTE_RESERVE = 2;
 /**
- * 글 안의 인용(Fix 2). 한국어 독자에게는 어느 따옴표든 그 멤버의 말로 읽히므로 따옴표 모양마다 원문과 대 본다.
- * 곧은·둥근 큰따옴표, 둥근 작은따옴표, 낫표·겹낫표는 늘 인용이다.
- * 곧은 작은따옴표 '…'는 별명·상 이름·자막에도 쓰므로(system 프롬프트가 그렇게 시킨다) 바로 뒤에 말을 옮기는 토씨가 붙을 때만 인용이다.
- * 단 '…'이라고 부르는 별명('선톡왕'이라고 불린다)은 인용이 아니다(토씨 뒤가 부르다·불리다)
+ * 글 안의 인용(Fix 2·3). 한국어 독자에게는 어느 따옴표든 그 멤버의 말로 읽히므로 따옴표 모양마다 원문과 대 본다.
+ * 곧은·둥근·전각 큰따옴표, 둥근 작은따옴표, 낫표·겹낫표, 꺾쇠·겹꺾쇠는 늘 인용이다(system 프롬프트는 큰따옴표 밖의 것을 쓰지 말라고 한다)
  */
-const INLINE_QUOTE = /"([^"]+)"|“([^”]+)”|‘([^’]+)’|「([^」]+)」|『([^』]+)』|'([^'\n]+)'(?=\s?(?:이?라고|이?라며|하고|하며|며)(?!\s*(?:부|불)))/g;
+const BRACKET_QUOTE = /"([^"]+)"|“([^”]+)”|＂([^＂]+)＂|‘([^’]+)’|「([^」]+)」|『([^』]+)』|〈([^〉]+)〉|《([^》]+)》/g;
+/** 곧은 작은따옴표 '…'. 별명·상 이름·사건명·자막에도 쓰므로 앞뒤 글을 보고 인용인지 정한다(QUOTATIVE·SPEECH_BEFORE·NAMING) */
+const SINGLE_QUOTE = /'([^'\n]+)'/g;
+/**
+ * '…' 바로 뒤(한 칸 띄어도)에 붙으면 말을 옮긴 것으로 보는 말(Fix 3).
+ * 라고·라며·라는·라던·라니·라 했다·란·래, 다고·냐고·자고, 고 했다, 하고·하며·했다·한다, 며·면서.
+ * '라서'·'라면'·'이고'·'이며'(이다의 활용, 별명 뒤에 흔하다)는 넣지 않는다
+ */
+const QUOTATIVE = new RegExp(
+  `^\\s?(?:${[
+    "이?라(?:고|며|면서|는|던|니|더|길래|기에)",
+    "이?라(?=\\s|$|[.,!?…])",
+    "이?란",
+    // '첫 만남' 이래로(그 뒤로)는 뺀다
+    "이?래(?!로)",
+    "이?랬",
+    "(?:다|냐|자)(?:고|며|면서|는)",
+    "고(?![가-힣])",
+    "하고",
+    "하며",
+    "하면서",
+    "했",
+    "한다",
+    "하더",
+    "하던",
+    "하는\\s*말",
+    "며",
+    "면서",
+  ].join("|")})`,
+);
+/**
+ * QUOTATIVE에 걸려도 인용이 아닌 것: 부르는 이름('선톡왕'이라고 불린다·'…'라 부른다), 이름 붙이기('…'라고 이름 붙였다),
+ * 이름을 가리키는 '…'라는·'…'란 + 별명·이름·상·사건 같은 말. 부·불로 시작하는 다른 동사(부탁·불평·부인)는 빼 주지 않는다
+ */
+const NAMING = new RegExp(
+  `^\\s?(?:${[
+    "이?라(?:고)?\\s*(?:불리|불린|불릴|불러|불렀|부르|부른|부를|부름)",
+    "이?라(?:고)?\\s*(?:이름|별명)(?:을|이)?\\s*(?:붙|지)",
+    "이?(?:라는|란)\\s*(?:별명|별칭|이름|칭호|호칭|타이틀|수식어|자막|사건|코너|상(?=[을이은의도과와]|\\s|[.,!?]|$))",
+  ].join("|")})`,
+);
+/** 바로 앞(8자 안)에 이런 말이 있으면 '…'는 그 사람이 한 말이다(캐치프레이즈는 '…'다) */
+const SPEECH_BEFORE = /(?:캐치프레이즈|말버릇|입버릇|대사|어록|유행어)[^'\n]{0,8}$/;
+/** 문장 경계. 따옴표 구간을 덮은 글에서 찾으므로 인용 속 물음표·마침표는 경계가 아니다 */
+const SENTENCE_END = /[.!?。\n]/;
+/** 이름 바로 뒤에 붙으면 그 사람은 말한 사람이 아니라 듣는 사람·대상이다(민지에게·철수를) */
+const NOT_SPEAKER = /^이?(?:에게|한테|께(?!서)|더러|를|을)/;
+const blank = (s: string) => " ".repeat(s.length);
+
+/** 원문과 대 볼 보낸 메시지 본문. 전체와 보낸 사람별로, 처음 쓸 때 한 번만 만든다(줄바꿈 표시는 줄바꿈으로, 메시지 사이는 \u0000) */
+type Corpus = { all: () => string; of: (sender: string) => string };
+function corpusOf(idx: Index): Corpus {
+  let all: string | null = null;
+  let bySender: Map<string, string> | null = null;
+  return {
+    all: () => (all ??= Array.from(idx.values(), (line) => toNewlines(line.text)).join("\u0000")),
+    of: (sender) => {
+      if (bySender === null) {
+        const lists = new Map<string, string[]>();
+        for (const line of idx.values()) lists.set(line.sender, [...(lists.get(line.sender) ?? []), toNewlines(line.text)]);
+        bySender = new Map(Array.from(lists, ([name, texts]) => [name, texts.join("\u0000")]));
+      }
+      return bySender.get(sender) ?? "";
+    },
+  };
+}
 
 /**
- * 글 안의 인용이 모두 보낸 메시지의 부분 문자열인가. corpus는 보낸 메시지 본문을 줄바꿈으로 바꿔 \u0000으로 이은 글이다.
- * 길이 하한이 없다: 진짜 짧은 인용("응"·"ㅋㅋ")은 어차피 원문의 부분 문자열이라 지워지지 않고, 하한은 지어낸 짧은 말("사랑해")만 통과시킨다.
- * 섹션의 근거 인용도 보낸 메시지의 부분 문자열이므로 근거와 맞춰 보는 일은 이것으로 함께 된다
+ * 글 안의 인용과 그 자리. masked는 따옴표 구간 전부(인용이 아닌 별명도)와 자리표시자를 같은 길이의 빈칸으로 덮은 글이다:
+ * 인용 속 이름·문장부호를 말한 사람·문장 경계로 잘못 보지 않게 한다
  */
-const inlineQuotesOk = (text: string, corpus: () => string) => {
-  for (const match of text.matchAll(INLINE_QUOTE)) {
-    const quote = toNewlines(match.slice(1).find((g) => g !== undefined) ?? "").trim();
-    if (quote !== "" && !corpus().includes(quote)) return false;
+function findQuotes(text: string): { quotes: { start: number; end: number; quote: string }[]; masked: string } {
+  const quotes: { start: number; end: number; quote: string }[] = [];
+  for (const m of text.matchAll(BRACKET_QUOTE)) {
+    quotes.push({ start: m.index, end: m.index + m[0].length, quote: m.slice(1).find((g) => g !== undefined) ?? "" });
+  }
+  // 큰따옴표 속 아포스트로피와 짝이 엇갈리지 않게, 큰따옴표류를 덮은 글에서 작은따옴표를 순서대로 짝짓는다
+  const noBrackets = text.replace(BRACKET_QUOTE, blank);
+  for (const m of noBrackets.matchAll(SINGLE_QUOTE)) {
+    const end = m.index + m[0].length;
+    const after = noBrackets.slice(end);
+    if (SPEECH_BEFORE.test(noBrackets.slice(0, m.index)) || (QUOTATIVE.test(after) && !NAMING.test(after))) {
+      quotes.push({ start: m.index, end, quote: m[1] });
+    }
+  }
+  return { quotes, masked: noBrackets.replace(SINGLE_QUOTE, blank).replace(PLACEHOLDER, blank) };
+}
+
+/** 인용이 든 문장(masked 기준)에서 말한 사람으로 볼 수 있는 멤버. 듣는 사람·대상으로만 나온 이름은 뺀다 */
+function speakersNear(masked: string, start: number, end: number, members: string[]): string[] {
+  let from = start;
+  while (from > 0 && !SENTENCE_END.test(masked[from - 1])) from--;
+  let to = end;
+  while (to < masked.length && !SENTENCE_END.test(masked[to])) to++;
+  const sentence = masked.slice(from, to);
+  return members.filter((name) => {
+    for (let i = sentence.indexOf(name); i >= 0; i = sentence.indexOf(name, i + 1)) {
+      if (!NOT_SPEAKER.test(sentence.slice(i + name.length))) return true;
+    }
+    return false;
+  });
+}
+
+/**
+ * 글 안의 인용이 모두 원문에 있고 말한 사람도 맞는가(Fix 3).
+ * 인용이 든 문장에 멤버 이름이 나오면 그 멤버(들) 중 누군가가 보낸 메시지의 부분 문자열이어야 한다(민지의 말을 철수의 말로 옮기지 못한다).
+ * 문장에 이름이 없으면 보낸 메시지 어느 하나의 부분 문자열이면 된다. 한 문장에 두 사람이 나오면 둘 중 누구의 말이든 통과한다.
+ * 길이 하한이 없다: 진짜 짧은 인용("응"·"ㅋㅋ")은 어차피 원문의 부분 문자열이라 지워지지 않고, 하한은 지어낸 짧은 말("사랑해")만 통과시킨다
+ */
+const inlineQuotesOk = (text: string, corpus: Corpus, members: string[]) => {
+  const { quotes, masked } = findQuotes(text);
+  for (const q of quotes) {
+    const quote = toNewlines(q.quote).trim();
+    if (quote === "") continue;
+    const speakers = speakersNear(masked, q.start, q.end, members);
+    const found = speakers.length === 0 ? corpus.all().includes(quote) : speakers.some((name) => corpus.of(name).includes(quote));
+    if (!found) return false;
   }
   return true;
 };
@@ -83,9 +189,9 @@ const withoutStats = (text: string, stats: ChatStats) =>
 /** 저장해도 되는 모델 글인가: 금지 표현·개인정보(PRD 5장 6)가 없고 글자 수 상한 이하(PRD 5장 1) */
 const storable = (text: string, max: number, stats: ChatStats) =>
   length(text) <= max && !isBanned(text) && !hasPII(withoutStats(text, stats));
-/** 제목·headline·dek: 저장할 수 없거나 원문에 없는 큰따옴표 인용이 들었으면 비운다 */
-const clean = (text: string, max: number, stats: ChatStats, corpus: () => string) =>
-  storable(text, max, stats) && inlineQuotesOk(text, corpus) ? text : "";
+/** 제목·headline·dek: 저장할 수 없거나 원문에 없는(말한 사람이 다른) 인용이 들었으면 비운다 */
+const clean = (text: string, max: number, stats: ChatStats, corpus: Corpus, members: string[]) =>
+  storable(text, max, stats) && inlineQuotesOk(text, corpus, members) ? text : "";
 /** 이모지 몇 글자만. 글자·숫자가 들었으면(문장을 넣었으면) 비운다 */
 const cleanIcon = (icon: string) => {
   const t = icon.trim();
@@ -171,9 +277,8 @@ export function validateReport(
   const parts = new Set<string>(TONES[opts.tone].parts.map((p) => p.key));
   const closingPart = TONES[opts.tone].parts.at(-1)?.key;
   const people = Object.keys(stats.byPerson);
-  // 큰따옴표 인용을 맞춰 볼 보낸 메시지 본문. 인용이 있을 때 한 번만 만든다
-  let corpusText: string | null = null;
-  const corpus = () => (corpusText ??= Array.from(idx.values(), (line) => toNewlines(line.text)).join("\u0000"));
+  // 글 안의 인용을 맞춰 볼 보낸 메시지 본문. 인용이 있을 때 한 번만 만든다
+  const corpus = corpusOf(idx);
   const paragraphsIn = report.sections.reduce((n, s) => n + s.paragraphs.length, 0);
   const evidenceIn = report.sections.reduce((n, s) => n + s.evidence.length, 0);
 
@@ -197,7 +302,7 @@ export function validateReport(
       const text = named(p.text);
       const placeholders = placeholderCount(text, stats);
       if (text.trim() === "" || placeholders === null || !storable(text, MAX_CHARS.paragraph, stats)) return [];
-      if (!inlineQuotesOk(text, corpus)) return [];
+      if (!inlineQuotesOk(text, corpus, opts.members)) return [];
       const ids = p.evidence_ids.filter((id) => verified.has(id));
       if (p.evidence_ids.length > 0 && ids.length === 0) return [];
       return [{ ...p, text, evidence_ids: ids, placeholders }];
@@ -237,7 +342,7 @@ export function validateReport(
       ...j.section,
       part: parts.has(j.section.part) ? j.section.part : "",
       icon: cleanIcon(j.section.icon),
-      title: clean(named(j.section.title), MAX_CHARS.title, stats, corpus),
+      title: clean(named(j.section.title), MAX_CHARS.title, stats, corpus, opts.members),
       about: ABOUT_FIXED.has(j.section.about) || j.aboutPerson ? j.section.about : "group",
       paragraphs: j.paragraphs.map((p, i) => ({ ...p, key: `p${i + 1}`, evidence_ids: p.evidence_ids.filter((id) => kept.has(id)) })),
       evidence,
@@ -249,8 +354,8 @@ export function validateReport(
   const content: StoredReport = {
     ...report,
     reading_notes: sanitizeNotes(report.reading_notes.map((n) => ({ ...n, note: named(n.note) }))),
-    headline: clean(named(report.headline), MAX_CHARS.headline, stats, corpus),
-    dek: clean(named(report.dek), MAX_CHARS.dek, stats, corpus),
+    headline: clean(named(report.headline), MAX_CHARS.headline, stats, corpus, opts.members),
+    dek: clean(named(report.dek), MAX_CHARS.dek, stats, corpus, opts.members),
     sections,
   };
   const partial = opts.truncated || dropped.paragraphs / paragraphsIn >= PARTIAL_DROP_RATIO;

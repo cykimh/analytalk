@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
-import { MAX_QUOTES_PER_REPORT, PROMPT_RESERVE_TOKENS, PROMPT_STATS_MAX_MONTHS, PROMPT_STATS_MAX_PEOPLE, TOKENS_PER_CHAR } from "@/lib/config";
+import { EPISODE_DEADLINE_MS, MAX_QUOTES_PER_REPORT, PROMPT_RESERVE_TOKENS, PROMPT_STATS_MAX_MONTHS, PROMPT_STATS_MAX_PEOPLE, TOKENS_PER_CHAR } from "@/lib/config";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { buildPayload, legendText, type Payload } from "@/lib/payload/build";
 import { STAT_PATHS } from "@/lib/stats/paths";
@@ -9,6 +9,7 @@ import { syntheticGroupChat } from "@/test/syntheticChat";
 import { CONCEPTS, DEFAULT_TONE, TONE_KEYS, TONES, type Tone } from "./concepts";
 import {
   buildRequest,
+  DEADLINE_ESTIMATE,
   PROMPT_VERSION,
   peopleSections,
   requestMessages,
@@ -96,7 +97,7 @@ describe("CONCEPTS·TONES", () => {
 
 describe("buildRequest", () => {
   it("PROMPT_VERSION", () => {
-    expect(PROMPT_VERSION).toBe("2026-11-report-5");
+    expect(PROMPT_VERSION).toBe("2026-11-report-6");
   });
 
   it("기본값: Sonnet 5.5, max_tokens 32000, effort medium, adaptive thinking, 서버 측 fallback, 데이터 블록에 cache_control 없음", () => {
@@ -182,7 +183,7 @@ describe("buildRequest", () => {
     expect(s).toContain("그 구간 대화의 흐름 요약(너의 생각 과정이 아니다)");
     expect(s).toContain("pair(두 사람 관계)·group(방 전체)·참여자 표시 이름");
     expect(s).toContain("30개 이하");
-    expect(s).toContain("text는 3~5문장");
+    expect(s).toContain("text는 3~4문장");
     // 근거는 섹션 단위, 인용 중심. 숫자는 양념
     expect(s).toContain("근거의 중심은 대화 원문 인용이다");
     expect(s).toContain("문단마다 달 필요는 없다");
@@ -191,11 +192,14 @@ describe("buildRequest", () => {
     // 문단 안 인용: 멤버의 말은 원문 그대로 큰따옴표로만. 작은따옴표는 별명·자막 등에만, 지어낸 대사는 어떤 모양으로도 안 된다(Fix 2)
     expect(s).toContain('큰따옴표("…")로 짧게, 한 글자도 바꾸거나 줄이지 않고');
     expect(s).toContain("멤버가 하지 않은 말을 그 사람의 말처럼(따옴표든 ~라고 했다든) 쓰지 않는다. 지어낸 말은 MC·내레이터 자신의 말뿐이다.");
-    expect(s).toContain("작은따옴표('…')는 별명·캐치프레이즈·상 이름·사건명·자막에만 쓰고, 그 바로 뒤에 말을 옮기는 토씨(라고·라며·하고·하며·며)를 붙이지 않는다");
-    expect(s).toContain("둥근 작은따옴표(‘…’)·낫표(「…」)·겹낫표(『…』)는 쓰지 않는다");
-    expect(s).toContain("원문에 그대로 없는 인용(큰따옴표·‘…’·「…」·『…』 안의 말, 뒤에 라고·하고 같은 토씨가 붙은 '…')이 든 문단은 저장 전에 지워진다");
+    // Fix 3: 작은따옴표에 캐치프레이즈·자막은 없다(캐치프레이즈는 실제 말을 큰따옴표로, 자막은 (자막: …)). 말을 옮기는 말이 넓어졌고 말한 사람도 맞춘다
+    expect(s).toContain("작은따옴표('…')는 별명·상 이름·사건명에만 쓰고, 바로 뒤에 말을 옮기는 말(라고·라는·란·고 했다·하고·했다·며)을 붙이지 않는다");
+    expect(s).toContain("'…'이라고 불린다·'…'이라는 별명은 된다");
+    expect(s).not.toContain("별명·캐치프레이즈·상 이름");
+    expect(s).toContain("‘…’·「…」·『…』·《…》·〈…〉는 쓰지 않는다");
+    expect(s).toContain("원문에 없는 인용(부호 안의 말, 말을 옮기는 말이 뒤에 붙은 '…'), 그 말을 안 보낸 멤버 이름과 한 문장에 둔 인용이 든 문단은 저장 전에 지워진다");
     expect(s).not.toContain("지어낸 대사는 작은따옴표");
-    expect(s).toContain("text는 3~5문장, 120~220자 안팎(1000자 이하, 넘으면 지워진다)");
+    expect(s).toContain("text는 3~4문장, 120~200자 안팎(1000자 이하, 넘으면 지워진다)");
     expect(s).toContain("숫자는 양념이다");
     expect(s).not.toContain("사람에 관한 문단에는 근거 인용이나 자리표시자를 반드시 단다");
     expect(s).not.toContain("teaser");
@@ -277,7 +281,11 @@ describe("buildRequest", () => {
     expect(instructionOf(buildRequest(hugePayload("fact")))).toMatch(/- nag_cards 「멤버별 잔소리 카드」: [^\n]*문단 3~4개: 잔소리 2~3개 \+ 인정 1/);
     expect(instructionOf(buildRequest(bigPayload("fact")))).toMatch(/- nag_cards 「멤버별 잔소리 카드」: [^\n]*문단 2~3개: 잔소리 1~2개 \+ 인정 1/);
     const show = instructionOf(buildRequest(payload("group", "show")));
-    expect(show).toMatch(/- show_cast 「출연자 소개」: [^\n]*별명과 캐치프레이즈/);
+    expect(show).toMatch(/- show_cast 「출연자 소개」: [^\n]*별명\(보이는 행동으로 지은 것\)과 캐치프레이즈/);
+    // 캐치프레이즈는 실제로 되풀이한 말(큰따옴표 + 근거)이나 MC 자막뿐, 멤버 입에 지어낸 말을 넣지 않는다(Fix 3)
+    expect(show).toMatch(/- show_cast [^\n]*캐치프레이즈는 그 사람이 실제로 되풀이한 말을 큰따옴표로 옮겨 근거로 달거나 MC 자막 \(자막: …\)으로 쓴다\. 안 한 말을 그 사람 입에 넣지 않는다\./);
+    expect(show).toContain("그 사람이 실제로 되풀이한 말을 캐치프레이즈로 소개하고");
+    expect(show).not.toContain("캐치프레이즈 한 줄로 소개");
     expect(show).toMatch(/- show_vcr 「하이라이트 VCR」: [^\n]*\(자막: …\)/);
     const detective = instructionOf(buildRequest(payload("group", "detective")));
     expect(detective).toMatch(/- case_open 「미해결 의문」: [^\n]*이유·속마음은 추리하지 않/);
@@ -319,12 +327,12 @@ describe("buildRequest", () => {
     expect([payload(), bigPayload(), hugePayload(), longPair()].map((p) => volumeTier(p.msgSent))).toEqual(["small", "medium", "full", "full"]);
   });
 
-  it("분량·숫자 줄(full): 섹션 6~10개 × 문단 3~4개, 문단마다 3~5문장 120~220자, 본문 6,000자 안팎(8,000자 이하), 인용 섹션마다 2~3개·30개, 마무리 몫 2개", () => {
+  it("분량·숫자 줄(full): 섹션 6~10개 × 문단 3~4개, 문단마다 3~4문장 120~200자, 본문 6,000자 안팎(8,000자 이하), 인용 섹션마다 2~3개·30개, 마무리 몫 2개", () => {
     const closing = { fact: "nag_last", warm: "care_letter", show: "show_close", docu: "docu_outro", detective: "case_verdict", record: "rec_overall" };
     for (const t of TONE_KEYS) {
       const body = instructionOf(buildRequest(longPair(t)));
       expect(body).toContain(
-        `분량: 리포트 전체 섹션 6~10개, 섹션마다 문단 3~4개(사람 구성은 구성 설명대로). 문단 하나는 3~5문장, 120~220자 안팎이다(문단마다 이 길이를 지킨다). 본문(문단 글)은 리포트 전체 6,000자 안팎이고 8,000자를 넘기지 않는다. 근거 인용은 섹션마다 2~3개, 리포트 전체 30개 이하이고, 마지막 구성 ${closing[t]} 섹션 몫으로 2개를 남겨 둔다. reading_notes는 12개 이하.`,
+        `분량: 리포트 전체 섹션 6~10개, 섹션마다 문단 3~4개(사람 구성은 구성 설명대로). 문단 하나는 3~4문장, 120~200자 안팎이다(문단마다 이 길이를 지킨다). 본문(문단 글)은 리포트 전체 6,000자 안팎이고 8,000자를 넘기지 않는다. 근거 인용은 섹션마다 2~3개, 리포트 전체 30개 이하이고, 마지막 구성 ${closing[t]} 섹션 몫으로 2개를 남겨 둔다. reading_notes는 12개 이하.`,
       );
       expect(body).not.toContain("재료:");
       expect(body).toContain("숫자는 양념: 통계 자리표시자는 섹션마다 0~2개, 장면을 받쳐 줄 때만 쓴다. 숫자를 나열하지 않는다. 안 되는 예:");
@@ -338,7 +346,7 @@ describe("buildRequest", () => {
   it("분량(small·medium): 재료가 적은 대화는 분량을 줄이고, 구성 설명의 개수를 상한으로 보며 되풀이·지어내기로 채우지 않는다", () => {
     const small = instructionOf(buildRequest(payload()));
     expect(small).toContain(
-      "분량: 리포트 전체 섹션 4~7개, 섹션마다 문단 2~3개(사람 구성은 구성 설명대로). 문단 하나는 3~5문장, 120~220자 안팎이다(문단마다 이 길이를 지킨다). 본문(문단 글)은 리포트 전체 3,000자 안팎이고 4,000자를 넘기지 않는다. 근거 인용은 섹션마다 1~2개, 리포트 전체 14개 이하이고, 마지막 구성 nag_last 섹션 몫으로 2개를 남겨 둔다. reading_notes는 6개 이하.",
+      "분량: 리포트 전체 섹션 4~7개, 섹션마다 문단 2~3개(사람 구성은 구성 설명대로). 문단 하나는 3~4문장, 120~200자 안팎이다(문단마다 이 길이를 지킨다). 본문(문단 글)은 리포트 전체 3,500자 안팎이고 5,000자를 넘기지 않는다. 근거 인용은 섹션마다 1~2개, 리포트 전체 14개 이하이고, 마지막 구성 nag_last 섹션 몫으로 2개를 남겨 둔다. reading_notes는 6개 이하.",
     );
     expect(small).toContain("숫자는 양념: 통계 자리표시자는 섹션마다 0~1개");
     expect(small).toContain("재료: 보낸 대화가 6개로 많지 않다. 구성 설명에 적힌 개수(문단·잔소리·장면·상)는 상한으로 보고 대화에 있는 만큼만 쓴다.");
@@ -349,7 +357,7 @@ describe("buildRequest", () => {
     expect(medium).toContain("재료: 보낸 대화가 689개로 많지 않다.");
   });
 
-  it("문단 합계(Fix 2): 말투·단계마다 구성 설명이 시키는 최대 문단 수를 더하면, 문단 글자 가운데값을 곱해도 본문 상한 이하다", () => {
+  it("문단 합계(Fix 2·3): 말투·단계마다 구성 설명이 시키는 최대 문단 수에 문단 글자 수 위쪽 끝을 곱해도 본문 상한 이하이고, full은 마감 어림 안이다", () => {
     // 지시 글에서 직접 읽는다: 분량 줄의 문단 수·글자 수·본문 상한, 사람 줄의 사람 섹션 수, 구성 줄마다 섹션 수와 문단 수
     const max = (range: string) => Number(range.split("~")[1]);
     const smallGroup = (t: Tone) =>
@@ -368,7 +376,6 @@ describe("buildRequest", () => {
         const body = instructionOf(buildRequest(p));
         const volume = /섹션마다 문단 (\d+~\d+)개[^\n]*?(\d+~\d+)자 안팎[^\n]*?([\d,]+)자를 넘기지 않는다/.exec(body)!;
         const [lo, hi] = volume[2].split("~").map(Number);
-        const midpoint = (lo + hi) / 2;
         const bodyCharsMax = Number(volume[3].replaceAll(",", ""));
         const people = body.split("\n").find((l) => l.startsWith("사람: "))!;
         const persons = people.startsWith("사람: 1:1") ? 2 : Number(/(?:상위 |모두 |있는 )?(\d+)명(?: 모두|만|\(<stats>)/.exec(people.replace(/참여자 \d+명 중 /, ""))![1]);
@@ -389,7 +396,13 @@ describe("buildRequest", () => {
         const fill = /섹션이 (\d+)개보다 적어지면/.exec(body);
         if (fill && sections < Number(fill[1])) paragraphs += (Number(fill[1]) - sections) * Math.max(max(volume[1]), persons > 0 ? paragraphs / sections : 0);
         expect(sections).toBeLessThanOrEqual(VOLUMES[tier].maxSections);
-        expect(paragraphs * midpoint, `${tier} ${t} ${paragraphs}문단`).toBeLessThanOrEqual(bodyCharsMax);
+        expect(lo).toBeLessThan(hi);
+        expect(paragraphs * hi, `${tier} ${t} ${paragraphs}문단 × ${hi}자`).toBeLessThanOrEqual(bodyCharsMax);
+        // 마감 어림: 본문(위쪽 끝) + JSON + 생각 토큰이 (마감 − 첫 토큰 − 여유) × 출력 속도 안에 든다
+        const e = DEADLINE_ESTIMATE;
+        const outputTokens = paragraphs * hi * TOKENS_PER_CHAR + e.jsonTokens + e.thinkingTokens;
+        const fits = (EPISODE_DEADLINE_MS / 1000 - e.ttftSec - e.marginSec) * e.outputTokensPerSec;
+        expect(outputTokens, `${tier} ${t} 출력 ${outputTokens}토큰`).toBeLessThanOrEqual(fits);
       }
     }
   });
