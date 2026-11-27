@@ -23,7 +23,7 @@ import { pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
 import { DEFAULT_EST_COST_USD, EPISODE_DEADLINE_MS, TOKENS_PER_CHAR } from "../lib/config";
 import { renderStatPlain } from "../lib/episode/statText";
-import { CONCEPTS, TONE_KEYS, type Tone } from "../lib/llm/concepts";
+import { TONE_KEYS, TONES, type Tone } from "../lib/llm/concepts";
 import { estimateCostUsd } from "../lib/llm/cost";
 import { buildRequest, PROMPT_VERSION } from "../lib/llm/prompt";
 import type { StoredReport } from "../lib/llm/schema";
@@ -234,7 +234,7 @@ export function scoreReport(
   kind: string,
   idx: ReturnType<typeof payloadIndex>,
   stats: Payload["stats"],
-  who: Pick<Payload, "concept" | "members">,
+  who: Pick<Payload, "tone" | "members">,
 ): { score: Scored; content: StoredReport | null } {
   let raw: unknown;
   try {
@@ -247,10 +247,10 @@ export function scoreReport(
   }
   const v = validateReport(raw, idx, stats, {
     truncated: kind === "truncated" || kind === "partial",
-    concept: who.concept,
+    tone: who.tone,
     members: who.members,
   });
-  const parts = new Set<string>(CONCEPTS[who.concept].parts.map((p) => p.key));
+  const parts = new Set<string>(TONES[who.tone].parts.map((p) => p.key));
   const w = writtenTexts(raw, parts);
   const kept: Record<string, number> = {};
   for (const s of v.content?.sections ?? []) {

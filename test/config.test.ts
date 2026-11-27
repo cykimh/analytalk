@@ -18,7 +18,7 @@ describe("config", () => {
     expect(MAX_PAYLOAD_BYTES).toBe(4_000_000);
     expect(WEEKLY_CAP_USD).toBe(22.5);
     expect(DEFAULT_MODEL).toBe("claude-sonnet-5-5");
-    expect(MAX_QUOTES_PER_REPORT).toBe(16);
+    expect(MAX_QUOTES_PER_REPORT).toBe(30);
     expect(PROMPT_STATS_MAX_MONTHS).toBe(24);
   });
 

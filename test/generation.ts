@@ -166,9 +166,48 @@ export function reportJson(over: Record<string, unknown> = {}) {
     reading_notes: [{ range: "10-01~10-03", note: "저녁마다 이야기했다" }],
     headline: "리포트 헤드라인",
     dek: "사흘 동안의 흐름",
-    sections: [section("map", "저녁의 리듬"), section("first", "주말 약속")],
+    sections: [section("nag_open", "저녁의 리듬"), section("nag_room", "주말 약속")],
     ...over,
   };
+}
+
+/** makePayload 대화의 메시지(m번호)와 그 본문에서 잘라 온 인용 */
+const QUOTES: [string, string][] = [
+  ["m0", "오늘 뭐해?"],
+  ["m1", "쉬는 중"],
+  ["m2", "영화 볼래?"],
+  ["m3", "좋아!"],
+  ["m12", "잘 자"],
+];
+
+/**
+ * v2.2 분량의 긴 리포트 출력(잔소리하는 친구 구성): 섹션 10개 × 문단 5개, 인용 섹션마다 3개 = 30개.
+ * 사람 섹션은 문단마다 근거를 달지 않는다(섹션 단위 근거). 자리표시자는 섹션에 하나뿐이다
+ */
+export function longReportJson() {
+  const parts = ["nag_open", "nag_cards", "nag_cards", "nag_room", "nag_room", "nag_room", "nag_room", "nag_room", "nag_room", "nag_last"];
+  const about = (i: number) => (i === 1 ? "철수" : i === 2 ? "민지" : "pair");
+  const body = "저녁이 되면 이 방은 다시 살아난다. 한 사람이 운을 떼면 다른 사람이 곧 받아 이어 간다. 이야기는 짧은 말로 시작해 영화 이야기로 번진다. 그리고 늘 같은 말로 끝난다. 다 보여.";
+  return reportJson({
+    reading_notes: Array.from({ length: 12 }, (_, i) => ({ range: "10-01~10-03", note: `저녁마다 이야기했다 ${"ㅎ".repeat(i + 1)}` })),
+    headline: "또 저녁 8시에 모인 두 사람에게 하는 잔소리",
+    dek: "사흘 내내 같은 시간, 같은 말. 다 지켜봤다.",
+    sections: parts.map((part, i) => ({
+      part,
+      icon: "🙄",
+      title: `잔소리: ${["시작", "철수", "민지", "약속", "저녁", "영화", "주말", "답장", "밤", "끝"][i]}`,
+      about: about(i),
+      paragraphs: Array.from({ length: 5 }, (_, j) => ({
+        key: `p${j + 1}`,
+        text: j === 0 && i === 3 ? `철수는 대화를 {{stat:initiations.철수}}번 먼저 열었다. ${body}` : `${i % 2 === 0 ? "민지" : "철수"}의 장면 ${j + 1}. ${body}`,
+        evidence_ids: j < 3 ? [`e${j + 1}`] : [],
+      })),
+      evidence: Array.from({ length: 3 }, (_, k) => {
+        const [msg_id, quote] = QUOTES[(i + k) % QUOTES.length];
+        return { id: `e${k + 1}`, msg_id, quote };
+      }),
+    })),
+  });
 }
 
 /** 리포트 출력을 2번째 섹션의 인용 앞에서 자른 글. 완결된 섹션은 1개다 */

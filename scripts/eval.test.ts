@@ -117,7 +117,7 @@ describe("prepareCases", () => {
   });
 });
 
-/** 문단 3개(둘은 chronicle, 하나는 '~것 같다' 금지 표현), 근거 2개(하나는 본문에 없는 인용) */
+/** 문단 3개(둘은 nag_open, 하나는 '~것 같다' 금지 표현), 근거 2개(하나는 본문에 없는 인용) */
 const body = (headline = "머리") =>
   JSON.stringify({
     safety: { flag: "none" },
@@ -127,7 +127,7 @@ const body = (headline = "머리") =>
     dek: "소제",
     sections: [
       {
-        part: "chronicle",
+        part: "nag_open",
         icon: "x",
         title: "제목",
         about: "group",
@@ -141,7 +141,7 @@ const body = (headline = "머리") =>
         ],
       },
       {
-        part: "rhythm",
+        part: "nag_room",
         icon: "y",
         title: "리듬",
         about: "group",
@@ -164,7 +164,7 @@ describe("scoreReport", () => {
       evidenceIn: 3,
       evidenceMatched: 2,
       bannedHits: 1,
-      dropByPart: { chronicle: { in: 2, dropped: 1 }, rhythm: { in: 1, dropped: 0 } },
+      dropByPart: { nag_open: { in: 2, dropped: 1 }, nag_room: { in: 1, dropped: 0 } },
     });
     expect(score.dropRate).toBeCloseTo(1 / 3, 10);
   });

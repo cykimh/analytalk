@@ -3,7 +3,7 @@ import type { ChatMessage } from "@/lib/parse/parse";
 import { buildPayload, payloadIndex } from "@/lib/payload/build";
 import { resolveStat } from "@/lib/stats/paths";
 import { memberCodes } from "@/lib/payload/build";
-import type { Concept } from "./concepts";
+import type { Tone } from "./concepts";
 import type { Report } from "./schema";
 import { validateReport } from "./validate";
 
@@ -31,7 +31,7 @@ type Section = Report["sections"][number];
 type Paragraph = Section["paragraphs"][number];
 const para = (key: string, text: string, evidence_ids: string[] = []): Paragraph => ({ key, text, evidence_ids });
 const ev = (id: string, msg_id: string, quote: string) => ({ id, msg_id, quote });
-const sec = (title: string, paragraphs: Paragraph[], evidence: Section["evidence"] = [], about = "pair", part = "map"): Section => ({
+const sec = (title: string, paragraphs: Paragraph[], evidence: Section["evidence"] = [], about = "pair", part = "nag_room"): Section => ({
   part,
   icon: "🌙",
   title,
@@ -48,8 +48,8 @@ const report = (sections: Section[], extra: Partial<Report> = {}): Report => ({
   sections,
   ...extra,
 });
-const run = (raw: unknown, truncated = false, concept: Concept = "couple") =>
-  validateReport(raw, idx, stats, { truncated, concept, members });
+const run = (raw: unknown, truncated = false, tone: Tone = "fact") =>
+  validateReport(raw, idx, stats, { truncated, tone, members });
 
 describe("validateReport", () => {
   it("정상이면 done이고 근거에 sender·at이 채워진다", () => {
@@ -137,7 +137,31 @@ describe("validateReport", () => {
     expect(r.content?.sections[0].paragraphs.map((p) => p.key)).toEqual(["p1"]);
   });
 
-  it("근거가 모두 지워진 사람 문단은 지우고, 사람이 아닌 문단은 근거 없이 남긴다", () => {
+  // v2.2: 사람 근거는 섹션 단위다. 사람을 다루는 섹션에 남은 근거 인용이나 풀리는 자리표시자가 하나라도 있으면 된다
+  it("사람 섹션에 남은 근거 인용이 하나라도 있으면 근거를 달지 않은 사람 문단도 남는다", () => {
+    const r = run(
+      report([
+        sec(
+          "민지",
+          [
+            para("p1", "민지는 저녁마다 짧게 답했어요"),
+            para("p2", "웃음이 많아요", ["e1"]),
+            para("p3", "대답보다 질문이 먼저 나오는 날도 있었어요"),
+          ],
+          [ev("e1", "m1", "ㅋㅋ")],
+          "민지",
+        ),
+      ]),
+    );
+    expect(r.status).toBe("done");
+    expect(r.content?.sections[0].paragraphs.map((p) => [p.key, p.evidence_ids])).toEqual([
+      ["p1", []],
+      ["p2", ["e1"]],
+      ["p3", []],
+    ]);
+  });
+
+  it("가짜 근거를 단 사람 문단도 섹션에 다른 근거가 남으면 남고, evidence_ids에서 가짜만 빠진다", () => {
     const r = run(
       report([
         sec(
@@ -145,58 +169,77 @@ describe("validateReport", () => {
           [
             para("p1", "철수는 늘 먼저 물었어요", ["e1"]),
             para("p2", "저녁 8시에 대화가 몰려요", ["e1"]),
-            para("p3", "답장이 오가는 속도가 비슷해요", ["e2"]),
+            para("p3", "민지의 답은 짧고 빨랐어요", ["e2"]),
           ],
           [ev("e1", "m999", "없는 메시지"), ev("e2", "m3", "좋아!")],
         ),
       ]),
     );
-    const kept = r.content?.sections[0].paragraphs;
-    expect(kept?.map((p) => [p.text, p.evidence_ids])).toEqual([
+    expect(r.content?.sections[0].paragraphs.map((p) => [p.text, p.evidence_ids])).toEqual([
+      ["철수는 늘 먼저 물었어요", []],
       ["저녁 8시에 대화가 몰려요", []],
-      ["답장이 오가는 속도가 비슷해요", ["e2"]],
+      ["민지의 답은 짧고 빨랐어요", ["e2"]],
     ]);
+    expect(r.content?.sections[0].evidence.map((e) => e.id)).toEqual(["e2"]);
   });
 
-  it("about이 사람인 섹션은 근거나 자리표시자가 있어야 남는다", () => {
+  it("자리표시자만 있는 사람 섹션도 남는다(섹션 어디든 하나)", () => {
+    const r = run(
+      report([sec("민지", [para("p1", "민지는 저녁마다 짧게 답했어요"), para("p2", "답장은 {{stat:replyMedianMs.민지}} 안에 왔어요")], [], "민지")]),
+    );
+    expect(r.content?.sections[0].paragraphs).toHaveLength(2);
+  });
+
+  it("근거도 자리표시자도 없는 사람 섹션: about이 사람이면 섹션째 빠지고, 방 섹션이면 이름이 든 문단만 지운다", () => {
     const r = run(
       report([
+        sec("철수", [para("p1", "질문을 자주 했어요"), para("p2", "저녁에 자주 보였어요")], [], "철수"),
         sec(
-          "민지",
-          [
-            para("p1", "저녁마다 짧게 답했어요"),
-            para("p2", "답장은 {{stat:replyMedianMs.민지}} 안에 왔어요"),
-            para("p3", "웃음이 많아요", ["e1"]),
-          ],
-          [ev("e1", "m1", "ㅋㅋ")],
-          "민지",
+          "방",
+          [para("p1", "저녁 8시에 대화가 몰려요"), para("p2", "철수가 늘 먼저 물었어요", ["e1"]), para("p3", "주말엔 조용해요")],
+          [ev("e1", "m999", "없는 메시지")],
+          "group",
         ),
-        sec("철수", [para("p1", "질문을 자주 했어요")], [], "철수"),
       ]),
     );
-    expect(r.content?.sections).toHaveLength(1);
-    // 남은 문단은 p1부터 다시 매긴다
+    expect(r.content?.sections.map((s) => s.title)).toEqual(["방"]);
     expect(r.content?.sections[0].paragraphs.map((p) => [p.key, p.text])).toEqual([
-      ["p1", "답장은 {{stat:replyMedianMs.민지}} 안에 왔어요"],
-      ["p2", "웃음이 많아요"],
+      ["p1", "저녁 8시에 대화가 몰려요"],
+      ["p2", "주말엔 조용해요"],
     ]);
+    expect(r.dropped).toEqual({ paragraphs: 3, evidence: 1 });
   });
 
   const evidence = (prefix: string, n: number) =>
     Array.from({ length: n }, (_, i) => ev(`${prefix}${i + 1}`, `m${i % 12}`, idx.get(`m${i % 12}`)!.text.split(" ⏎ ")[0]));
   const ids = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
 
-  it("근거는 리포트 전체에서 16개까지, 앞 섹션부터 센다", () => {
+  it("근거는 리포트 전체에서 30개까지, 앞 섹션부터 센다", () => {
     const r = run(
       report([
-        sec("앞", [para("p1", "저녁 대화가 이어져요", ids("a", 10))], evidence("a", 10)),
-        sec("뒤", [para("p1", "주말 대화가 길어요", ids("b", 10))], evidence("b", 10)),
+        sec("앞", [para("p1", "저녁 대화가 이어져요", ids("a", 20))], evidence("a", 20)),
+        sec("뒤", [para("p1", "주말 대화가 길어요", ids("b", 20))], evidence("b", 20)),
       ]),
     );
-    expect(r.content?.sections[0].evidence).toHaveLength(10);
-    expect(r.content?.sections[1].evidence.map((e) => e.id)).toEqual(ids("b", 6));
-    expect(r.content?.sections[1].paragraphs[0].evidence_ids).toEqual(ids("b", 6));
-    expect(r.dropped.evidence).toBe(4);
+    expect(r.content?.sections[0].evidence).toHaveLength(20);
+    expect(r.content?.sections[1].evidence.map((e) => e.id)).toEqual(ids("b", 10));
+    expect(r.content?.sections[1].paragraphs[0].evidence_ids).toEqual(ids("b", 10));
+    expect(r.dropped.evidence).toBe(10);
+  });
+
+  it("몫이 다 떨어진 뒤의 사람 섹션은 근거를 잃고, 자리표시자도 없으면 이름이 든 문단이 지워진다", () => {
+    const r = run(
+      report([
+        sec("앞", [para("p1", "저녁 대화가 이어져요", ids("a", 30))], evidence("a", 30)),
+        sec("민지", [para("p1", "민지는 짧게 답했어요", ["b1"])], evidence("b", 1), "민지"),
+        sec("철수", [para("p1", "철수는 {{stat:initiations.철수}}번 먼저 말을 걸었어요", ["c1"])], evidence("c", 1), "철수"),
+      ]),
+    );
+    expect(r.content?.sections.map((s) => [s.title, s.evidence.length])).toEqual([
+      ["앞", 30],
+      ["철수", 0],
+    ]);
+    expect(r.content?.sections[1].paragraphs[0].evidence_ids).toEqual([]);
   });
 
   it("어느 문단도 쓰지 않는 고아 근거는 상한 전에 버린다: 뒤 섹션이 쓰는 근거가 남는다", () => {
@@ -286,7 +329,7 @@ describe("validateReport", () => {
       ),
       f.idx,
       f.stats,
-      { truncated: false, concept: "couple", members: f.members },
+      { truncated: false, tone: "fact", members: f.members },
     );
     expect(r.content?.sections[0].paragraphs.map((p) => p.key)).toEqual(["p1", "p2"]);
     expect(r.content?.sections[0].title).toBe("{{stat:byPerson.Me}}개의 메시지");
@@ -311,7 +354,7 @@ describe("validateReport", () => {
 
   it("글자 수를 맞춘다: 너무 긴 headline·dek·제목은 비우고, 너무 긴 문단은 지운다 (PRD 5장 1)", () => {
     const r = run(
-      report([sec("가".repeat(61), [para("p1", "저녁 대화가 이어져요"), para("p2", "나".repeat(801))])], {
+      report([sec("가".repeat(61), [para("p1", "저녁 대화가 이어져요"), para("p2", "나".repeat(1001)), para("p3", "다".repeat(1000))])], {
         headline: "다".repeat(81),
         dek: "라".repeat(201),
       }),
@@ -319,7 +362,7 @@ describe("validateReport", () => {
     expect(r.content?.headline).toBe("");
     expect(r.content?.dek).toBe("");
     expect(r.content?.sections[0].title).toBe("");
-    expect(r.content?.sections[0].paragraphs.map((p) => p.key)).toEqual(["p1"]);
+    expect(r.content?.sections[0].paragraphs.map((p) => p.text.length)).toEqual([11, 1000]);
   });
 
   it("icon은 이모지 몇 글자만(글자·숫자가 들면 비운다), about은 pair·group·참여자 이름만(me·모르는 값은 group)", () => {
@@ -337,16 +380,18 @@ describe("validateReport", () => {
     ]);
   });
 
-  it("part: 그 컨셉의 구성 키만 남기고 나머지는 빈 글. 섹션 순서는 그대로", () => {
+  it("part: 그 말투의 구성 키만 남기고 나머지(다른 말투의 키, 예전 컨셉 키)는 빈 글. 섹션 순서는 그대로", () => {
     const body = [para("p1", "저녁 대화가 이어져요")];
-    const raw = report([sec("하나", body, [], "pair", "chronicle"), sec("둘", body, [], "pair", "letter"), sec("셋", body, [], "pair", "x")]);
-    const r = run(raw);
-    expect(r.content?.sections.map((x) => [x.title, x.part])).toEqual([
-      ["하나", ""],
-      ["둘", "letter"],
-      ["셋", ""],
+    const raw = report(
+      ["nag_open", "care_letter", "chronicle", "x"].map((part, i) => sec(`섹션${i}`, body, [], "pair", part)),
+    );
+    expect(run(raw).content?.sections.map((x) => [x.title, x.part])).toEqual([
+      ["섹션0", "nag_open"],
+      ["섹션1", ""],
+      ["섹션2", ""],
+      ["섹션3", ""],
     ]);
-    expect(run(raw, false, "group").content?.sections.map((x) => x.part)).toEqual(["chronicle", "", ""]);
+    expect(run(raw, false, "warm").content?.sections.map((x) => x.part)).toEqual(["", "care_letter", "", ""]);
   });
 
   it("같은 섹션의 겹친 문단 키는 p1, p2…로 다시 매기고 evidence_ids는 그대로", () => {
@@ -375,7 +420,7 @@ describe("validateReport", () => {
       }),
       f.idx,
       f.stats,
-      { truncated: false, concept: "couple", members: f.members },
+      { truncated: false, tone: "fact", members: f.members },
     );
     expect(r.status).toBe("done");
     expect(r.content?.sections[0].paragraphs[0].text).toBe("민지의 지분은 {{stat:share.민지}}예요");
@@ -394,9 +439,29 @@ describe("validateReport", () => {
 
   it("4구성 중 3구성까지 완결된 truncated는 partial이고 part가 셋", () => {
     const body = [para("p1", "저녁 대화가 이어져요")];
-    const r = run(report(["map", "first", "shift"].map((part) => sec(part, body, [], "pair", part))), true);
+    const r = run(report(["nag_open", "nag_cards", "nag_room"].map((part) => sec(part, body, [], "pair", part))), true);
     expect(r.status).toBe("partial");
-    expect(r.content?.sections.map((x) => x.part)).toEqual(["map", "first", "shift"]);
+    expect(r.content?.sections.map((x) => x.part)).toEqual(["nag_open", "nag_cards", "nag_room"]);
+  });
+
+  it("v2.2 분량의 긴 리포트(섹션 10개 × 문단 5개, 인용 30개, 문단마다 근거를 달지 않음)도 지우는 것 없이 done", () => {
+    const quotes = ["오늘 뭐해?", "쉬는 중", "영화 볼래?", "좋아!"];
+    const long = "저녁이 되면 이 방은 다시 살아난다. 한 사람이 운을 떼면 다른 사람이 곧 받아 이어 간다. 대화는 짧은 말로 시작해 영화 이야기로 번진다. 그리고 늘 같은 말로 끝난다.";
+    const sections = Array.from({ length: 10 }, (_, si) =>
+      sec(
+        si % 2 === 0 ? `민지 편 ${si}` : `철수 편 ${si}`,
+        Array.from({ length: 5 }, (_, pi) => para(`p${pi + 1}`, `${si % 2 === 0 ? "민지" : "철수"}의 장면 ${pi}. ${long}`, pi < 3 ? [`e${pi + 1}`] : [])),
+        Array.from({ length: 3 }, (_, ei) => ev(`e${ei + 1}`, `m${(si + ei) % 4}`, quotes[(si + ei) % 4])),
+        si % 2 === 0 ? "민지" : "철수",
+        "nag_cards",
+      ),
+    );
+    const r = run(report(sections));
+    expect(r.status).toBe("done");
+    expect(r.dropped).toEqual({ paragraphs: 0, evidence: 0 });
+    expect(r.content?.sections).toHaveLength(10);
+    expect(r.content?.sections.flatMap((s) => s.evidence)).toHaveLength(30);
+    expect(r.content?.sections.flatMap((s) => s.paragraphs)).toHaveLength(50);
   });
 
   it("모르는 declined_topics 값은 버리고 편은 살린다(SDK 스키마 변환이 enum을 강제하지 않는다)", () => {

@@ -12,6 +12,7 @@ import {
   delta,
   reportJson,
   harness,
+  longReportJson,
   makePayload,
   messageDelta,
   messageStart,
@@ -76,6 +77,21 @@ describe("runReportJob 결과 처리", () => {
       usage,
       cost: estimateCostUsd(usage, "claude-sonnet-5-5"),
     });
+  });
+
+  it("v2.2 분량의 긴 리포트(섹션 10 × 문단 5, 인용 30)를 SSE 여러 조각으로 받아 지우는 것 없이 done으로 저장한다", async () => {
+    const text = JSON.stringify(longReportJson());
+    const chunks = Array.from({ length: Math.ceil(text.length / 400) }, (_, i) => delta(text.slice(i * 400, (i + 1) * 400)));
+    expect(chunks.length).toBeGreaterThan(20);
+    const s = await setup(() => ({ steps: [messageStart(), textStart, ...chunks, blockStop, messageDelta("end_turn", 12_000), messageStop] }));
+    await s.run();
+    const e = await s.report();
+    expect(e.status).toBe("done");
+    expect(e.content?.sections).toHaveLength(10);
+    expect(e.content?.sections.map((x) => x.part)).toEqual(longReportJson().sections.map((x: { part: string }) => x.part));
+    expect(e.content?.sections.flatMap((x) => x.paragraphs)).toHaveLength(50);
+    expect(e.content?.sections.flatMap((x) => x.evidence)).toHaveLength(30);
+    expect(e.content?.reading_notes).toHaveLength(12);
   });
 
   it("ok인데 JSON이 아니면 failed(invalid_output). usage는 남긴다", async () => {

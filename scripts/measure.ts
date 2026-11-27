@@ -280,7 +280,7 @@ export async function measureReport(
   try {
     status = validateReport(JSON.parse(r.raw), payloadIndex(payload), payload.stats, {
       truncated: r.kind === "truncated" || r.kind === "partial",
-      concept: payload.concept,
+      tone: payload.tone,
       members: payload.members,
     }).status;
   } catch {

@@ -65,7 +65,7 @@ async function judge(
   r: RunResult,
 ): Promise<{ status: string; content: unknown; errorCode: string | null }> {
   const validate = (raw: unknown, truncated: boolean) =>
-    validateReport(raw, payloadIndex(payload), payload.stats, { truncated, concept: payload.concept, members: payload.members });
+    validateReport(raw, payloadIndex(payload), payload.stats, { truncated, tone: payload.tone, members: payload.members });
   /** 끊긴 글에서 완결된 섹션만 살린다. done이어도 partial이다 */
   const salvage = (raw: string, failedCode: string) => {
     const v = validate(salvageReport(raw), true);

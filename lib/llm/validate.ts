@@ -2,7 +2,10 @@
 // safety: 구조 검사보다 먼저 원본에서 본다. flag가 none이 아닌 문자열이면 다른 필드가 틀려도 도움 안내로 간다.
 // 근거: msg_id가 보낸 줄에 있고 quote가 그 본문의 부분 문자열이어야 남는다. 어느 문단도 쓰지 않는 근거는 버리고,
 //   남은 것을 리포트 전체 MAX_QUOTES_PER_REPORT개까지 앞 섹션부터 센다(고아 근거가 뒤 구성의 몫을 먹지 않게).
-// 문단: 근거를 잃은 사람 문단, 풀리지 않는 자리표시자, 금지 표현·개인정보가 든 문단, 너무 긴 문단을 지운다. 남은 문단 키는 섹션마다 p1, p2…
+// 문단: 풀리지 않는 자리표시자, 금지 표현·개인정보가 든 문단, 너무 긴 문단을 지운다. 남은 문단 키는 섹션마다 p1, p2…
+// 사람 근거(v2.2): 섹션 단위다. 사람을 다루는 섹션(about이 참여자이거나 문단에 이름이 나온다)은 남은 근거 인용이나
+//   풀리는 자리표시자가 섹션 어디든 하나 있으면 된다. 문단마다 근거를 달 필요는 없다. 둘 다 없으면 이름이 든 문단(about이 사람이면 전부)을 지운다.
+// 구성 키(part)는 그 말투의 구성(TONES[tone].parts)만 남긴다.
 // 나머지 모델 글(headline·dek·제목)도 같은 검사(금지 표현·개인정보·글자 수)에 걸리면 비운다. icon·about·part는 허용 모양만 남긴다.
 // 자리표시자 경로 속 범례 기호(A, B…)는 표시 이름으로 바꾼다(모델이 줄의 기호를 그대로 옮겨 쓴 경우).
 import "server-only";
@@ -12,7 +15,7 @@ import { memberCodes, type payloadIndex } from "@/lib/payload/build";
 import { hasPII } from "@/lib/payload/mask";
 import type { ChatStats } from "@/lib/stats/compute";
 import { resolveStat } from "@/lib/stats/paths";
-import { CONCEPTS, type Concept } from "./concepts";
+import { type Tone, TONES } from "./concepts";
 import { sanitizeNotes } from "./notes";
 import { DECLINED_TOPICS, type Report, reportSchema, type StoredReport } from "./schema";
 
@@ -36,7 +39,8 @@ const STAT = "stat:";
 const TRUNCATED_DEFAULTS = { declined_topics: [], reading_notes: [], headline: "", dek: "", sections: [] };
 
 /** 모델 글의 글자 수 상한(코드 포인트). 넘으면 자르지 않고 비운다(자르면 자리표시자가 반쪽이 될 수 있다). system 프롬프트도 알린다 */
-export const MAX_CHARS = { headline: 80, dek: 200, title: 60, paragraph: 800, icon: 8 } as const;
+/** v2.2: 문단이 3~5문장으로 길어져 문단 상한을 800 → 1000자로 올렸다(5문장 × 80자 = 400자의 두 배 넘는 여유) */
+export const MAX_CHARS = { headline: 80, dek: 200, title: 60, paragraph: 1000, icon: 8 } as const;
 const length = (text: string) => Array.from(text).length;
 
 /**
@@ -121,7 +125,7 @@ export function validateReport(
   raw: unknown,
   idx: Index,
   stats: ChatStats,
-  opts: { truncated: boolean; concept: Concept; members: string[] },
+  opts: { truncated: boolean; tone: Tone; members: string[] },
 ): ValidateResult {
   const none = { paragraphs: 0, evidence: 0 };
   // safety가 먼저다: 걸린 응답이 구조 검사에서 failed가 되면 도움 안내 대신 [다시 쓰기]가 보이고,
@@ -133,7 +137,7 @@ export function validateReport(
   const report = parsed.data;
 
   const named = codesToNames(opts.members);
-  const parts = new Set<string>(CONCEPTS[opts.concept].parts.map((p) => p.key));
+  const parts = new Set<string>(TONES[opts.tone].parts.map((p) => p.key));
   const people = Object.keys(stats.byPerson);
   let quotesLeft = MAX_QUOTES_PER_REPORT;
   let paragraphsIn = 0;
@@ -156,24 +160,25 @@ export function validateReport(
       valid.push({ id: e.id, msg_id: e.msg_id, quote, sender: line.sender, at: line.at });
     }
 
-    // 2) 문단: kept는 남길 수 있는 근거 id
+    // 2) 문단: 글 검사(빈 글·자리표시자·금지 표현·개인정보·글자 수)만 본다. 근거는 섹션 단위로 아래에서 본다
     const aboutPerson = people.includes(section.about);
-    const judge = (kept: Set<string>) =>
-      section.paragraphs.flatMap((p): Paragraph[] => {
-        const text = named(p.text);
-        const placeholders = placeholderCount(text, stats);
-        if (text.trim() === "" || placeholders === null || !storable(text, MAX_CHARS.paragraph, stats)) return [];
-        const ids = p.evidence_ids.filter((id) => kept.has(id));
-        // 사람 문단은 남은 근거가 있거나, 처음부터 근거 없이 자리표시자로만 쓴 것만 남긴다
-        const person = aboutPerson || people.some((name) => text.includes(name));
-        if (person && ids.length === 0 && (p.evidence_ids.length > 0 || placeholders === 0)) return [];
-        return [{ ...p, text, evidence_ids: ids }];
-      });
-    // 남는 문단이 쓰는 근거만 몫을 센다. 몫 때문에 근거를 잃은 사람 문단은 다시 판정한다.
-    // 두 번째 판정에서 남은 근거는 모두 어떤 문단이 쓰고 있다(그 문단은 첫 판정과 같은 이유로 다시 남는다)
-    const used = new Set(judge(new Set(valid.map((e) => e.id))).flatMap((p) => p.evidence_ids));
+    const written = section.paragraphs.flatMap((p): (Paragraph & { placeholders: number })[] => {
+      const text = named(p.text);
+      const placeholders = placeholderCount(text, stats);
+      if (text.trim() === "" || placeholders === null || !storable(text, MAX_CHARS.paragraph, stats)) return [];
+      return [{ ...p, text, placeholders }];
+    });
+    // 남는 문단이 쓰는 근거만 몫을 센다. 남는 문단은 근거와 상관없이 정해지므로 한 번에 센다
+    const used = new Set(written.flatMap((p) => p.evidence_ids));
     const evidence = valid.filter((e) => used.has(e.id)).slice(0, quotesLeft);
-    const paragraphs = judge(new Set(evidence.map((e) => e.id))).map((p, i) => ({ ...p, key: `p${i + 1}` }));
+    const kept = new Set(evidence.map((e) => e.id));
+    // 3) 사람 근거(섹션 단위): 남은 근거 인용이나 자리표시자가 섹션 어디든 있으면 된다. 없으면 이름이 든 문단을 지운다.
+    // 근거가 없을 때만 지우므로 지운 문단이 몫을 쓰고 있던 일은 없다
+    const grounded = evidence.length > 0 || written.some((p) => p.placeholders > 0);
+    const isPerson = (text: string) => aboutPerson || people.some((name) => text.includes(name));
+    const paragraphs = written
+      .filter((p) => grounded || !isPerson(p.text))
+      .map(({ placeholders: _placeholders, ...p }, i) => ({ ...p, key: `p${i + 1}`, evidence_ids: p.evidence_ids.filter((id) => kept.has(id)) }));
 
     // 문단이 다 지워진 섹션은 빼고, 그 근거는 몫에서 쓰지 않는다
     if (paragraphs.length === 0) continue;

@@ -67,7 +67,7 @@ describe("renderStatText", () => {
         dek: "사흘",
         sections: [
           {
-            part: "first",
+            part: "nag_room",
             icon: "🌙",
             title: "답장",
             about: "pair",
@@ -81,7 +81,7 @@ describe("renderStatText", () => {
       },
       idx,
       stats,
-      { truncated: false, concept: "couple", members },
+      { truncated: false, tone: "fact", members },
     );
     // 9월은 없어서 validateReport가 지우고, renderStatText도 그 자리를 빼고 보여 준다
     expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual([text]);
