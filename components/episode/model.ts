@@ -1,6 +1,6 @@
 // 대화 홈·리포트 화면의 순수 로직(API 응답 → 화면 상태·문구). DOM 없이 테스트한다.
 import { formatCount, kstDate } from "@/components/stats/format";
-import { PEOPLE_PART_KEYS, type Tone } from "@/lib/llm/concepts";
+import { PEOPLE_PART_KEYS, type Tone, TONES } from "@/lib/llm/concepts";
 import type { StoredReport } from "@/lib/llm/schema";
 import type { ChatStats } from "@/lib/stats/compute";
 
@@ -159,24 +159,54 @@ export const STAGE_LABEL: Record<ReportStage, string> = { intro: "종합", peopl
 
 /** 사람을 다루는 섹션: 개인별 구성 키(people·others)이거나 about이 참여자 이름 */
 const isPeopleSection = (s: Pick<Section, "part" | "about">) =>
-  PEOPLE_PART_KEYS.has(s.part) || (s.about !== "group" && s.about !== "pair" && s.about !== "");
+  PEOPLE_PART_KEYS.has(s.part) || isPersonAbout(s.about);
+const isPersonAbout = (about: string) => about !== "group" && about !== "pair" && about !== "";
+
+/** 구성 키 → 부분(v2.4 구성의 자리). others(그 밖의 멤버)도 멤버별이다 */
+const STAGE_OF_PART: ReadonlyMap<string, ReportStage> = new Map(
+  Object.values(TONES).flatMap((t) => t.parts.map((p) => [p.key, p.stage === "others" ? "people" : p.stage] as const)),
+);
+const STAGE_ORDER: Record<ReportStage, number> = { intro: 0, people: 1, outro: 2 };
 
 /**
- * 저장된 섹션을 세 부분으로 나눈다(v2.4). 저장 순서를 바꾸지 않고 자리로 정한다: 첫 사람 섹션 앞은 종합, 첫 사람 섹션부터
- * 마지막 사람 섹션까지는 멤버별, 그 뒤는 마무리. 구성 키가 없거나("") 예전 구성(v2.3까지)인 행도 같은 규칙으로 나뉜다.
- * 사람 섹션이 없으면 한 부분(종합)뿐이다(화면은 머리말을 그리지 않는다). index는 리포트 전체에서 섹션 순서다
+ * 구성 키로 정한 부분(v2.4 행). 모르는 키("" 등)는 about이 참여자면 멤버별, 아니면 바로 앞 섹션의 부분(맨 앞이면 종합)을 따른다.
+ * 부분 순서(종합 → 멤버별 → 마무리)가 뒤집히면(v2.3까지의 구성: 사람 카드 뒤에 방 전체 구성) null
+ */
+function stagesByPart(sections: readonly Pick<Section, "part" | "about">[]): ReportStage[] | null {
+  const out: ReportStage[] = [];
+  for (const s of sections) {
+    const prev = out.at(-1) ?? "intro";
+    const stage = STAGE_OF_PART.get(s.part) ?? (isPersonAbout(s.about) ? "people" : prev);
+    if (STAGE_ORDER[stage] < STAGE_ORDER[prev]) return null;
+    out.push(stage);
+  }
+  return out;
+}
+
+/** 자리로 정한 부분(예전 행): 첫 사람 섹션 앞은 종합, 첫~마지막 사람 섹션은 멤버별, 그 뒤는 마무리. 사람 섹션이 없으면 모두 종합 */
+function stagesByPosition(sections: readonly Pick<Section, "part" | "about">[]): ReportStage[] {
+  const first = sections.findIndex(isPeopleSection);
+  if (first < 0) return sections.map(() => "intro");
+  const last = sections.findLastIndex(isPeopleSection);
+  return sections.map((_, i) => (i < first ? "intro" : i <= last ? "people" : "outro"));
+}
+
+/**
+ * 저장된 섹션을 세 부분으로 나눈다(v2.4). 저장 순서는 바꾸지 않는다. 구성 키가 그 말투 구성(TONES의 parts)의 키면 그 자리로 정한다:
+ * intro → 종합, people·others → 멤버별, outro → 마무리(마무리 섹션의 about이 사람이어도 마무리다. 탐정의 수사 결론이 범인을 지목하는 때).
+ * 순서가 맞지 않는 예전 구성(v2.3까지)이면 자리로 나눈다(stagesByPosition).
+ * 한 부분(종합)뿐이면 화면은 머리말을 그리지 않는다. index는 리포트 전체에서 섹션 순서다
  */
 export function groupStages<S extends Pick<Section, "part" | "about">>(
   sections: readonly S[],
 ): { stage: ReportStage; sections: { section: S; index: number }[] }[] {
-  const rows = sections.map((section, index) => ({ section, index }));
-  const first = sections.findIndex(isPeopleSection);
-  if (first < 0) return rows.length === 0 ? [] : [{ stage: "intro", sections: rows }];
-  const last = sections.findLastIndex(isPeopleSection);
-  const groups: { stage: ReportStage; sections: { section: S; index: number }[] }[] = [
-    { stage: "intro", sections: rows.slice(0, first) },
-    { stage: "people", sections: rows.slice(first, last + 1) },
-    { stage: "outro", sections: rows.slice(last + 1) },
-  ];
-  return groups.filter((g) => g.sections.length > 0);
+  const stages = stagesByPart(sections) ?? stagesByPosition(sections);
+  const groups: { stage: ReportStage; sections: { section: S; index: number }[] }[] = [];
+  sections.forEach((section, index) => {
+    const stage = stages[index];
+    const last = groups.at(-1);
+    if (last?.stage === stage) last.sections.push({ section, index });
+    else groups.push({ stage, sections: [{ section, index }] });
+  });
+  return groups;
 }

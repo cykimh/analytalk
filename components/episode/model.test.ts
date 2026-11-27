@@ -177,6 +177,20 @@ describe("groupStages (v2.4: 종합 → 멤버별 → 마무리)", () => {
     ]);
   });
 
+  it("구성 키가 마무리(outro)면 about이 사람이어도 마무리다(Fix 1: 수사 결론이 범인을 지목할 때)", () => {
+    expect(shape([s("case_brief"), s("case_people", "민수"), s("case_people", "으리"), s("case_open"), s("case_verdict", "민수")])).toEqual([
+      ["intro", [0]],
+      ["people", [1, 2]],
+      ["outro", [3, 4]],
+    ]);
+    // 인트로의 about이 사람이어도 종합, 그 밖의 멤버(others)는 멤버별, 모르는 키는 about이 사람이면 멤버별이고 아니면 앞 섹션을 따른다
+    expect(shape([s("show_open", "민지"), s("show_cast", "민지"), s("", "철수"), s("show_others"), s("show_close", "철수"), s("")])).toEqual([
+      ["intro", [0]],
+      ["people", [1, 2, 3]],
+      ["outro", [4, 5]],
+    ]);
+  });
+
   it("사람 섹션이 없으면 한 부분(종합)뿐이고, 빈 리포트는 부분이 없다", () => {
     expect(shape([s("map", "pair"), s("nag_room")])).toEqual([["intro", [0, 1]]]);
     expect(shape([])).toEqual([]);
