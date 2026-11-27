@@ -6,6 +6,8 @@
 //   캐시 앞부분이 같으므로(prompt.test) 호출마다 스키마를 나누지 않는다: 모든 호출이 같은 스키마를 쓰고, 인트로만 chemistry를,
 //   개인별만 사람 섹션의 mbti를 채운다(나머지는 null·빈 글). 범위(0~100)·모양(^[EI][NS][TF][JP]$)은 스키마가 아니라 validateReport가 본다
 //   (스키마에 min/max·pattern을 넣으면 틀린 값 하나로 리포트 전체가 failed가 된다).
+// v2.9: 개인별 응답이 사람 섹션마다 페르소나(persona)를, 마무리 응답이 관계 카드(relationship)를 쓴다(맡지 않은 응답·섹션은 null).
+//   개수·글자 수·명대사 원문 확인은 validateReport가 한다
 import { z } from "zod";
 
 export const SAFETY_FLAGS = ["none", "self_harm", "violence", "minor", "abuse"] as const;
@@ -38,6 +40,20 @@ const section = z.object({
   evidence: z.array(evidence),
   mbti: z.string().describe("about이 참여자인 개인별 섹션만: 그 사람의 MBTI 추측 네 글자(예: ENFP). 그 밖의 섹션은 빈 글"),
   mbti_reason: z.string().describe("그 MBTI로 본 이유 한 줄(80자 이하). mbti가 빈 글이면 빈 글"),
+  persona: z
+    .object({
+      intro: z.string().describe("한 줄 소개(80자 이하)"),
+      traits: z
+        .object({ communication: z.string(), emotion: z.string(), humor: z.string(), energy: z.string() })
+        .describe("커뮤니케이션·감정 표현·유머·대화 에너지. 각 한두 문장(150자 이하)"),
+      interests: z.array(z.string()).describe("관심 주제 3~5개(각 20자 이하)"),
+      values: z.array(z.string()).describe("가치관 해시태그 3~5개(# 없이, 띄어 쓰지 않고, 각 20자 이하)"),
+      quotes: z.array(evidence.omit({ id: true })).describe("명대사 3~5개: 그 사람이 보낸 메시지 하나의 본문을 글자 그대로"),
+      hidden: z.string().describe("숨겨진 면모 한두 문장(150자 이하)"),
+      tip: z.string().describe("이 사람과 대화할 때 팁 한 문장(100자 이하)"),
+    })
+    .nullable()
+    .describe("about이 참여자인 개인별 섹션만. 그 밖의 섹션은 null"),
 });
 
 const chemistry = z
@@ -49,6 +65,16 @@ const chemistry = z
   .nullable()
   .describe("인트로 응답만 쓴다. 맡지 않은 응답은 null");
 
+const relationship = z
+  .object({
+    one_line: z.string().describe("관계 한 줄(80자 이하)"),
+    to_each_other: z.string().describe("1:1은 서로에게 어떤 존재인지, 단톡은 이 방이 각자에게 어떤 곳인지(200자 이하)"),
+    inside_jokes: z.array(z.string()).describe("내부 농담·밈 1~3개(각 80자 이하)"),
+    conflict: z.string().describe("갈등 패턴과 풀리는 방식 한두 문장(200자 이하)"),
+  })
+  .nullable()
+  .describe("마무리 응답만 쓴다. 맡지 않은 응답은 null");
+
 export const reportSchema = z.object({
   safety: z.object({ flag: z.enum(SAFETY_FLAGS) }),
   declined_topics: z.array(z.enum(DECLINED_TOPICS)),
@@ -56,6 +82,7 @@ export const reportSchema = z.object({
   headline: z.string(),
   dek: z.string(),
   chemistry,
+  relationship,
   sections: z.array(section),
 });
 
@@ -66,7 +93,7 @@ export type Report = z.infer<typeof reportSchema>;
  * 근거: evidence_unmatched(원문과 맞지 않고 다시 이을 곳도 없음)·evidence_orphan(남은 문단이 안 씀)·evidence_over_budget(인용 몫 초과).
  * inline_quote·fake_evidence·ungrounded는 v2.4 행에만 있다(v2.5부터 그런 문단을 지우지 않는다: 따옴표만 떼거나 근거 id만 뺀다).
  * v2.8: chemistry_invalid(케미 온도 점수가 0~100 정수가 아니거나 모양이 틀려 케미 온도를 버림)·mbti_invalid(사람 섹션의 MBTI가 네 글자 모양이 아니라 버림).
- * 둘은 문단 삭제율(partial 판정)에 넣지 않는다
+ * v2.9: persona_quote_unmatched(페르소나 명대사가 그 사람의 실제 메시지와 맞지 않아 뺌). 이것들은 문단 삭제율(partial 판정)에 넣지 않는다
  */
 export const DROP_REASONS = [
   "empty",
@@ -82,6 +109,7 @@ export const DROP_REASONS = [
   "evidence_over_budget",
   "chemistry_invalid",
   "mbti_invalid",
+  "persona_quote_unmatched",
 ] as const;
 export type DropReason = (typeof DROP_REASONS)[number];
 /**
@@ -104,17 +132,28 @@ export type ValidationChecks = {
 /** 케미 온도(v2.8). score는 0~100 정수, line은 검증을 거친 한 줄(비었을 수 있다) */
 export type Chemistry = { score: number; line: string };
 
+/** 저장하는 근거·명대사 한 줄: 페이로드에서 찾은 실제 메시지의 번호·원문 부분·보낸 사람·시각(ISO +09:00) */
+export type StoredQuote = { msg_id: string; quote: string; sender: string; at: string };
+/** 페르소나(v2.9). 글은 검증을 거쳤고 비었을 수 있다. 명대사는 그 사람의 실제 메시지만 */
+export type StoredPersona = Omit<NonNullable<Report["sections"][number]["persona"]>, "quotes"> & { quotes: StoredQuote[] };
+/** 관계 카드(v2.9) */
+export type StoredRelationship = NonNullable<Report["relationship"]>;
+
 /**
  * 저장하는 리포트. 근거에는 페이로드에서 찾은 발신자 표시 이름과 시각(ISO +09:00)을 채운다. part는 구성 키이거나 "".
  * checks는 v2.4부터 저장한다(예전 행에는 없고, v2.4 행에는 requoted·unquoted·calls가 없다).
  * v2.8: chemistry는 검증을 통과했을 때만, 사람 섹션의 mbti(대문자 네 글자)·mbti_reason도 검증을 통과했을 때만 있다(예전 행에는 없다)
  */
-export type StoredReport = Omit<Report, "sections" | "chemistry"> & {
+export type StoredReport = Omit<Report, "sections" | "chemistry" | "relationship"> & {
   checks?: ValidationChecks;
   chemistry?: Chemistry;
-  sections: (Omit<Report["sections"][number], "evidence" | "mbti" | "mbti_reason"> & {
-    evidence: { id: string; msg_id: string; quote: string; sender: string; at: string }[];
+  /** v2.9: 검증을 거쳐 남은 것이 있을 때만 */
+  relationship?: StoredRelationship;
+  sections: (Omit<Report["sections"][number], "evidence" | "mbti" | "mbti_reason" | "persona"> & {
+    evidence: ({ id: string } & StoredQuote)[];
     mbti?: string;
     mbti_reason?: string;
+    /** v2.9: 사람 섹션에서 검증을 거쳐 남은 것이 있을 때만 */
+    persona?: StoredPersona;
   })[];
 };

@@ -14,6 +14,8 @@
 //   데이터 계약이 그 모양과 근거 규칙(msg_id는 줄 머리 번호, quote는 메시지 하나)을 알린다.
 // v2.8: 인트로 응답이 케미 온도(chemistry: 0~100 정수 + 한 줄)를, 개인별 응답이 사람 섹션마다 MBTI 추측(mbti·mbti_reason)을 쓴다.
 //   스키마는 모든 호출이 같다(캐시 앞부분). 맡지 않은 응답은 null·빈 글로 둔다. 범위·모양은 validateReport가 본다.
+// v2.9: 개인별 응답이 사람 섹션마다 페르소나(persona: 한 줄 소개·성격 넷·관심사·해시태그·명대사·숨겨진 면모·팁)를,
+//   마무리 응답이 관계 카드(relationship: 한 줄·서로에게·내부 농담·갈등)를 쓴다. 명대사는 근거처럼 실제 메시지 원문이다.
 // v2.5(사용자 "막는 것도 다 풀어줘"): 진단명·성격 유형 꼬리표, 외모 놀림도 된다. 금지 목록은 넷뿐이다(banned.ts와 같다):
 //   혐오·차별, 자해·폭력 부추김, 멤버에 대한 성적 묘사, 멤버의 성적 지향 단정. 지어낸 대사는 금지 목록이 아니라 쓰는 방식의 규칙이고
 //   검증은 원문과 안 맞는 따옴표만 뗀다.
@@ -27,10 +29,10 @@ import { type PromptStats, statsForPrompt } from "@/lib/stats/view";
 import { type Concept, type Part, type PartOf, type PickableTone, type Stage, type Tone, TONES } from "./concepts";
 import { reportSchema } from "./schema";
 import { type ModelSettings, modelSettings } from "./settings";
-import { CLOSING_QUOTE_RESERVE, MAX_CHARS } from "./validate";
+import { CLOSING_QUOTE_RESERVE, MAX_CHARS, PERSONA_LIMITS } from "./validate";
 
 /** 프롬프트·스키마를 바꾸면 올린다. 중복 요청 판정(페이로드 해시 + 컨셉 + 말투 + 버전)에 들어간다 */
-export const PROMPT_VERSION = "2026-11-report-12";
+export const PROMPT_VERSION = "2026-11-report-13";
 
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 /**
@@ -86,6 +88,13 @@ export const DEADLINE_ESTIMATE = {
   jsonTokens: 3_200,
   /** 호출 하나의 adaptive 생각(effort medium) */
   thinkingTokens: 2_500,
+  /**
+   * v2.9 페르소나 한 사람(개인별 호출의 사람마다): 소개 80 + 성격 넷 × 150 + 관심사·해시태그 각 5 × 20 + 명대사 5 × 50 + 숨겨진 면모 150 + 팁 100
+   * ≈ 1,380자 + JSON 키. 위쪽 끝으로 잡는다
+   */
+  personaTokens: 1_500,
+  /** v2.9 관계 카드(마무리 호출): 한 줄 80 + 서로에게 200 + 내부 농담 3 × 80 + 갈등 200 ≈ 720자 + JSON 키 */
+  relationshipTokens: 800,
 } as const;
 type Volume = {
   /** 인트로·마무리에 쓰는 구성 수 상한(small은 1: 첫 intro 구성과 마지막 outro 구성만) */
@@ -213,10 +222,12 @@ JSON 스키마를 따르고 필드를 이 순서로 쓴다.
 - declined_topics: 금지 주제라 다루지 않은 것
 - reading_notes: 그 구간 대화의 흐름 요약(너의 생각 과정이 아니다). 진행 화면에 먼저 보인다. range는 "MM-DD~MM-DD", note는 ${NOTE_MAX_CHARS}자 이하.
 - headline: 리포트 제목 한 줄(${MAX_CHARS.headline}자 이하). dek: 한두 문장 소개(${MAX_CHARS.dek}자 이하). 둘 다 컨셉의 목소리로 쓴다.
+- relationship: 마무리를 맡은 응답만 쓴다(맡지 않은 응답은 null). 이 관계를 컨셉 인물의 목소리로 정리한 카드다. one_line은 관계 한 줄(${MAX_CHARS.relationLine}자 이하), to_each_other는 1:1이면 서로에게 어떤 존재인지, 단톡이면 이 방이 멤버들에게 어떤 곳인지(${MAX_CHARS.relationText}자 이하), inside_jokes는 이 방에서 되풀이된 내부 농담·밈 1~${PERSONA_LIMITS.insideJokes}개(각 ${MAX_CHARS.insideJoke}자 이하), conflict는 부딪히는 패턴과 풀리는 방식 한두 문장(${MAX_CHARS.relationText}자 이하)이다.
 - chemistry: 이 방(1:1이면 두 사람)의 케미 온도. score는 컨셉 인물이 0~100 정수로 매긴 점수, line은 그 점수에 대한 인물의 한 줄 판정(${MAX_CHARS.chemistryLine}자 이하, %를 쓰지 않는다)이다. 대화 습관을 재료로 과감하게 매긴다(틀려도 좋다). 지시가 맡긴 응답만 쓰고 맡지 않은 응답은 null.
 - 리포트 한 편은 응답 여러 개가 같은 대화를 보고 나눠 쓰고, 화면이 인트로 종합 → 개인별 → 마무리 순서로 붙인다. reading_notes·headline·dek는 지시가 맡긴 응답만 쓰고, 맡지 않은 응답은 빈 배열·빈 글("")로 둔다.
 - sections: 지시가 이번 응답에 맡긴 구성만, 지시의 순서대로 쓴다. 다른 응답이 맡은 구성의 섹션은 쓰지 않는다.
   - mbti·mbti_reason: about이 참여자인 개인별 섹션에만 쓴다. mbti는 컨셉 인물이 대화 습관으로 추측한 그 사람의 MBTI 네 글자(E/I·N/S·T/F·J/P, 예: ENFP), mbti_reason은 그렇게 본 이유 한 줄(${MAX_CHARS.mbtiReason}자 이하, 인물의 목소리)이다. 틀려도 좋다. 그 밖의 섹션은 둘 다 빈 글("").
+  - persona: about이 참여자인 개인별 섹션에만 쓴다(그 밖의 섹션은 null). 컨셉 인물이 본 그 사람의 프로필이다: intro는 한 줄 소개(${MAX_CHARS.personaIntro}자 이하), traits는 communication(말하는 방식)·emotion(감정 표현)·humor(유머)·energy(대화 에너지) 각 한두 문장(${MAX_CHARS.personaTrait}자 이하), interests는 자주 꺼내는 주제 3~${PERSONA_LIMITS.interests}개, values는 가치관 해시태그 3~${PERSONA_LIMITS.values}개(# 없이 띄어 쓰지 않고, 각 ${MAX_CHARS.personaTag}자 이하), quotes는 그 사람이 실제로 보낸 메시지 하나의 본문을 글자 그대로 잘라 온 명대사 3~${PERSONA_LIMITS.quotes}개(msg_id는 근거와 같은 규칙, 원문과 안 맞거나 다른 사람의 말이면 빠진다), hidden은 대화 속에서 보인 숨겨진 면모 한두 문장(${MAX_CHARS.personaHidden}자 이하), tip은 이 사람과 대화할 때 팁 한 문장(${MAX_CHARS.personaTip}자 이하)이다.
   - part는 그 섹션이 속한 구성 키. icon은 이모지 하나. title은 ${MAX_CHARS.title}자 이하. about은 pair(두 사람 관계)·group(방 전체)·참여자 표시 이름 중 하나
   - paragraphs: key는 섹션 안에서 p1, p2…, text는 ${SENTENCES}문장, ${PARAGRAPH_CHARS}자(적어도 ${PARAGRAPH_MIN}자. ${MAX_CHARS.paragraph}자 이하, 넘으면 지워진다), evidence_ids는 이 섹션 evidence의 id(근거를 쓰는 문단만)
   - evidence: id는 섹션 안에서 e1, e2…, msg_id는 줄 머리의 m번호(\`m<번호>+<k>\`면 m<번호>), quote는 메시지 하나(" ¦ " 사이 한 칸)의 본문을 글자 그대로 잘라 온 부분이다. 고치거나 합치지 않고 " ¦ "를 넘지 않는다. 접은 표시(×n)는 근거가 아니다. 어느 문단의 evidence_ids에도 없는 근거는 버려진다. 이번 응답에서는 지시의 개수 이하(리포트 전체 ${MAX_QUOTES_PER_REPORT}개 이하).`;
@@ -561,13 +572,13 @@ function reportInstruction(p: Payload, stats: PromptStats, plans: CallPlan[], at
 
   // 이번 응답의 몫(마지막 줄): 무엇을 쓰고, 무엇을 남기는지
   const mine = {
-    intro: `이번 응답: [1. 인트로 종합 리포트]의 섹션 ${sections}개(${call.blocks.map((x) => x.key).join(", ")})만 쓴다. 개인별·마무리 섹션은 쓰지 않는다. 인트로는 방 전체의 장면·습관·흐름을 쓰고, 한 사람을 깊게 다루는 이야기는 개인별 응답에 남긴다. headline·dek와 reading_notes(${vol.readingNotes}개 이하), chemistry(케미 온도)도 이 응답이 쓴다.`,
+    intro: `이번 응답: [1. 인트로 종합 리포트]의 섹션 ${sections}개(${call.blocks.map((x) => x.key).join(", ")})만 쓴다. 개인별·마무리 섹션은 쓰지 않는다. 인트로는 방 전체의 장면·습관·흐름을 쓰고, 한 사람을 깊게 다루는 이야기는 개인별 응답에 남긴다. headline·dek와 reading_notes(${vol.readingNotes}개 이하), chemistry(케미 온도)도 이 응답이 쓴다. relationship은 null로 둔다.`,
     people: "",
     people_rest: "",
-    outro: `이번 응답: [3. 마무리 리포트]의 섹션 ${sections}개(${call.blocks.map((x) => x.key).join(", ")})만 쓴다. 인트로·개인별 섹션은 쓰지 않는다. 마무리는 방 전체의 결론·총평이다: 사람마다 다시 분석하지 않는다. headline·dek는 빈 글(""), reading_notes는 빈 배열, chemistry는 null로 둔다.`,
+    outro: `이번 응답: [3. 마무리 리포트]의 섹션 ${sections}개(${call.blocks.map((x) => x.key).join(", ")})만 쓴다. 인트로·개인별 섹션은 쓰지 않는다. 마무리는 방 전체의 결론·총평이다: 사람마다 다시 분석하지 않는다. headline·dek는 빈 글(""), reading_notes는 빈 배열, chemistry는 null로 둔다. relationship(관계 카드)도 이 응답이 쓴다.`,
   }[call.part];
   const someone = plans.filter((x) => x.part === "people" || x.part === "people_rest").length > 1 ? " 나머지 사람은 다른 응답이 쓴다." : "";
-  const peopleMine = `이번 응답: [2. 개인별 특징 리포트]의 섹션 ${sections}개만 쓴다: ${partTitle(people)}에서 ${whoHere} 각자 섹션 하나씩${call.others.length > 0 ? `, 그리고 ${partTitle(others!)} 섹션 하나` : ""}.${someone} 인트로·마무리 섹션은 쓰지 않는다. 사람마다 그 섹션의 mbti·mbti_reason에 그 사람의 MBTI 추측과 이유를 쓴다${call.others.length > 0 ? "(그 밖의 멤버 섹션은 빈 글)" : ""}. headline·dek는 빈 글(""), reading_notes는 빈 배열, chemistry는 null로 둔다.`;
+  const peopleMine = `이번 응답: [2. 개인별 특징 리포트]의 섹션 ${sections}개만 쓴다: ${partTitle(people)}에서 ${whoHere} 각자 섹션 하나씩${call.others.length > 0 ? `, 그리고 ${partTitle(others!)} 섹션 하나` : ""}.${someone} 인트로·마무리 섹션은 쓰지 않는다. 사람마다 그 섹션의 mbti·mbti_reason·persona에 그 사람의 MBTI 추측과 이유, 페르소나를 쓴다${call.others.length > 0 ? "(그 밖의 멤버 섹션은 빈 글·null)" : ""}. headline·dek는 빈 글(""), reading_notes는 빈 배열, chemistry는 null로 둔다. relationship은 null로 둔다.`;
 
   // 재료가 적은 대화: 구성 설명의 개수는 상한이고, 되풀이·지어내기로 분량을 채우지 않는다
   const material =

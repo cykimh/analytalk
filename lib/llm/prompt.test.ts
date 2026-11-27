@@ -139,7 +139,7 @@ describe("CONCEPTS·TONES", () => {
 
 describe("buildRequest", () => {
   it("PROMPT_VERSION", () => {
-    expect(PROMPT_VERSION).toBe("2026-11-report-12");
+    expect(PROMPT_VERSION).toBe("2026-11-report-13");
   });
 
   it("기본값(호출마다): Sonnet 5.5, max_tokens 32000, effort medium, adaptive thinking, 서버 측 fallback, 데이터 블록에 cache_control(ephemeral)", () => {
@@ -213,10 +213,11 @@ describe("buildRequest", () => {
     const p = hugePayload("fact");
     const last = (part: CallPart) => ins(p, part).split("\n").at(-1)!;
     expect(last("intro")).toBe(
-      "이번 응답: [1. 인트로 종합 리포트]의 섹션 2개(nag_open, nag_room)만 쓴다. 개인별·마무리 섹션은 쓰지 않는다. 인트로는 방 전체의 장면·습관·흐름을 쓰고, 한 사람을 깊게 다루는 이야기는 개인별 응답에 남긴다. headline·dek와 reading_notes(12개 이하), chemistry(케미 온도)도 이 응답이 쓴다.",
+      "이번 응답: [1. 인트로 종합 리포트]의 섹션 2개(nag_open, nag_room)만 쓴다. 개인별·마무리 섹션은 쓰지 않는다. 인트로는 방 전체의 장면·습관·흐름을 쓰고, 한 사람을 깊게 다루는 이야기는 개인별 응답에 남긴다. headline·dek와 reading_notes(12개 이하), chemistry(케미 온도)도 이 응답이 쓴다. relationship은 null로 둔다.",
     );
     for (const part of ["people", "people_rest", "outro"] as const) {
       expect(last(part)).toContain('headline·dek는 빈 글(""), reading_notes는 빈 배열, chemistry는 null로 둔다.');
+      expect(last(part)).toContain(part === "outro" ? "relationship(관계 카드)도 이 응답이 쓴다." : "relationship은 null로 둔다.");
     }
     expect(last("outro")).toContain("이번 응답: [3. 마무리 리포트]의 섹션 1개(nag_last)만 쓴다. 인트로·개인별 섹션은 쓰지 않는다.");
     // 다른 몫의 구성은 이름만 보이고 구성 줄은 없다
@@ -347,6 +348,30 @@ describe("buildRequest", () => {
     expect(JSON.stringify(schema.properties!.sections)).not.toMatch(/pattern|minimum/);
   });
 
+  it("v2.9: 페르소나(사람 섹션)·관계 카드(마무리)의 스키마 모양과 system·지시", () => {
+    type Obj = { type?: string; properties?: Record<string, Obj>; required?: string[]; anyOf?: Obj[]; $ref?: string; items?: Obj };
+    const schema = buildRequest(payload()).output_config?.format?.schema as Obj & { $defs?: Record<string, Obj> };
+    const deref = (o: Obj): Obj => (o.$ref ? schema.$defs![o.$ref.slice("#/$defs/".length)] : o);
+    const objectOf = (o: Obj) => deref(o.anyOf!.find((x) => x.type !== "null")!);
+    const persona = objectOf(schema.properties!.sections.items!.properties!.persona);
+    expect(Object.keys(persona.properties!)).toEqual(["intro", "traits", "interests", "values", "quotes", "hidden", "tip"]);
+    expect(Object.keys(deref(persona.properties!.traits).properties!)).toEqual(["communication", "emotion", "humor", "energy"]);
+    expect(Object.keys(deref(persona.properties!.quotes.items!).properties!)).toEqual(["msg_id", "quote"]);
+    const relationship = objectOf(schema.properties!.relationship);
+    expect(Object.keys(relationship.properties!)).toEqual(["one_line", "to_each_other", "inside_jokes", "conflict"]);
+    const s = systemOf(buildRequest(payload()));
+    expect(s).toContain("- relationship: 마무리를 맡은 응답만 쓴다");
+    expect(s).toContain("  - persona: about이 참여자인 개인별 섹션에만 쓴다");
+    expect(s).toContain("quotes는 그 사람이 실제로 보낸 메시지 하나의 본문을 글자 그대로");
+    for (const p of [payload(), hugePayload("docu")]) {
+      for (const c of buildRequests(p)) {
+        const last = instructionOf(c.req).split("\n").at(-1)!;
+        if (c.part === "people" || c.part === "people_rest") expect(last).toContain("mbti·mbti_reason·persona에");
+        else expect(last).not.toContain("persona");
+      }
+    }
+  });
+
   it("v2.8: system이 케미 온도·MBTI를 알리고, 인트로만 chemistry를, 개인별만 사람 섹션의 mbti를 쓴다", () => {
     const s = systemOf(buildRequest(payload()));
     expect(s).toContain("- chemistry: 이 방(1:1이면 두 사람)의 케미 온도. score는 컨셉 인물이 0~100 정수로 매긴 점수");
@@ -360,7 +385,7 @@ describe("buildRequest", () => {
         const last = instructionOf(c.req).split("\n").at(-1)!;
         if (c.part === "intro") expect(last).toContain("chemistry(케미 온도)도 이 응답이 쓴다.");
         else expect(last).toContain("chemistry는 null로 둔다.");
-        if (c.part === "people" || c.part === "people_rest") expect(last).toContain("사람마다 그 섹션의 mbti·mbti_reason에 그 사람의 MBTI 추측과 이유를 쓴다");
+        if (c.part === "people" || c.part === "people_rest") expect(last).toContain("그 사람의 MBTI 추측과 이유");
         else expect(last).not.toContain("mbti");
       }
     }
@@ -671,8 +696,10 @@ describe("buildRequest", () => {
           expect(sections, `${label} 섹션 수`).toBe(Number(volume[1]));
           expect(lo).toBeLessThan(hi);
           expect(paragraphs * hi, `${label} ${paragraphs}문단 × ${hi}자`).toBe(bodyCharsMax);
-          // 마감 어림: 본문(위쪽 끝) + JSON + 생각 토큰이 그 호출의 출력 창 × 출력 속도 안에 든다
-          const outputTokens = paragraphs * hi * TOKENS_PER_CHAR + e.jsonTokens + e.thinkingTokens;
+          // 마감 어림: 본문(위쪽 끝) + JSON + 생각 토큰(+ v2.9 개인별은 사람마다 페르소나, 마무리는 관계 카드)이 그 호출의 출력 창 × 출력 속도 안에 든다
+          const isPeople = c.part === "people" || c.part === "people_rest";
+          const extra = (isPeople ? persons * e.personaTokens : 0) + (c.part === "outro" ? e.relationshipTokens : 0);
+          const outputTokens = paragraphs * hi * TOKENS_PER_CHAR + e.jsonTokens + e.thinkingTokens + extra;
           const startsAt = c.part === "intro" ? 0 : e.ttftSec;
           const fits = (EPISODE_DEADLINE_MS / 1000 - startsAt - e.ttftSec - e.marginSec) * e.outputTokensPerSec;
           expect(outputTokens, `${label} 출력 ${outputTokens}토큰`).toBeLessThanOrEqual(fits);
@@ -683,7 +710,15 @@ describe("buildRequest", () => {
   });
 
   it("마감 어림(v2.5): 출력 120 tok/s·첫 토큰 25초·생각 2,500토큰. ①의 출력 창은 230초, ①의 첫 토큰 뒤 시작하는 나머지는 205초이고, 개인별을 나누지 않으면 빠듯하다", () => {
-    expect(DEADLINE_ESTIMATE).toEqual({ outputTokensPerSec: 120, ttftSec: 25, marginSec: 15, jsonTokens: 3_200, thinkingTokens: 2_500 });
+    expect(DEADLINE_ESTIMATE).toEqual({
+      outputTokensPerSec: 120,
+      ttftSec: 25,
+      marginSec: 15,
+      jsonTokens: 3_200,
+      thinkingTokens: 2_500,
+      personaTokens: 1_500,
+      relationshipTokens: 800,
+    });
     // 실측(report-7): 8,973토큰 / (79초 − 첫 토큰 20초) ≈ 152 tok/s. 어림 속도는 그보다 낮다
     expect(DEADLINE_ESTIMATE.outputTokensPerSec).toBeLessThan(8_973 / (79 - 20));
     expect([PARAGRAPH_MIN, PARAGRAPH_MAX]).toEqual([250, 400]);
@@ -701,10 +736,20 @@ describe("buildRequest", () => {
     const b = (3 * max(VOLUMES.full.peopleParagraphs) + 6) * PARAGRAPH_MAX + overhead;
     expect([a, b]).toEqual([12_900, 15_300]);
     expect(window(e.ttftSec) - b).toBeGreaterThanOrEqual(9_000);
+    // v2.9 페르소나(사람마다 1,500토큰): ②a·②b가 4,500토큰씩 늘어도 창 안이고 ②b에 4,800토큰(40초)이 남는다.
+    // 나누지 않았다면 6명 × 1,500이 더해져 창을 넘는다(나누는 근거가 하나 더 생긴다)
+    expect([a + 3 * e.personaTokens, b + 3 * e.personaTokens]).toEqual([17_400, 19_800]);
+    expect(window(e.ttftSec) - (b + 3 * e.personaTokens)).toBe(4_800);
+    expect(whole + PEOPLE_CAP * e.personaTokens).toBeGreaterThan(window(e.ttftSec));
+    // 실측(v2.8, 2026-11-27): 4호출 129초, 출력 합 25,931토큰. 호출 하나 평균 약 6.5K토큰이라 어림(위쪽 끝)보다 한참 작다
+    expect(25_931 / 4).toBeLessThan(b + 3 * e.personaTokens);
+    // 마무리(2섹션 × 5문단 + 관계 카드)도 창 안
+    expect(2 * max(VOLUMES.full.blockParagraphs) * PARAGRAPH_MAX + overhead + e.relationshipTokens).toBeLessThanOrEqual(window(e.ttftSec));
     // 인트로(2섹션 × 5문단)는 ① 창 안에 넉넉하다
     expect(2 * max(VOLUMES.full.blockParagraphs) * PARAGRAPH_MAX + overhead).toBeLessThanOrEqual(window(0) / 2);
     // 출력 상한은 호출 하나의 위쪽 끝보다 커서 리포트를 먼저 자르지 않는다(실제 한계는 마감)
     expect(DEFAULT_REPORT_MAX_TOKENS).toBeGreaterThanOrEqual(whole);
+    expect(DEFAULT_REPORT_MAX_TOKENS).toBeGreaterThanOrEqual(b + 3 * e.personaTokens);
   });
 
   it("couple 지시: 방·참여자 수, 연애·썸 소재(한쪽 편 없이, 판정은 대화 습관에만), 1:1은 두 사람 중심", () => {
@@ -873,11 +918,12 @@ describe("buildRequest", () => {
       required: string[];
     };
     // v2.8: 케미 온도는 섹션 앞(끊긴 응답에서도 남게), MBTI는 섹션 끝(문단을 다 쓴 뒤에 추측한다). 모두 required다
-    const top = ["safety", "declined_topics", "reading_notes", "headline", "dek", "chemistry", "sections"];
+    // v2.9: 관계 카드도 섹션 앞, 페르소나는 사람 섹션 끝
+    const top = ["safety", "declined_topics", "reading_notes", "headline", "dek", "chemistry", "relationship", "sections"];
     expect(Object.keys(schema.properties)).toEqual(top);
     expect(schema.required).toEqual(top);
     const section = schema.properties.sections.items!.properties;
-    const sectionKeys = ["part", "icon", "title", "about", "paragraphs", "evidence", "mbti", "mbti_reason"];
+    const sectionKeys = ["part", "icon", "title", "about", "paragraphs", "evidence", "mbti", "mbti_reason", "persona"];
     expect(Object.keys(section)).toEqual(sectionKeys);
     expect((schema.properties.sections.items as unknown as { required: string[] }).required).toEqual(sectionKeys);
     expect(Object.keys(section.paragraphs.items!.properties)).toEqual(["key", "text", "evidence_ids"]);

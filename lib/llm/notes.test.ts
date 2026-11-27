@@ -15,6 +15,7 @@ const section = (n: number): Report["sections"][number] => ({
   evidence: [{ id: `e${n}`, msg_id: `m${n}`, quote: `인용${n} \\ 역슬래시` }],
   mbti: "",
   mbti_reason: "",
+  persona: null,
 });
 
 const REPORT: Report = {
@@ -27,6 +28,7 @@ const REPORT: Report = {
   headline: "저녁 8시의 지도",
   dek: "석 달 동안의 흐름",
   chemistry: { score: 73, line: "석 달 내내 저녁 8시에 모인 {둘}" },
+  relationship: { one_line: "저녁 8시의 [단짝]", to_each_other: "서로의 \"마침표\"", inside_jokes: ["}", "]"], conflict: "" },
   sections: [section(1), section(2), section(3), section(4)],
 };
 

@@ -27,6 +27,8 @@
 // v2.8: 케미 온도(chemistry: 0~100 정수 점수 + 한 줄)와 사람 섹션의 MBTI 추측(mbti: ^[EI][NS][TF][JP]$, mbti_reason: 한 줄)은 범위·모양만 본다.
 //   틀리면 그 항목만 버리고(chemistry_invalid·mbti_invalid) 리포트·섹션은 그대로 둔다. 한 줄들은 제목과 같은 검사(따옴표·금지 표현·개인정보·글자 수)와
 //   자리표시자 검사에 걸리면 비운다. 점수·성격 유형 판정 자체는 v2.4 Fix 1·v2.5 정책대로 막지 않는다(금지 넷과 글자로 쓴 %만 막는다).
+// v2.9: 사람 섹션의 페르소나(persona)와 관계 카드(relationship)도 칸마다 같은 검사로 비우고, 목록은 비운 칸을 빼고 개수를 자른다.
+//   페르소나 명대사는 근거와 같은 대조(verify)로 원문을 확인하고 그 사람이 보낸 메시지만 남긴다(persona_quote_unmatched). 남은 것이 없으면 저장하지 않는다
 // 자리표시자 경로 속 범례 기호(A, B…)는 표시 이름으로 바꾼다(모델이 줄의 기호를 그대로 옮겨 쓴 경우).
 import "server-only";
 import { MAX_QUOTES_PER_REPORT, PARTIAL_DROP_RATIO } from "@/lib/config";
@@ -38,7 +40,18 @@ import { resolveStat } from "@/lib/stats/paths";
 import { type Tone, TONES } from "./concepts";
 import { sanitizeNotes } from "./notes";
 import { matchesSpeech, normalizeQuote, OVERLAP_MIN, originalSpan, overlapRatio, type SpeechIndex, speechIndex } from "./quoteMatch";
-import { type Chemistry, DECLINED_TOPICS, type DropReason, type Report, reportSchema, type StoredReport, type ValidationChecks } from "./schema";
+import {
+  type Chemistry,
+  DECLINED_TOPICS,
+  type DropReason,
+  type Report,
+  reportSchema,
+  type StoredPersona,
+  type StoredQuote,
+  type StoredRelationship,
+  type StoredReport,
+  type ValidationChecks,
+} from "./schema";
 
 type Index = ReturnType<typeof payloadIndex>;
 type IndexLine = Index extends Map<string, infer L> ? L : never;
@@ -74,7 +87,26 @@ const MBTI = /^[EI][NS][TF][JP]$/;
  * v2.2: 문단이 3~4문장(120~200자)으로 길어져 문단 상한을 800 → 1000자로 올렸다.
  * v2.3: 문단 지시가 4~7문장 250~400자로 길어져 1000 → 1200자(지시 위쪽 끝 400자의 세 배 여유)
  */
-export const MAX_CHARS = { headline: 80, dek: 200, title: 60, paragraph: 1200, icon: 8, chemistryLine: 80, mbtiReason: 80 } as const;
+export const MAX_CHARS = {
+  headline: 80,
+  dek: 200,
+  title: 60,
+  paragraph: 1200,
+  icon: 8,
+  chemistryLine: 80,
+  mbtiReason: 80,
+  // v2.9 페르소나·관계 카드
+  personaIntro: 80,
+  personaTrait: 150,
+  personaTag: 20,
+  personaHidden: 150,
+  personaTip: 100,
+  relationLine: 80,
+  relationText: 200,
+  insideJoke: 80,
+} as const;
+/** v2.9 목록 개수 상한 */
+export const PERSONA_LIMITS = { interests: 5, values: 5, quotes: 5, insideJokes: 3 } as const;
 const length = (text: string) => Array.from(text).length;
 
 /** 마지막 구성(마무리) 섹션 몫으로 따로 남겨 두는 근거 수. 그 섹션이 쓰는 만큼만(많아야 이만큼) 남긴다 */
@@ -281,6 +313,28 @@ function rawSafetyFlag(raw: unknown): string | null {
   return raw.safety.flag.trim().toLowerCase();
 }
 
+const str = (v: unknown) => (typeof v === "string" ? v : "");
+const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+/** v2.9 페르소나 손질: 객체가 아니면 null, 칸의 모양이 틀리면 빈 글·빈 목록(그 칸만 버린다) */
+function preparePersona(v: unknown): unknown {
+  if (!isRecord(v)) return null;
+  const t = isRecord(v.traits) ? v.traits : {};
+  return {
+    intro: str(v.intro),
+    traits: { communication: str(t.communication), emotion: str(t.emotion), humor: str(t.humor), energy: str(t.energy) },
+    interests: strs(v.interests),
+    values: strs(v.values),
+    quotes: Array.isArray(v.quotes) ? v.quotes.filter((q) => isRecord(q) && typeof q.msg_id === "string" && typeof q.quote === "string") : [],
+    hidden: str(v.hidden),
+    tip: str(v.tip),
+  };
+}
+/** v2.9 관계 카드 손질 */
+function prepareRelationship(v: unknown): unknown {
+  if (!isRecord(v)) return null;
+  return { one_line: str(v.one_line), to_each_other: str(v.to_each_other), inside_jokes: strs(v.inside_jokes), conflict: str(v.conflict) };
+}
+
 /** 케미 온도의 모양(정수 점수 + 글). 범위(0~100)는 validateReport가 본다 */
 const isChemistryShape = (v: unknown): v is Chemistry =>
   isRecord(v) && typeof v.score === "number" && Number.isInteger(v.score) && typeof v.line === "string";
@@ -299,6 +353,7 @@ function prepare(raw: unknown, truncated: boolean): unknown {
     obj.declined_topics = obj.declined_topics.filter((t) => (DECLINED_TOPICS as readonly unknown[]).includes(t));
   }
   if (!isChemistryShape(obj.chemistry)) obj.chemistry = null;
+  obj.relationship = prepareRelationship(obj.relationship);
   if (Array.isArray(obj.sections)) {
     obj.sections = obj.sections.map((s) =>
       isRecord(s)
@@ -307,6 +362,7 @@ function prepare(raw: unknown, truncated: boolean): unknown {
             part: s.part === undefined ? "" : s.part,
             mbti: typeof s.mbti === "string" ? s.mbti : "",
             mbti_reason: typeof s.mbti_reason === "string" ? s.mbti_reason : "",
+            persona: preparePersona(s.persona),
           }
         : s,
     );
@@ -506,6 +562,47 @@ export function validateReport(
     drop("mbti_invalid");
     return null;
   };
+  /** 칸 하나(제목과 같은 검사) */
+  const line = (text: string, max: number) => cleanLine(named(text), max, stats, corpus, opts.members, checks);
+  /** 목록: 칸마다 검사하고 비운 칸은 빼고 limit개까지 */
+  const list = (items: string[], max: number, limit: number, fix: (t: string) => string = (t) => t.trim()) =>
+    items
+      .map((t) => line(fix(t), max))
+      .filter((t) => t !== "")
+      .slice(0, limit);
+  /** v2.9 페르소나: 사람 섹션만. 남은 것이 없으면 null */
+  const personaOf = (raw: NonNullable<Report["sections"][number]["persona"]>, person: string): StoredPersona | null => {
+    const quotes: StoredQuote[] = [];
+    for (const q of raw.quotes) {
+      if (quotes.length >= PERSONA_LIMITS.quotes) break;
+      const found = q.quote.trim() === "" ? null : verify({ id: "", msg_id: q.msg_id, quote: q.quote }, person);
+      if (found === null || found.sender !== person) {
+        drop("persona_quote_unmatched");
+        continue;
+      }
+      if (quotes.some((x) => x.msg_id === found.msg_id)) continue;
+      quotes.push({ msg_id: found.msg_id, quote: found.quote, sender: found.sender, at: found.at });
+    }
+    const persona: StoredPersona = {
+      intro: line(raw.intro, MAX_CHARS.personaIntro),
+      traits: {
+        communication: line(raw.traits.communication, MAX_CHARS.personaTrait),
+        emotion: line(raw.traits.emotion, MAX_CHARS.personaTrait),
+        humor: line(raw.traits.humor, MAX_CHARS.personaTrait),
+        energy: line(raw.traits.energy, MAX_CHARS.personaTrait),
+      },
+      interests: list(raw.interests, MAX_CHARS.personaTag, PERSONA_LIMITS.interests),
+      // 해시태그는 #·띄어쓰기를 뗀다(화면이 #을 붙인다)
+      values: list(raw.values, MAX_CHARS.personaTag, PERSONA_LIMITS.values, (t) => t.replace(/[#\s]/g, "")),
+      quotes,
+      hidden: line(raw.hidden, MAX_CHARS.personaHidden),
+      tip: line(raw.tip, MAX_CHARS.personaTip),
+    };
+    const empty =
+      [persona.intro, persona.hidden, persona.tip, ...Object.values(persona.traits)].every((t) => t === "") &&
+      persona.interests.length + persona.values.length + quotes.length === 0;
+    return empty ? null : persona;
+  };
   const sections: StoredSection[] = judged.map((j) => {
     const closing = isClosing(j);
     const budget = closing ? quotesLeft : quotesLeft - reserveLeft;
@@ -517,8 +614,9 @@ export function validateReport(
     paragraphsOut += j.paragraphs.length;
     evidenceOut += evidence.length;
     // v2.8: MBTI는 사람 섹션에만 남긴다(pair·group 섹션에 쓴 것은 세지 않고 버린다). 이유는 MBTI가 남을 때만
-    const { mbti: rawMbti, mbti_reason: rawReason, ...section } = j.section;
+    const { mbti: rawMbti, mbti_reason: rawReason, persona: rawPersona, ...section } = j.section;
     const mbti = j.aboutPerson ? mbtiOf(rawMbti) : null;
+    const persona = j.aboutPerson && rawPersona ? personaOf(rawPersona, section.about) : null;
     const reason = mbti === null ? "" : cleanLine(named(rawReason), MAX_CHARS.mbtiReason, stats, corpus, opts.members, checks);
     return {
       ...section,
@@ -530,11 +628,23 @@ export function validateReport(
       evidence,
       ...(mbti === null ? {} : { mbti }),
       ...(reason === "" ? {} : { mbti_reason: reason }),
+      ...(persona === null ? {} : { persona }),
     };
   });
 
   // v2.8 케미 온도: null·없음(맡지 않은 응답·예전 출력)은 세지 않고, 모양(prepare가 null로 바꾼 것)·범위가 틀리면 chemistry_invalid
-  const { chemistry: parsedChemistry, ...rest } = report;
+  const { chemistry: parsedChemistry, relationship: parsedRelationship, ...rest } = report;
+  // v2.9 관계 카드: 칸마다 검사하고, 남은 것이 없으면 저장하지 않는다(세지 않는다)
+  let relationship: StoredRelationship | null = null;
+  if (parsedRelationship) {
+    const r: StoredRelationship = {
+      one_line: line(parsedRelationship.one_line, MAX_CHARS.relationLine),
+      to_each_other: line(parsedRelationship.to_each_other, MAX_CHARS.relationText),
+      inside_jokes: list(parsedRelationship.inside_jokes, MAX_CHARS.insideJoke, PERSONA_LIMITS.insideJokes),
+      conflict: line(parsedRelationship.conflict, MAX_CHARS.relationText),
+    };
+    if ([r.one_line, r.to_each_other, r.conflict].some((t) => t !== "") || r.inside_jokes.length > 0) relationship = r;
+  }
   const rawChemistry = isRecord(raw) ? raw.chemistry : undefined;
   let chemistry: Chemistry | null = null;
   if (rawChemistry !== null && rawChemistry !== undefined) {
@@ -548,6 +658,7 @@ export function validateReport(
   const content: StoredReport = {
     ...rest,
     ...(chemistry === null ? {} : { chemistry }),
+    ...(relationship === null ? {} : { relationship }),
     checks,
     reading_notes: sanitizeNotes(report.reading_notes.map((n) => ({ ...n, note: named(n.note) }))),
     headline: clean(named(report.headline), MAX_CHARS.headline, stats, corpus, opts.members, checks),

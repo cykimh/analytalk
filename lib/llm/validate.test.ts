@@ -40,6 +40,7 @@ const sec = (title: string, paragraphs: Paragraph[], evidence: Section["evidence
   evidence,
   mbti: "",
   mbti_reason: "",
+  persona: null,
 });
 const report = (sections: Section[], extra: Partial<Report> = {}): Report => ({
   safety: { flag: "none" },
@@ -48,6 +49,7 @@ const report = (sections: Section[], extra: Partial<Report> = {}): Report => ({
   headline: "저녁 8시의 대화",
   dek: "사흘 동안의 흐름",
   chemistry: null,
+  relationship: null,
   sections,
   ...extra,
 });
@@ -1114,6 +1116,113 @@ describe("validateReport", () => {
       const r = run(report([{ ...person("철수", ""), mbti: 7 as unknown as string, mbti_reason: null as unknown as string }]));
       expect(r.status).toBe("done");
       expect(r.content?.sections[0]).not.toHaveProperty("mbti");
+    });
+  });
+
+  // v2.9: 개인별 호출이 사람 섹션마다 페르소나를, 마무리 호출이 관계 카드를 쓴다. 글은 제목처럼 검사하고, 명대사는 근거처럼 원문과 대 본다
+  describe("v2.9 페르소나·관계 카드", () => {
+    type Persona = NonNullable<Section["persona"]>;
+    const full = (over: Partial<Persona> = {}): Persona => ({
+      intro: "질문으로 하루를 여는 사람",
+      traits: { communication: "짧게 묻고 길게 기다린다.", emotion: "좋으면 바로 말한다.", humor: "영화 대사로 웃긴다.", energy: "저녁 8시에 켜진다." },
+      interests: ["영화", "저녁 메뉴", "주말"],
+      values: ["#약속은지킨다", "솔직함", " #저녁형 인간 "],
+      quotes: [
+        { msg_id: "m0", quote: "오늘 뭐해?" },
+        { msg_id: "m2", quote: "영화 볼래?" },
+      ],
+      hidden: "사실 영화보다 같이 보는 사람이 좋다.",
+      tip: "저녁 8시 전에 말을 걸면 답이 빠르다.",
+      ...over,
+    });
+    const chulsoo = (persona: unknown) => ({ ...sec("철수 카드", [para("p1", "철수는 저녁마다 묻는다")], [], "철수", "nag_cards"), persona }) as Section;
+    const stored = (persona: unknown) => run(report([chulsoo(persona)])).content!.sections[0];
+
+    it("사람 섹션의 페르소나를 저장한다: 명대사는 그 사람의 메시지로 확인해 번호·시각을 채우고, 해시태그는 #·띄어쓰기를 뗀다", () => {
+      const r = run(report([chulsoo(full())]));
+      expect(r.status).toBe("done");
+      expect(r.content?.sections[0].persona).toEqual({
+        intro: "질문으로 하루를 여는 사람",
+        traits: { communication: "짧게 묻고 길게 기다린다.", emotion: "좋으면 바로 말한다.", humor: "영화 대사로 웃긴다.", energy: "저녁 8시에 켜진다." },
+        interests: ["영화", "저녁 메뉴", "주말"],
+        values: ["약속은지킨다", "솔직함", "저녁형인간"],
+        quotes: [
+          { msg_id: "m0", quote: "오늘 뭐해?", sender: "철수", at: "2026-10-01T20:00:00+09:00" },
+          { msg_id: "m2", quote: "영화 볼래?", sender: "철수", at: "2026-10-01T20:06:00+09:00" },
+        ],
+        hidden: "사실 영화보다 같이 보는 사람이 좋다.",
+        tip: "저녁 8시 전에 말을 걸면 답이 빠르다.",
+      });
+      expect(r.content?.checks?.dropped_by).toEqual({});
+    });
+
+    it("명대사: 원문에 없거나 다른 사람의 말이면 빼고(persona_quote_unmatched), 번호가 틀려도 그 사람의 말이면 다시 잇는다. 많아야 5개, 같은 메시지는 한 번", () => {
+      const quotes = [
+        { msg_id: "m1", quote: "쉬는 중" }, // 민지의 말
+        { msg_id: "m0", quote: "지어낸 대사" },
+        { msg_id: "m9", quote: "오늘 뭐해?" }, // 번호가 틀림 → 가까운 철수 메시지(m8)
+        { msg_id: "m8", quote: "오늘 뭐해?" }, // 위와 같은 메시지
+        { msg_id: "m4", quote: "오늘 뭐해?" },
+        { msg_id: "m0", quote: "오늘 뭐해?" },
+        { msg_id: "m2", quote: "영화 볼래?" },
+        { msg_id: "m6", quote: "영화 볼래?" },
+        { msg_id: "m10", quote: "영화 볼래?" },
+      ];
+      const r = run(report([chulsoo(full({ quotes }))]));
+      const kept = r.content!.sections[0].persona!.quotes;
+      expect(kept.map((q) => [q.msg_id, q.sender])).toEqual([
+        ["m8", "철수"],
+        ["m4", "철수"],
+        ["m0", "철수"],
+        ["m2", "철수"],
+        ["m6", "철수"],
+      ]);
+      expect(r.content?.checks?.dropped_by).toEqual({ persona_quote_unmatched: 2 });
+    });
+
+    it("글이 길거나 금지 표현·개인정보가 든 칸만 비우고, 목록은 비운 칸을 빼고 관심사·해시태그 5개까지(20자 이하)", () => {
+      const p = stored(
+        full({
+          intro: "가".repeat(81),
+          hidden: "철수는 게이다",
+          tip: "연락은 010-1234-5678",
+          traits: { communication: "가".repeat(151), emotion: "좋으면 바로 말한다.", humor: "", energy: "저녁형" },
+          interests: ["영화", "", "가".repeat(21), "주말", "야식", "산책", "게임", "음악"],
+          values: ["#", "#하나", "둘", "셋", "넷", "다섯", "여섯"],
+        }),
+      ).persona!;
+      expect([p.intro, p.hidden, p.tip]).toEqual(["", "", ""]);
+      expect(p.traits).toEqual({ communication: "", emotion: "좋으면 바로 말한다.", humor: "", energy: "저녁형" });
+      expect(p.interests).toEqual(["영화", "주말", "야식", "산책", "게임"]);
+      expect(p.values).toEqual(["하나", "둘", "셋", "넷", "다섯"]);
+    });
+
+    it("사람이 아닌 섹션·null·모양이 틀린 것·남은 것이 없는 페르소나는 저장하지 않는다(리포트는 그대로)", () => {
+      const group = run(report([{ ...sec("둘", [para("p1", "저녁마다 이야기했다")]), persona: full() } as Section]));
+      expect(group.content?.sections[0]).not.toHaveProperty("persona");
+      for (const bad of [null, undefined, "페르소나", { intro: 3 }, full({ intro: "", hidden: "", tip: "", interests: [], values: [], quotes: [], traits: { communication: "", emotion: "", humor: "", energy: "" } })]) {
+        const r = run(report([chulsoo(bad)]));
+        expect(r.status, JSON.stringify(bad)).toBe("done");
+        expect(r.content?.sections[0]).not.toHaveProperty("persona");
+      }
+    });
+
+    it("관계 카드: 글을 검사해 저장하고 내부 농담은 3개까지. null·모양 오류·빈 카드는 저장하지 않는다", () => {
+      const relationship = {
+        one_line: "저녁 8시마다 출석하는 2인조",
+        to_each_other: "철수에게 민지는 하루의 마침표, 민지에게 철수는 질문 담당이다.",
+        inside_jokes: ["영화 볼래?", "", "쉬는 중", "넷째", "다섯째"],
+        conflict: "영화를 고를 때 부딪히지만 결국 민지가 정한다.",
+      };
+      const r = run(report([sec("저녁", [para("p1", "저녁마다 이야기가 이어졌다")])], { relationship } as Partial<Report>));
+      expect(r.content?.relationship).toEqual({ ...relationship, inside_jokes: ["영화 볼래?", "쉬는 중", "넷째"] });
+      const banned = run(report([sec("저녁", [para("p1", "저녁마다 이야기가 이어졌다")])], { relationship: { ...relationship, one_line: "케미 92%" } } as Partial<Report>));
+      expect(banned.content?.relationship?.one_line).toBe("");
+      for (const bad of [null, "관계", { one_line: 1 }, { one_line: "", to_each_other: "", inside_jokes: [], conflict: "" }]) {
+        const x = run(report([sec("저녁", [para("p1", "저녁마다 이야기가 이어졌다")])], { relationship: bad } as unknown as Partial<Report>));
+        expect(x.status, JSON.stringify(bad)).toBe("done");
+        expect(x.content).not.toHaveProperty("relationship");
+      }
     });
   });
 

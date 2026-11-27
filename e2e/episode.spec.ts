@@ -9,8 +9,8 @@ import { androidChat, excludeMember, expectNoHorizontalScroll, fakeTurnstile, lo
 // 페이지(서버 컴포넌트)의 초대 코드 확인만 진짜 세션을 쓴다.
 
 const ID = "0b6c3f1e-2a4d-4c5b-9e8f-7a6b5c4d3e2f";
-/** 413 응답의 maxTokens. 입력 예산 − 프롬프트 몫 − 통계·범례 몫이 1,000 이상 남는 값이다(v2.4: 프롬프트 몫 9,000이라 12,000 → 13,000) */
-const MAX_TOKENS_413 = 13_000;
+/** 413 응답의 maxTokens. 입력 예산 − 프롬프트 몫 − 통계·범례 몫이 1,000 이상 남는 값이다(v2.4: 프롬프트 몫 9,000이라 12,000 → 13,000, v2.9: 10,500이라 14,000) */
+const MAX_TOKENS_413 = 14_000;
 /** 413 테스트용 긴 대화: 첫 페이로드가 재시도 예산(maxTokens × 0.95)을 넘도록 철수가 긴 메시지를 더 보낸다 */
 const LONG_BODIES = Array.from({ length: 12 }, (_, i) => `${i + 1}번째 긴 이야기 ${"오늘 저녁에 뭐 먹을지 한참 고민하다가 결국 집 앞 국밥집에 갔어요 ".repeat(12)}`);
 const XSS = "<img src=x onerror=alert(1)>";

@@ -492,6 +492,40 @@ describe("runReportJob (v2.5 나눠 쓰기: ① 인트로 → ② 개인별 → 
     expect(c.checks?.dropped_by).toEqual({ mbti_invalid: 1 });
   });
 
+  it("v2.9: 관계 카드는 ③ 마무리의 것만, 페르소나는 ② 개인별의 사람 섹션 것만 저장한다(명대사는 그 사람의 실제 메시지만)", async () => {
+    const rel = (one_line: string) => ({ one_line, to_each_other: "서로의 저녁 알림", inside_jokes: ["영화 볼래?"], conflict: "" });
+    const persona = (name: string, quote: { msg_id: string; quote: string }) => ({
+      intro: `${name}는 저녁형`,
+      traits: { communication: "짧다", emotion: "솔직하다", humor: "", energy: "저녁에 켜진다" },
+      interests: ["영화"],
+      values: ["#저녁형"],
+      quotes: [quote],
+      hidden: "",
+      tip: "",
+    });
+    const blank = { reading_notes: [], headline: "", dek: "" };
+    const people = stageJson("people").sections.map((x: { about: string }) => ({
+      ...x,
+      // 둘 다 철수의 말(m0)을 명대사로 든다: 민지 것은 빠진다
+      persona: persona(x.about, { msg_id: "m0", quote: "오늘 뭐해?" }),
+    }));
+    const s = await setup((p) =>
+      staged(p, {
+        intro: whole(JSON.stringify(stageJson("intro", { relationship: rel("인트로가 쓴 관계") }))),
+        people: whole(JSON.stringify(reportJson({ ...blank, relationship: rel("개인별이 쓴 관계"), sections: people }))),
+        outro: whole(JSON.stringify(stageJson("outro", { relationship: rel("저녁 8시의 2인조") }))),
+      }),
+    );
+    await s.run();
+    const c = await s.content();
+    expect(c.relationship).toEqual(rel("저녁 8시의 2인조"));
+    const [, chulsoo, minji] = c.sections;
+    expect(chulsoo.persona).toMatchObject({ intro: "철수는 저녁형", values: ["저녁형"], quotes: [{ msg_id: "m0", sender: "철수", quote: "오늘 뭐해?" }] });
+    // 민지의 명대사로 든 철수의 말은 빠진다(다른 칸은 남는다)
+    expect(minji.persona).toMatchObject({ intro: "민지는 저녁형", quotes: [] });
+    expect(c.checks?.dropped_by).toEqual({ persona_quote_unmatched: 1 });
+  });
+
   it("v2.8: 인트로가 케미 온도를 쓰지 않았거나 빠졌으면(실패) 케미 온도 없이 저장한다", async () => {
     const s = await setup((p) => staged(p, { intro: whole("JSON이 아닌 응답") }));
     await s.run();
