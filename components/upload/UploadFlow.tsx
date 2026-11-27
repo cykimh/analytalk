@@ -17,7 +17,7 @@ import {
   retryBuildInput,
 } from "@/lib/client/worker";
 import { TOKENS_PER_CHAR } from "@/lib/config";
-import { DEFAULT_TONE, type Tone } from "@/lib/llm/concepts";
+import { DEFAULT_TONE, type PickableTone } from "@/lib/llm/concepts";
 import type { Payload } from "@/lib/payload/build";
 import type { ParseResult } from "@/lib/parse/parse";
 import { ConfirmStep } from "./ConfirmStep";
@@ -56,7 +56,7 @@ export function UploadFlow({ inApp, inputBudget }: { inApp: boolean; inputBudget
   const [error, setError] = useState<string | null>(null);
   const [parse, setParse] = useState<ParseResult | null>(null);
   const [kind, setKind] = useState<Kind>("group");
-  const [tone, setTone] = useState<Tone>(DEFAULT_TONE);
+  const [tone, setTone] = useState<PickableTone>(DEFAULT_TONE);
   const [kindChosen, setKindChosen] = useState(false);
   const [names, setNames] = useState<NameState>({ names: {}, sameAs: {}, excluded: [] });
   const [built, setBuilt] = useState<Built | null>(null);

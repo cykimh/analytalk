@@ -108,11 +108,15 @@ describe("validatePayload", () => {
     expect(reject({ ...p, transcript: p.transcript.split("\n").slice(1).join("\n") })).toMatch(/날짜 헤더/);
   });
 
-  it("말투 6개(fact·warm·show·docu·detective·record)는 모두 받는다", () => {
-    for (const tone of ["fact", "warm", "show", "docu", "detective", "record"]) {
+  it("고를 수 있는 말투 5개(fact·warm·show·docu·detective)는 모두 받는다", () => {
+    for (const tone of ["fact", "warm", "show", "docu", "detective"]) {
       const out = validatePayload({ ...payload(), tone });
       expect(out.ok, tone).toBe(true);
     }
+  });
+
+  it("v2.3: 담임 선생님(warm)으로 합친 예전 말투 record는 새 요청에서 거부(구조)", () => {
+    expect(reject({ ...payload(), tone: "record" })).toMatch(/구조/);
   });
 
   it("tone이 없거나 모르는 값이면, me 키가 있으면, members가 1명이면 → 거부", () => {

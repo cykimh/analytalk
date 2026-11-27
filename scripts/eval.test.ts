@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_EST_COST_USD, inputTokenBudgetFor } from "@/lib/config";
-import { TONE_KEYS } from "@/lib/llm/concepts";
+import { PICKABLE_TONES } from "@/lib/llm/concepts";
 import { modelSettings } from "@/lib/llm/settings";
 import { buildPayload, payloadIndex } from "@/lib/payload/build";
 import type { ChatMessage, ParseResult } from "@/lib/parse/parse";
@@ -21,10 +21,11 @@ import {
 } from "./eval";
 
 describe("parseArgs", () => {
-  it("--dir만 주면 기본값: 모델은 앱 기본, 말투는 전부", () => {
-    expect(parseArgs(["--dir", "g"])).toEqual({ dir: "g", models: [], tones: [...TONE_KEYS], limit: null, dryRun: false, prod: false, yes: false });
-    expect(parseArgs(["--dir", "g"]).tones).toEqual(["fact", "warm", "show", "docu", "detective", "record"]);
-    expect(parseArgs(["--dir", "g", "--tone", "docu", "--tone", "record"]).tones).toEqual(["docu", "record"]);
+  it("--dir만 주면 기본값: 모델은 앱 기본, 말투는 고를 수 있는 5개 전부(v2.3: record 없음)", () => {
+    expect(parseArgs(["--dir", "g"])).toEqual({ dir: "g", models: [], tones: [...PICKABLE_TONES], limit: null, dryRun: false, prod: false, yes: false });
+    expect(parseArgs(["--dir", "g"]).tones).toEqual(["fact", "warm", "show", "docu", "detective"]);
+    expect(parseArgs(["--dir", "g", "--tone", "docu", "--tone", "detective"]).tones).toEqual(["docu", "detective"]);
+    expect(() => parseArgs(["--dir", "g", "--tone", "record"])).toThrow(/tone/);
   });
   it("옵션을 읽는다: --model·--tone은 여러 번", () => {
     expect(parseArgs(["--dir", "g", "--model", "a", "--model", "b", "--tone", "warm", "--limit", "4", "--dry-run", "--prod", "--yes"])).toEqual({
@@ -98,10 +99,10 @@ describe("prepareCases", () => {
   const files = [{ path: "group/a.txt", concept: "group" as const, injection: true }];
   const models = ["claude-sonnet-5-5", "claude-opus-5-5"];
 
-  it("파일 1 × 말투 6 × 모델 2 = 12건, 파일 → 말투 → 모델 순서", () => {
-    const cases = prepareCases(files, [parsed], models, [...TONE_KEYS]);
-    expect(cases).toHaveLength(12);
-    expect(cases.map((c) => `${c.tone}/${c.model}`)).toEqual(TONE_KEYS.flatMap((t) => models.map((m) => `${t}/${m}`)));
+  it("파일 1 × 말투 5 × 모델 2 = 10건, 파일 → 말투 → 모델 순서", () => {
+    const cases = prepareCases(files, [parsed], models, [...PICKABLE_TONES]);
+    expect(cases).toHaveLength(10);
+    expect(cases.map((c) => `${c.tone}/${c.model}`)).toEqual(PICKABLE_TONES.flatMap((t) => models.map((m) => `${t}/${m}`)));
     expect(cases.every((c) => c.label === "group-1-injection" && c.concept === "group" && c.injection)).toBe(true);
     expect(cases.every((c, i) => c.payload.tone === cases[i].tone)).toBe(true);
   });

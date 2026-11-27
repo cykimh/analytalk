@@ -2,7 +2,7 @@
 // 오류 문구에는 본문·이름·키 값을 싣지 않는다. 응답이나 로그에 남을 수 있어서다.
 import { z } from "zod";
 import { MAX_PAYLOAD_BYTES } from "@/lib/config";
-import { TONE_KEYS } from "@/lib/llm/concepts";
+import { PICKABLE_TONES } from "@/lib/llm/concepts";
 import type { ChatStats } from "@/lib/stats/compute";
 import { memberCodes, type Payload, readBlock } from "./build";
 import { maskPII } from "./mask";
@@ -62,7 +62,8 @@ const payloadSchema = z.strictObject({
   v: z.literal(2),
   concept: z.enum(["group", "couple"]),
   kind: z.enum(["pair", "group", "work"]),
-  tone: z.enum(TONE_KEYS),
+  // v2.3: 고를 수 있는 말투만 받는다. 예전 말투 record는 400(구조 오류)
+  tone: z.enum(PICKABLE_TONES),
   members: z.array(z.string()).min(2),
   period: z.strictObject({ start: z.string().regex(DAY), end: z.string().regex(DAY) }),
   cutoffAt: z.string().regex(ISO_KST),

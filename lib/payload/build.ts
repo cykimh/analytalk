@@ -10,7 +10,7 @@ import {
   SAMPLE_TAIL_SHARE,
   SILENCE_GAP_MS,
 } from "@/lib/config";
-import type { Tone } from "@/lib/llm/concepts";
+import type { PickableTone } from "@/lib/llm/concepts";
 import type { ChatMessage, MsgKind } from "@/lib/parse/parse";
 import { type ChatStats, computeStats } from "@/lib/stats/compute";
 import { statsForPrompt } from "@/lib/stats/view";
@@ -20,8 +20,8 @@ export interface Payload {
   v: 2;
   concept: "group" | "couple";
   kind: "pair" | "group" | "work";
-  /** 리포트 말투 */
-  tone: Tone;
+  /** 리포트 말투. 새 리포트는 고를 수 있는 말투(PICKABLE_TONES)만 쓴다(v2.3: record는 저장된 행에만 있다) */
+  tone: PickableTone;
   /** 분석에 넣은 발신자 표시 이름(처음 나온 순서, 2명 이상). 줄 안의 기호는 이 순서의 memberCodes다 */
   members: string[];
   /** 첫·마지막 메시지의 KST 날짜 YYYY-MM-DD */
@@ -206,7 +206,7 @@ export type BuildInput = {
   messages: ChatMessage[];
   concept: Payload["concept"];
   kind: Payload["kind"];
-  tone: Tone;
+  tone: PickableTone;
   tokenBudget: number;
   tokensPerChar: number;
 };

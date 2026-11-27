@@ -47,8 +47,11 @@ const STAT = "stat:";
 const TRUNCATED_DEFAULTS = { declined_topics: [], reading_notes: [], headline: "", dek: "", sections: [] };
 
 /** 모델 글의 글자 수 상한(코드 포인트). 넘으면 자르지 않고 비운다(자르면 자리표시자가 반쪽이 될 수 있다). system 프롬프트도 알린다 */
-/** v2.2: 문단이 3~4문장(120~200자)으로 길어져 문단 상한을 800 → 1000자로 올렸다(지시 상한 200자의 다섯 배 여유) */
-export const MAX_CHARS = { headline: 80, dek: 200, title: 60, paragraph: 1000, icon: 8 } as const;
+/**
+ * v2.2: 문단이 3~4문장(120~200자)으로 길어져 문단 상한을 800 → 1000자로 올렸다.
+ * v2.3: 문단 지시가 4~7문장 250~400자로 길어져 1000 → 1200자(지시 위쪽 끝 400자의 세 배 여유)
+ */
+export const MAX_CHARS = { headline: 80, dek: 200, title: 60, paragraph: 1200, icon: 8 } as const;
 const length = (text: string) => Array.from(text).length;
 
 /** 마지막 구성(마무리) 섹션 몫으로 따로 남겨 두는 근거 수. 그 섹션이 쓰는 만큼만(많아야 이만큼) 남긴다 */

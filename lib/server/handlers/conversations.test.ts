@@ -337,6 +337,17 @@ describe("POST /api/conversations", () => {
     expect(h.counts).toHaveLength(0);
   });
 
+  it("v2.3: 고르기 화면에서 뺀 말투 record로 새 대화를 만들면 400 bad_payload(countTokens·claim 없음)", async () => {
+    const h = await harness();
+    const claim = vi.spyOn(h.repo, "claim");
+    const res = await handleCreateConversation(create(h.cookie, { ...makePayload(), tone: "record" }), h.deps);
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ error: "bad_payload" });
+    expect(h.counts).toHaveLength(0);
+    expect(claim).not.toHaveBeenCalled();
+    expect(h.streams).toHaveLength(0);
+  });
+
   it("Anthropic 키(client)가 없으면 503. 가짜 클라이언트로 돌지 않는다", async () => {
     const h = await harness();
     const noClient = await handleCreateConversation(create(h.cookie, makePayload()), { ...h.deps, client: null });

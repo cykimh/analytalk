@@ -23,7 +23,7 @@ import { pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
 import { DEFAULT_EST_COST_USD, EPISODE_DEADLINE_MS, TOKENS_PER_CHAR } from "../lib/config";
 import { renderStatPlain } from "../lib/episode/statText";
-import { TONE_KEYS, TONES, type Tone } from "../lib/llm/concepts";
+import { PICKABLE_TONES, type PickableTone, TONES } from "../lib/llm/concepts";
 import { estimateCostUsd } from "../lib/llm/cost";
 import { buildRequest, PROMPT_VERSION } from "../lib/llm/prompt";
 import type { StoredReport } from "../lib/llm/schema";
@@ -49,7 +49,7 @@ export interface Args {
   dir: string;
   /** 비어 있으면 앱 기본 모델 */
   models: string[];
-  tones: Tone[];
+  tones: PickableTone[];
   limit: number | null;
   dryRun: boolean;
   prod: boolean;
@@ -60,7 +60,7 @@ export function parseArgs(argv: string[]): Args {
   let dir: string | undefined;
   let models: string[] = [];
   let compare = false;
-  const tones: Tone[] = [];
+  const tones: PickableTone[] = [];
   let limit: number | null = null;
   let dryRun = false;
   let prod = false;
@@ -80,8 +80,8 @@ export function parseArgs(argv: string[]): Args {
       models.push(v);
     } else if (a === "--tone") {
       const v = argv[++i];
-      if (!(TONE_KEYS as readonly string[]).includes(v)) throw new Error(`--tone은 ${TONE_KEYS.join("|")}이다`);
-      tones.push(v as Tone);
+      if (!(PICKABLE_TONES as readonly string[]).includes(v)) throw new Error(`--tone은 ${PICKABLE_TONES.join("|")}이다`);
+      tones.push(v as PickableTone);
     } else if (a === "--limit") {
       const v = Number(argv[++i]);
       if (!Number.isInteger(v) || v < 1) throw new Error("--limit은 1 이상의 정수다");
@@ -94,7 +94,7 @@ export function parseArgs(argv: string[]): Args {
     if (models.length > 0) throw new Error("--compare와 --model은 함께 쓰지 않는다");
     models = [...COMPARE_MODELS];
   }
-  return { dir, models, tones: tones.length > 0 ? [...new Set(tones)] : [...TONE_KEYS], limit, dryRun, prod, yes };
+  return { dir, models, tones: tones.length > 0 ? [...new Set(tones)] : [...PICKABLE_TONES], limit, dryRun, prod, yes };
 }
 
 // ── 골든셋 찾기 ──
@@ -140,7 +140,7 @@ export interface EvalCase {
   label: string;
   concept: "group" | "couple";
   injection: boolean;
-  tone: Tone;
+  tone: PickableTone;
   model: string;
   payload: Payload;
 }
@@ -151,7 +151,7 @@ export function caseSettings(model: string, env: Record<string, string | undefin
 }
 
 /** 파일(과 파싱 결과, 같은 순서) × 말투 × 모델의 케이스. 순서는 파일 → 말투 → 모델. 페이로드는 (파일, 모델 예산, 말투)마다 만든다 */
-export function prepareCases(files: GoldenFile[], parsed: ParseResult[], models: string[], tones: Tone[]): EvalCase[] {
+export function prepareCases(files: GoldenFile[], parsed: ParseResult[], models: string[], tones: PickableTone[]): EvalCase[] {
   const counter = { group: 0, couple: 0 };
   const out: EvalCase[] = [];
   files.forEach((f, i) => {
@@ -172,7 +172,7 @@ export function prepareCases(files: GoldenFile[], parsed: ParseResult[], models:
 
 export interface ReportScore {
   label: string;
-  tone: Tone;
+  tone: PickableTone;
   /** 요청한 모델 */
   model: string;
   /** 실제로 응답한 모델 */
@@ -323,16 +323,16 @@ function summarize(scores: ReportScore[]): Summary {
 
 export function summarizeEval(scores: ReportScore[]): {
   byModel: Record<string, Summary>;
-  byModelTone: Record<string, Partial<Record<Tone, Summary>>>;
+  byModelTone: Record<string, Partial<Record<PickableTone, Summary>>>;
 } {
   const models = [...new Set(scores.map((s) => s.model))];
   const byModel: Record<string, Summary> = {};
-  const byModelTone: Record<string, Partial<Record<Tone, Summary>>> = {};
+  const byModelTone: Record<string, Partial<Record<PickableTone, Summary>>> = {};
   for (const model of models) {
     const mine = scores.filter((s) => s.model === model);
     byModel[model] = summarize(mine);
     byModelTone[model] = {};
-    for (const tone of TONE_KEYS) {
+    for (const tone of PICKABLE_TONES) {
       const t = mine.filter((s) => s.tone === tone);
       if (t.length > 0) byModelTone[model][tone] = summarize(t);
     }
@@ -395,7 +395,7 @@ export async function evalCase(
 
 export interface ReviewItem {
   label: string;
-  tone: Tone;
+  tone: PickableTone;
   model: string;
   content: StoredReport | null;
   stats: ChatStats;

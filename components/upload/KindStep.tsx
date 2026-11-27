@@ -1,8 +1,9 @@
 "use client";
 
 // 방 종류와 리포트 말투를 고른다. 직장·팀은 AI가 꺼져 있어 말투를 묻지 않는다.
-// 말투는 모두 방 밖의 제3자가 바라본 컨셉이다(TONE_KEYS 순서, 기본 잔소리하는 친구)
-import { type Tone, TONE_KEYS, TONES } from "@/lib/llm/concepts";
+// 말투는 모두 방 밖의 제3자가 바라본 컨셉이다(PICKABLE_TONES 순서 5개, 기본 잔소리하는 친구).
+// v2.3: 담임의 생활기록부(record)는 담임 선생님(warm)으로 합쳐 고르기에서 뺐다
+import { PICKABLE_TONES, type PickableTone, TONES } from "@/lib/llm/concepts";
 import { type Kind, KIND_LABEL } from "./flow";
 import { NextButton, StepFrame } from "./StepFrame";
 
@@ -12,13 +13,12 @@ const KIND_NOTE: Record<Kind, string> = {
   work: "M3 예정 · 지금은 통계만 볼 수 있어요",
 };
 
-const TONE_NOTE: Record<Tone, string> = {
+const TONE_NOTE: Record<PickableTone, string> = {
   fact: "행동을 꼬집는 잔소리. “답장 늦는 거 다 보여”",
-  warm: "같은 패턴을 서로를 이해하는 쪽으로, 다정하게",
+  warm: "학생마다 다정하고 구체적인 종합 의견, 칭찬과 고칠 점을 함께",
   show: "과장된 비유와 별명, 자막 같은 한 줄",
   docu: "“이 무리는 해가 지면 비로소 활발해진다”",
   detective: "사건 개요·증거물·용의 패턴·결론, 진지한 척 수사 보고",
-  record: "멤버마다 ‘행동 특성 및 종합 의견’을 적는 담임 코멘트",
 };
 
 export function KindStep({
@@ -31,10 +31,10 @@ export function KindStep({
   onNext,
 }: {
   kind: Kind;
-  tone: Tone;
+  tone: PickableTone;
   busy: boolean;
   onKind: (kind: Kind) => void;
-  onTone: (tone: Tone) => void;
+  onTone: (tone: PickableTone) => void;
   onBack: () => void;
   onNext: () => void;
 }) {
@@ -56,7 +56,7 @@ export function KindStep({
       {kind !== "work" && (
         <fieldset className="grid gap-2" disabled={busy}>
           <legend className="mb-2 text-base font-bold">말투</legend>
-          {TONE_KEYS.map((t) => (
+          {PICKABLE_TONES.map((t) => (
             <label key={t} className={radio}>
               <input type="radio" name="tone" value={t} checked={tone === t} onChange={() => onTone(t)} className="mt-1 shrink-0" />
               <span className="grid gap-0.5">

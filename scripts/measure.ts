@@ -24,7 +24,7 @@ import { createInterface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
 import { DEFAULT_EST_COST_USD, EPISODE_DEADLINE_MS, TOKENS_PER_CHAR } from "../lib/config";
-import { DEFAULT_TONE, TONE_KEYS, type Tone } from "../lib/llm/concepts";
+import { DEFAULT_TONE, PICKABLE_TONES, type PickableTone } from "../lib/llm/concepts";
 import { estimateCostUsd } from "../lib/llm/cost";
 import { buildRequest } from "../lib/llm/prompt";
 import { type ModelSettings, modelSettings } from "../lib/llm/settings";
@@ -44,7 +44,7 @@ import { confirmSpend, type Db, type LedgerItem, type Rpc, recordUsage, weeklyHe
 export interface Args {
   file: string;
   concept: "group" | "couple";
-  tone: Tone;
+  tone: PickableTone;
   /** null이면 앱 기본(ANTHROPIC_MODEL 또는 DEFAULT_MODEL) */
   model: string | null;
   /** null이면 모델의 입력 예산(INPUT_TOKEN_BUDGET env가 있으면 그 값) */
@@ -84,8 +84,8 @@ export function parseArgs(argv: string[]): Args {
       args.concept = v;
     } else if (a === "--tone") {
       const v = argv[++i];
-      if (!(TONE_KEYS as readonly string[]).includes(v)) throw new Error(`--tone은 ${TONE_KEYS.join("|")}이다`);
-      args.tone = v as Tone;
+      if (!(PICKABLE_TONES as readonly string[]).includes(v)) throw new Error(`--tone은 ${PICKABLE_TONES.join("|")}이다`);
+      args.tone = v as PickableTone;
     } else if (a === "--model") {
       const v = argv[++i];
       if (!v || v.startsWith("--")) throw new Error("--model에 모델 id를 지정한다");
@@ -122,7 +122,7 @@ export function namedMessages(p: { participants: string[]; messages: ChatMessage
 }
 
 /** 입력 예산(s.inputBudget)에서 통계 요약·프롬프트 몫(PROMPT_RESERVE_TOKENS)을 빼고 맞춘 페이로드 */
-export function measurePayload(messages: ChatMessage[], concept: Args["concept"], tone: Tone, s: ModelSettings): Payload {
+export function measurePayload(messages: ChatMessage[], concept: Args["concept"], tone: PickableTone, s: ModelSettings): Payload {
   return buildPayloadForBudget({
     messages,
     concept,

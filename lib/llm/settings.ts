@@ -4,10 +4,10 @@ import { DEFAULT_MODEL, inputTokenBudgetFor } from "@/lib/config";
 
 export type Effort = "low" | "medium" | "high";
 /**
- * 출력 상한(생각 토큰 포함). v2.2 full 분량(본문 6,000자 안팎. 지시가 시키는 위쪽 끝 40문단 × 200자 = 8,000자,
- * + JSON·인용 30개 약 2,800토큰 + 생각 약 2,000토큰 가정)은 많아야 약 12,800토큰이라 그대로 담는다. 270초 마감 안에 나올 수 있는 출력은 약 13,500토큰
- * (초당 약 60토큰 × 225초 가정, lib/llm/prompt.ts DEADLINE_ESTIMATE. prompt.test가 맞춰 본다)으로 이 상한보다 작아서 실제 한계는 마감이다.
- * 속도·생각 토큰·첫 토큰 시간은 아직 재지 않았다. 머지 전에 pnpm measure로 실측해야 한다(빠듯하면 DEFAULT_EFFORT를 low로)
+ * 출력 상한(생각 토큰 포함). v2.3 full 분량의 위쪽 끝(40문단 × 400자 = 16,000자 + JSON·인용 30개 약 2,800토큰 + 생각 약 2,000토큰)은
+ * 약 20,800토큰이라 그대로 담는다. 270초 마감 안에 나올 수 있는 출력은 보수적으로 약 21,150토큰
+ * (초당 90토큰 × 235초, lib/llm/prompt.ts DEADLINE_ESTIMATE. 2026-11-27 운영 실측은 110~150 tok/s)이고 실측 속도로는 3만 토큰 안팎이라
+ * 32,000은 리포트를 먼저 자르지 않는 값이다. 실제 한계는 마감이다(prompt.test가 맞춰 본다). 빠듯하면 DEFAULT_EFFORT를 low로
  */
 export const DEFAULT_REPORT_MAX_TOKENS = 32_000;
 export const DEFAULT_EFFORT: Effort = "medium";

@@ -513,7 +513,7 @@ describe("validateReport", () => {
 
   it("글자 수를 맞춘다: 너무 긴 headline·dek·제목은 비우고, 너무 긴 문단은 지운다 (PRD 5장 1)", () => {
     const r = run(
-      report([sec("가".repeat(61), [para("p1", "저녁 대화가 이어져요"), para("p2", "나".repeat(1001)), para("p3", "다".repeat(1000))])], {
+      report([sec("가".repeat(61), [para("p1", "저녁 대화가 이어져요"), para("p2", "나".repeat(1201)), para("p3", "다".repeat(1200))])], {
         headline: "다".repeat(81),
         dek: "라".repeat(201),
       }),
@@ -521,7 +521,8 @@ describe("validateReport", () => {
     expect(r.content?.headline).toBe("");
     expect(r.content?.dek).toBe("");
     expect(r.content?.sections[0].title).toBe("");
-    expect(r.content?.sections[0].paragraphs.map((p) => p.text.length)).toEqual([11, 1000]);
+    // v2.3: 문단 상한 1200자(지시 250~400자의 세 배 여유)
+    expect(r.content?.sections[0].paragraphs.map((p) => p.text.length)).toEqual([11, 1200]);
   });
 
   it("icon은 이모지 몇 글자만(글자·숫자가 들면 비운다), about은 pair·group·참여자 이름만(me·모르는 값은 group)", () => {

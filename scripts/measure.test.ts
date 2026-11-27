@@ -51,7 +51,9 @@ describe("parseArgs", () => {
       yes: true,
     });
     expect(parseArgs(["a.txt", "--count-only"]).mode).toBe("count");
-    for (const tone of ["docu", "detective", "record"]) expect(parseArgs(["a.txt", "--tone", tone]).tone).toBe(tone);
+    for (const tone of ["warm", "docu", "detective"]) expect(parseArgs(["a.txt", "--tone", tone]).tone).toBe(tone);
+    // v2.3: record는 담임 선생님(warm)으로 합쳐 고를 수 없다
+    expect(() => parseArgs(["a.txt", "--tone", "record"])).toThrow(/tone/);
   });
   it.each([
     [[], /샘플 파일/],

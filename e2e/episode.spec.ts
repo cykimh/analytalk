@@ -626,15 +626,16 @@ test.describe("AI 리포트", () => {
       expect(await page.evaluate((id) => localStorage.getItem(`analytalk:share:${id}`), ID)).toBeNull();
     });
 
-    test("새 말투(담임의 생활기록부)도 표지 칩과 공유 제목에 라벨로 보인다", async ({ page, context }) => {
+    test("예전 말투(record) 리포트는 합친 이름 '담임 선생님'으로 표지 칩과 공유 제목에 보인다", async ({ page, context }) => {
       await withNativeShare(page);
       await fakeApi(context, "done", { tone: "record" });
       await page.goto(`/c/${ID}`);
-      await expect(page.getByText("담임의 생활기록부", { exact: true })).toBeVisible();
+      await expect(page.getByText("담임 선생님", { exact: true })).toBeVisible();
+      await expect(page.getByText("담임의 생활기록부")).toHaveCount(0);
       await panel(page).getByRole("button", { name: "링크 만들기" }).click();
       await expect(panel(page).getByText("공유했어요")).toBeVisible();
       const shared = await page.evaluate(() => (window as unknown as { __shared?: ShareData[] }).__shared);
-      expect(shared).toEqual([{ title: "둘의 대화 연재 · 담임의 생활기록부", url: SHARE_URL }]);
+      expect(shared).toEqual([{ title: "둘의 대화 연재 · 담임 선생님", url: SHARE_URL }]);
     });
 
     test("navigator.share가 있으면 [링크 만들기]가 '연재 제목 · 말투'(이름 없음)로 공유하고 [카톡으로 보내기]로 다시 보낸다", async ({ page, context }) => {

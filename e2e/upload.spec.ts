@@ -144,24 +144,22 @@ test.describe("업로드 흐름", () => {
     await expect(page.getByRole("button", { name: "AI 연재 만들기" })).toBeEnabled();
   });
 
-  test("방 종류·말투 단계: 제3자 말투 6개가 이 순서로 있고 기본은 잔소리하는 친구, 직장·팀이면 말투를 숨긴다", async ({ page }) => {
+  test("방 종류·말투 단계: 제3자 말투 5개가 이 순서로 있고 기본은 잔소리하는 친구, 직장·팀이면 말투를 숨긴다", async ({ page }) => {
     await upload(page, textUpload("KakaoTalkChats.txt", androidChat()));
     await next(page).click();
     await next(page).click();
     const tones = page.getByRole("group", { name: "말투" }).getByRole("radio");
-    await expect(tones).toHaveCount(6);
-    expect(await tones.evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value))).toEqual([
-      "fact",
-      "warm",
-      "show",
-      "docu",
-      "detective",
-      "record",
-    ]);
+    // v2.3: 다정한 상담 선생님·담임의 생활기록부를 담임 선생님(warm) 하나로 합쳤다
+    await expect(tones).toHaveCount(5);
+    expect(await tones.evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value))).toEqual(["fact", "warm", "show", "docu", "detective"]);
     await expect(page.getByRole("radio", { name: /잔소리하는 친구/ })).toBeChecked();
-    for (const label of ["다정한 상담 선생님", "예능 MC 중계", "자연 다큐 내레이터", "탐정 사건 보고서", "담임의 생활기록부"]) {
+    for (const label of ["담임 선생님", "예능 MC 중계", "자연 다큐 내레이터", "탐정 사건 보고서"]) {
       await expect(page.getByRole("radio", { name: new RegExp(label) })).toBeVisible();
     }
+    for (const gone of ["상담 선생님", "생활기록부"]) await expect(page.getByRole("radio", { name: new RegExp(gone) })).toHaveCount(0);
+    // 합친 담임 선생님을 고를 수 있다
+    await page.getByRole("radio", { name: /담임 선생님/ }).check();
+    await expect(page.getByRole("radio", { name: /담임 선생님/ })).toBeChecked();
     await page.getByRole("radio", { name: /직장·팀/ }).check();
     await expect(page.getByRole("radio", { name: /잔소리하는 친구/ })).toHaveCount(0);
   });
