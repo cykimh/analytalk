@@ -191,7 +191,7 @@ async function fakeCreate(page: Page, replies: (202 | 413)[] = [202]) {
 }
 
 const next = (page: Page) => page.getByRole("button", { name: "다음", exact: true });
-const create = (page: Page) => page.getByRole("button", { name: "AI 연재 만들기" });
+const create = (page: Page) => page.getByRole("button", { name: "연재 만들기" });
 /** 이 브라우저의 IndexedDB에 다시 쓰기용 페이로드가 있다(lib/client/idb: idb-keyval 기본 저장소) */
 const hasPayload = (page: Page) =>
   page.evaluate(
@@ -256,7 +256,7 @@ test.describe("AI 리포트", () => {
     await login(page);
   });
 
-  test("[AI 연재 만들기]: 기본 POST는 tone fact·members가 카톡 이름 그대로이고, 받으면 바로 대화 홈이 진행을 보여 준다", async ({ page, context }) => {
+  test("[연재 만들기]: 기본 POST는 tone fact·members가 카톡 이름 그대로이고, 받으면 바로 대화 홈이 진행을 보여 준다", async ({ page, context }) => {
     await fakeApi(context, "running");
     const posts = await fakeCreate(page);
     await toReview(page);

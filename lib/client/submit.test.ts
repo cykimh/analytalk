@@ -24,7 +24,7 @@ function deps(...responses: (Response | Error)[]) {
   return { sent, post, rebuild, save };
 }
 
-describe("createSeries ([AI 연재 만들기])", () => {
+describe("createSeries ([연재 만들기])", () => {
   it.each([202, 200])("%i {id}면 그 페이로드를 저장하고 id를 돌려준다", async (status) => {
     const d = deps(json(status, { id: ID }));
     expect(await createSeries(first, d)).toEqual({ ok: true, id: ID });

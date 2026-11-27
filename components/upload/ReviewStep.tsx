@@ -1,6 +1,6 @@
 "use client";
 
-// 보낼 내용 확인: 고지(PRD 4장) → 요약(기간·메시지·읽을 범위·뺀 멤버·말투·가린 항목) → 미리보기 20줄 → 단톡방 동의 → [AI 연재 만들기].
+// 보낼 내용 확인: 요약(기간·메시지·읽을 범위·뺀 멤버·말투·가린 항목) → 미리보기 20줄 → 단톡방 동의 → [연재 만들기] → 맨 아래 고지(PRD 4장).
 // 위험 신호(자해·폭력) 메시지는 이미 빼고 만든 페이로드라 막지 않고, 뺀 개수와 상담 전화만 알린다.
 // 직장·팀이면 버튼 대신 통계(AI는 M3)를 보인다. 단톡방이면 동의 체크 뒤에 만들 수 있다.
 import { useState } from "react";
@@ -20,9 +20,6 @@ const MASK_LABEL: Record<string, string> = {
   rrn: "주민번호",
   url: "링크(사이트 이름만 남김)",
 };
-
-/** 위험 신호 메시지를 뺐을 때 작게 붙이는 상담 전화 */
-const HELPLINE = "힘들 때는 109(자살예방상담전화), 지금 위험하다면 112, 가정·데이트 폭력은 1366(여성긴급전화). 모두 24시간이에요.";
 
 export function ReviewStep({
   payload,
@@ -54,10 +51,6 @@ export function ReviewStep({
 
   return (
     <StepFrame title="보낼 내용 확인" onBack={onBack} busy={busy}>
-      <p className="rounded-xl bg-muted p-4 text-base">
-        표시 이름과 대화 본문(전화·이메일·계좌·주민번호는 가리고 링크는 사이트 이름만)이 미국 Anthropic으로 가요. 표시 이름은 30일
-        보관되고 공유 링크에 보여요. 뺀 멤버의 메시지는 보내지 않아요.
-      </p>
       <dl className="grid gap-3 text-base tabular-nums">
         <div className="grid gap-0.5">
           <dt className="text-muted-foreground">기간</dt>
@@ -102,10 +95,7 @@ export function ReviewStep({
       </details>
 
       {safetyDropped > 0 && (
-        <div className="grid gap-1">
-          <p className="text-base tabular-nums">위험할 수 있는 메시지 {formatCount(safetyDropped)}개는 빼고 보내요</p>
-          <p className="text-base text-muted-foreground">{HELPLINE}</p>
-        </div>
+        <p className="text-base tabular-nums">위험할 수 있는 메시지 {formatCount(safetyDropped)}개는 빼고 보내요</p>
       )}
       {work ? (
         <div className="grid gap-3">
@@ -121,11 +111,15 @@ export function ReviewStep({
             </label>
           )}
           <Button size="lg" disabled={busy || work || (group && !told)} onClick={onCreate}>
-            {busy ? "보내는 중…" : "AI 연재 만들기"}
+            {busy ? "보내는 중…" : "연재 만들기"}
           </Button>
           <p className="text-base text-muted-foreground">{note}</p>
         </div>
       )}
+      <p className="rounded-xl bg-muted p-4 text-sm text-muted-foreground">
+        표시 이름과 대화 본문(전화·이메일·계좌·주민번호는 가리고 링크는 사이트 이름만)이 미국 Anthropic으로 가요. 표시 이름은 30일
+        보관되고 공유 링크에 보여요. 뺀 멤버의 메시지는 보내지 않아요.
+      </p>
     </StepFrame>
   );
 }

@@ -47,7 +47,7 @@ test.describe("업로드 흐름", () => {
     // 위험 신호가 없으면 안내 줄도 없다
     await expect(page.getByText(/위험할 수 있는 메시지/)).toHaveCount(0);
     await expect(page.getByRole("checkbox", { name: "방 사람들에게 말했어요" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "AI 연재 만들기" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "연재 만들기" })).toBeDisabled();
     // 고유 문장은 미리보기(브라우저 안)에는 있다
     await page.getByText("미리보기 20줄").click();
     await expect(page.getByText(UNIQUE_SENTENCE)).toBeVisible();
@@ -136,12 +136,12 @@ test.describe("업로드 흐름", () => {
     await upload(page, textUpload("KakaoTalkChats.txt", androidChat({ bodies: ["어제 자해 했어", "괜찮아 이제"] })));
     await toReview(page);
     await expect(page.getByText("위험할 수 있는 메시지 1개는 빼고 보내요")).toBeVisible();
-    await expect(page.getByText(/109\(자살예방상담전화\)/)).toBeVisible();
+    await expect(page.getByText(/109\(자살예방상담전화\)/)).toHaveCount(0);
     await page.getByText("미리보기 20줄").click();
     await expect(page.locator("pre")).not.toContainText("자해");
     await expect(page.locator("pre")).toContainText("괜찮아 이제");
     await page.getByRole("checkbox", { name: "방 사람들에게 말했어요" }).check();
-    await expect(page.getByRole("button", { name: "AI 연재 만들기" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "연재 만들기" })).toBeEnabled();
   });
 
   test("방 종류·말투 단계: 제3자 말투 5개가 이 순서로 있고 기본은 잔소리하는 친구, 직장·팀이면 말투를 숨긴다", async ({ page }) => {
