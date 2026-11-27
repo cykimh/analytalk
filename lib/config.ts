@@ -5,8 +5,8 @@ export const EPISODE_DEADLINE_MS = 270_000; // 편당 마감 (maxDuration = 300)
 /**
  * 페이로드 JSON 상한 4MB. Vercel 함수의 요청 본문 한도 4.5MB(4,500,000바이트로 어림) 안에 들어가는지 셈:
  * - 요청 본문은 페이로드 JSON(POST /api/conversations) 또는 { id, payload }(다시 쓰기, id 64자 이하)라 페이로드 밖 몫은 100바이트 안팎이다
- * - Sonnet 입력 예산 600,000토큰 × TOKENS_PER_CHAR 1.0 → 대화 본문은 60만 자 이하(프롬프트·통계·범례 몫을 빼면 더 적다).
- *   한글은 UTF-8로 글자당 3바이트(서로게이트 쌍 이모지는 UTF-16 2자에 4바이트)라 본문은 1.8MB 이하
+ * - Sonnet 입력 예산 700,000토큰 × TOKENS_PER_CHAR 1.0 → 대화 본문은 70만 자 이하(프롬프트·통계·범례 몫을 빼면 더 적다).
+ *   한글은 UTF-8로 글자당 3바이트(서로게이트 쌍 이모지는 UTF-16 2자에 4바이트)라 본문은 2.1MB 이하
  * - 전체 stats JSON(날짜별 수·달별·사람별 표)은 몇 년 치 단톡방도 수백 KB라, 페이로드는 보통 2.5MB 안쪽이다
  * - buildPayloadForBudget은 본문 글자 수를 (4MB × 0.9 − stats 바이트) ÷ 3으로도 묶어, 예산을 더 올려도 페이로드가 약 3.6MB를 넘지 않는다
  * 그래서 4MB를 그대로 두고 4.5MB까지 약 0.5MB(JSON 이스케이프·요청의 다른 필드) 여유를 둔다. 4.5MB에 가깝게 올리지 않는다
@@ -15,7 +15,7 @@ export const MAX_PAYLOAD_BYTES = 4_000_000;
 export const TOKENS_PER_CHAR = 1.0;
 /** 모델별 입력 예산(토큰). 표 밖의 모델은 FALLBACK. 서버의 INPUT_TOKEN_BUDGET env가 이 값을 덮어쓴다 */
 export const INPUT_TOKEN_BUDGET_BY_MODEL: readonly (readonly [string, number])[] = [
-  ["claude-sonnet-5-5", 600_000],
+  ["claude-sonnet-5-5", 700_000],
   ["claude-opus-5-5", 128_000],
 ];
 export const FALLBACK_INPUT_TOKEN_BUDGET = 128_000;
@@ -41,7 +41,7 @@ export const MONTHLY_BUDGET_USD = 90;
  * 캐시 쓰기 48만 × $2.5/MTok ≈ $1.2 + 캐시 읽기 2~3회 × 48만 × $0.10/MTok ≈ $0.1~0.15 + 출력 합 약 4.5만 × $10/MTok ≈ $0.45 → 약 $1.8.
  * v2.4까지 한 번 호출은 $1.2(실측 3: $1.03). 실측 뒤 보정
  */
-export const DEFAULT_EST_COST_USD = 1.8;
+export const DEFAULT_EST_COST_USD = 2.2;
 export const MAX_REPORT_RUNS = 3; // 리포트의 유료 실행 상한(처음 1번 + [다시 쓰기] 2번). 넘으면 retry가 429 retry_limit
 export const CYCLE_ANCHOR_DAY = 1; // 크레딧 주기 기준일(서울 00:00 시작). settings.cycle_anchor_day 기본값과 같다
 

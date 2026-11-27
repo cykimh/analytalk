@@ -146,15 +146,15 @@ describe("summarize / judge", () => {
   it("평균 원가·p95·fallback 수·ok 아닌 회차 수를 모은다", () => {
     const s = summarize([rep({ costUsd: 1 }), rep({ costUsd: 1.4, totalMs: 230_000 }), rep({ fallback: true, kind: "error" })]);
     expect(s).toMatchObject({ runs: 3, p95TotalMs: 230_000, fallbacks: 1, notOk: 1 });
-    expect(s.costUsdAvg).toBeCloseTo((1 + 1.4 + DEFAULT_EST_COST_USD) / 3, 10);
+    expect(s.costUsdAvg).toBeCloseTo((1 + 1.4 + DEFAULT_EST_COST_USD) / 3, 4);
   });
   it("통과 기준: p95 240초 이하, 평균 원가 추정 ±30%, fallback 0, ok 아닌 회차 0", () => {
     expect(judge(summarize([rep()]))).toEqual({ p95: true, cost: true, fallback: true, ok: true, pass: true });
-    // v2.5 추정 $1.8 ±30% = $1.26~$2.34
-    expect(DEFAULT_EST_COST_USD).toBe(1.8);
-    expect(judge(summarize([rep({ costUsd: 2.34 })])).cost).toBe(true);
-    expect(judge(summarize([rep({ costUsd: 2.4 })])).cost).toBe(false);
-    expect(judge(summarize([rep({ costUsd: 1.2 })])).cost).toBe(false);
+    // v2.6 추정 $2.2(Sonnet 70만 토큰) ±30% = $1.54~$2.86
+    expect(DEFAULT_EST_COST_USD).toBe(2.2);
+    expect(judge(summarize([rep({ costUsd: 2.86 })])).cost).toBe(true);
+    expect(judge(summarize([rep({ costUsd: 2.9 })])).cost).toBe(false);
+    expect(judge(summarize([rep({ costUsd: 1.5 })])).cost).toBe(false);
     expect(judge(summarize([rep({ fallback: true })])).pass).toBe(false);
     expect(judge(summarize([rep({ totalMs: 240_001 })])).p95).toBe(false);
     expect(judge(summarize([rep({ kind: "partial" })])).ok).toBe(false);

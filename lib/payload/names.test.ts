@@ -9,6 +9,7 @@ import {
   isBotOrUnknown,
   type NameOptions,
 } from "./names";
+import { reportNames } from "./names";
 
 let seq = 0;
 function msg(sender: string | null, text = "안녕"): ChatMessage {
@@ -196,5 +197,32 @@ describe("applyDisplayNames", () => {
     const msgs = [msg("김민지")];
     apply(msgs, { map: { 김민지: "민지" } });
     expect(msgs[0].sender).toBe("김민지");
+  });
+});
+
+describe("reportNames: 리포트에는 성을 뺀 이름", () => {
+  it("입력칸에 성을 붙였든 뺐든 성을 뺀다", () => {
+    expect(reportNames({ a: "김민지", b: "철수" }, ["a", "b"])).toEqual({ a: "민지", b: "철수" });
+    expect(reportNames({ a: "민지" }, ["a"])).toEqual({ a: "민지" });
+  });
+  it("호칭·두 글자 성은 그대로", () => {
+    expect(reportNames({ a: "김부장", b: "남궁민" }, ["a", "b"])).toEqual({ a: "김부장", b: "남궁민" });
+  });
+  it("성을 빼면 겹치는 두 사람은 입력한 이름 그대로", () => {
+    expect(reportNames({ a: "김민지", b: "이민지", c: "박철수" }, ["a", "b", "c"])).toEqual({ a: "김민지", b: "이민지", c: "철수" });
+    expect(reportNames({ a: "김민지", b: "민지" }, ["a", "b"])).toEqual({ a: "김민지", b: "민지" });
+  });
+  it("[같은 사람]으로 합친 묶음은 겹쳐도 한 사람이다", () => {
+    expect(reportNames({ a: "김민지", b: "김민지" }, ["a", "b"], [["a", "b"]])).toEqual({ a: "민지", b: "민지" });
+  });
+  it("applyDisplayNames는 리포트 이름으로 발신자를 바꾼다", () => {
+    const r = applyDisplayNames(
+      [
+        { id: 1, ts: 0, sender: "a", kind: "text", text: "안녕" },
+        { id: 2, ts: 1, sender: "b", kind: "text", text: "응" },
+      ] as never,
+      { map: { a: "김민지", b: "박철수" } },
+    );
+    expect(r.ok && r.messages.map((m) => m.sender)).toEqual(["민지", "철수"]);
   });
 });

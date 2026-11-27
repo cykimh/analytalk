@@ -140,8 +140,37 @@ export function applyDisplayNames(
   const targets = [...new Set(kept.flatMap((m) => (m.sender === null ? [] : [m.sender])))].filter((n) => n !== "");
   const reason = checkNameMap(o.map, targets, o.merged);
   if (reason) return { ok: false, reason };
+  const call = reportNames(o.map, targets, o.merged);
   return {
     ok: true,
-    messages: kept.map((m) => (m.sender === null ? { ...m } : { ...m, sender: o.map[m.sender].trim() })),
+    messages: kept.map((m) => (m.sender === null ? { ...m } : { ...m, sender: call[m.sender] })),
   };
+}
+
+/**
+ * 리포트에 쓰는 이름: 입력칸에 성을 붙였든 뺐든 성을 뺀 이름(김민지·민지 → 민지, 호칭·별명·두 글자 성은 그대로).
+ * 성을 빼서 서로 다른 두 사람이 같은 이름이 되면(김민지·이민지) 그 사람들은 입력한 이름 그대로 둔다. [같은 사람]으로 합친 묶음은 한 사람이다
+ */
+export function reportNames(map: NameMap, targets: string[], merged: string[][] = []): NameMap {
+  const group = new Map<string, number>();
+  merged.forEach((names, i) => names.forEach((n) => group.set(n, i)));
+  const person = (t: string) => (group.has(t) ? `g${group.get(t)}` : `t:${t}`);
+  const typed = new Map(targets.map((t) => [t, map[t].trim()]));
+  const names = new Map(targets.map((t) => [t, dropSurname(typed.get(t)!)]));
+  for (let changed = true; changed; ) {
+    changed = false;
+    const owners = new Map<string, Set<string>>();
+    for (const t of targets) {
+      const n = names.get(t)!;
+      if (!owners.has(n)) owners.set(n, new Set());
+      owners.get(n)!.add(person(t));
+    }
+    for (const t of targets) {
+      if (owners.get(names.get(t)!)!.size > 1 && names.get(t) !== typed.get(t)) {
+        names.set(t, typed.get(t)!);
+        changed = true;
+      }
+    }
+  }
+  return Object.fromEntries(names);
 }
