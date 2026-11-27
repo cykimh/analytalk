@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { validateReport } from "@/lib/llm/validate";
 import { buildPayload, payloadIndex } from "@/lib/payload/build";
+import { habitTable, unansweredRows, wordRows } from "@/lib/stats/details";
 import { highlightCards } from "@/lib/stats/highlights";
+import { titleCards } from "@/lib/stats/titles";
 import { laughType } from "@/lib/stats/laughType";
 import { ALLOWED_NAMES } from "@/scripts/check-fixtures";
 import { DEMO_NAMES, SCENES } from "./chat";
@@ -27,10 +29,12 @@ describe("데모 리포트(v2.8 /demo)", () => {
     expect(payload.msgSent).toBe(payload.msgTotal);
     const raw = {
       ...demoReport,
-      sections: demoReport.sections.map(({ evidence, mbti = "", mbti_reason = "", ...s }) => ({
+      sections: demoReport.sections.map(({ evidence, mbti = "", mbti_reason = "", persona, ...s }) => ({
         ...s,
         mbti,
         mbti_reason,
+        // 모델 출력 모양: 명대사는 번호·원문만
+        persona: persona ? { ...persona, quotes: persona.quotes.map(({ msg_id, quote }) => ({ msg_id, quote })) } : null,
         evidence: evidence.map(({ id, msg_id, quote }) => ({ id, msg_id, quote })),
       })),
     };
@@ -41,7 +45,18 @@ describe("데모 리포트(v2.8 /demo)", () => {
     expect(r.content?.chemistry).toEqual(demoReport.chemistry);
     expect(r.content?.sections.map((s) => s.evidence)).toEqual(demoReport.sections.map((s) => s.evidence));
     expect(r.content?.sections.map((s) => s.mbti ?? null)).toEqual(demoReport.sections.map((s) => s.mbti ?? null));
+    // v2.9: 페르소나(명대사 포함)와 관계 카드가 검증 뒤에도 그대로다
+    expect(r.content?.sections.map((s) => s.persona ?? null)).toEqual(demoReport.sections.map((s) => s.persona ?? null));
+    expect(r.content?.relationship).toEqual(demoReport.relationship);
     expect(r.content?.sections.flatMap((s) => s.paragraphs.map((p) => p.text))).toEqual(demoReport.sections.flatMap((s) => s.paragraphs.map((p) => p.text)));
+  });
+
+  it("v2.9: 칭호 여섯과 숫자 부록(읽씹·버릇·단어)이 모두 나오고, 자주 쓰는 단어에 숫자·링크가 없다", () => {
+    expect(titleCards(demoStats).map((t) => t.key)).toEqual(["obsessed", "speedy", "ghost", "laugh", "essay", "owl"]);
+    expect(unansweredRows(demoStats).length).toBe(5);
+    expect(habitTable(demoStats).people).toHaveLength(4);
+    expect(wordRows(demoStats).map((w) => w.words.length)).toEqual([10, 10, 10, 10, 10]);
+    for (const w of wordRows(demoStats)) for (const [word] of w.words) expect(word).toMatch(/^(?:[가-힣]+|[a-z]+)$/);
   });
 
   it("하이라이트 카드 6장(케미 온도부터)과 사람마다 다른 ㅋ 유형이 보인다", () => {

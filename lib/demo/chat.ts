@@ -24,7 +24,7 @@ function random(seed: number): () => number {
   };
 }
 
-/** 사람마다 말버릇: 말 거는 몫·말 많은 정도, ㅋ 길이 범위와 웃는 확률, 답장 간격(분), 사진 확률 */
+/** 사람마다 말버릇: 말 거는 몫·말 많은 정도, ㅋ 길이 범위와 웃는 확률, 답장 간격(분), 사진 확률, 긴 메시지(50자 이상) 확률 */
 interface Style {
   start: number;
   talk: number;
@@ -32,14 +32,38 @@ interface Style {
   laughP: number;
   replyMin: [number, number];
   photoP: number;
+  longP: number;
 }
 const STYLE: Record<DemoName, Style> = {
-  민지: { start: 0.42, talk: 1.4, laugh: [5, 8], laughP: 0.55, replyMin: [0.5, 4], photoP: 0.03 },
-  철수: { start: 0.18, talk: 1.0, laugh: [1, 2], laughP: 0.4, replyMin: [2, 15], photoP: 0.12 },
-  영희: { start: 0.2, talk: 1.1, laugh: [10, 16], laughP: 0.5, replyMin: [1, 6], photoP: 0.04 },
-  지훈: { start: 0.12, talk: 0.8, laugh: [3, 4], laughP: 0.35, replyMin: [3, 20], photoP: 0.05 },
-  수아: { start: 0.08, talk: 0.6, laugh: [2, 3], laughP: 0.02, replyMin: [0.2, 1.5], photoP: 0.02 },
+  민지: { start: 0.42, talk: 1.4, laugh: [5, 8], laughP: 0.55, replyMin: [0.5, 4], photoP: 0.03, longP: 0.06 },
+  철수: { start: 0.18, talk: 1.0, laugh: [1, 2], laughP: 0.4, replyMin: [2, 15], photoP: 0.12, longP: 0.005 },
+  영희: { start: 0.2, talk: 1.1, laugh: [10, 16], laughP: 0.5, replyMin: [1, 6], photoP: 0.04, longP: 0.02 },
+  지훈: { start: 0.12, talk: 0.8, laugh: [3, 4], laughP: 0.35, replyMin: [3, 20], photoP: 0.05, longP: 0.01 },
+  수아: { start: 0.08, talk: 0.6, laugh: [2, 3], laughP: 0.02, replyMin: [0.2, 1.5], photoP: 0.02, longP: 0 },
 };
+
+/** 사람마다 말끝 버릇(v2.9 대화 버릇)과 자주 꺼내는 말(자주 쓰는 단어). [붙일 말, 확률] */
+const HABIT: Record<DemoName, [string, number][]> = {
+  민지: [["!!", 0.3]],
+  영희: [["~~", 0.25], ["😂", 0.1]],
+  철수: [["...", 0.3]],
+  지훈: [["ㄱㄱ", 0.2], ["OK", 0.1]],
+  수아: [["ㅇㅇ", 0.35]],
+};
+const FLAVOR: Record<DemoName, string[]> = {
+  민지: ["저녁 메뉴 투표하자", "맛집 리스트 공유할게", "드라마 정주행 각"],
+  영희: ["이 노래 미쳤다", "노래 추천해 줄게", "연예 기사 봤어?"],
+  철수: ["라면 먹을 사람", "야식 사진 투척", "라면 국물 최고"],
+  지훈: ["주말 모임 어때", "여행 계획 짜자", "운동 끝나고 연락할게"],
+  수아: ["일정 공유할게", "점심 메뉴 정했어", "날씨 확인해"],
+};
+
+/** 긴 메시지(v2.9 장문 장인). 숫자·링크 없음 */
+const LONG_LINES = [
+  "아 오늘 회의 진짜 길었는데 끝나고 나니까 배고파서 아무 생각도 안 나 저녁 뭐 먹지 다들 퇴근했어?",
+  "주말에 날씨 좋다던데 다 같이 한강 가서 돗자리 깔고 치킨 시켜 먹는 거 어때 나 진짜 가고 싶어",
+  "어제 그 드라마 마지막 장면 봤어? 나 진짜 소리 지를 뻔했잖아 다음 주까지 어떻게 기다리냐고",
+];
 
 /** 아무 말(물음표·호칭이 조금 섞인다) */
 const LINES = [
@@ -98,6 +122,9 @@ export const SCENES: { at: number; sender: DemoName; text: string }[] = [
 /** 2025-03-01부터 days일 동안의 가짜 단톡방(시간 순, id는 0부터) */
 export function demoChat(days = 184): ChatMessage[] {
   const rand = random(20250301);
+  // 긴 메시지(v2.9)를 낼지·어느 줄인지는 따로 굴린다
+  const randLong = random(20250829);
+  const randFlavor = random(20250830);
   const pick = <T,>(xs: readonly T[]) => xs[Math.floor(rand() * xs.length)];
   const between = ([lo, hi]: [number, number]) => lo + rand() * (hi - lo);
   /** 가중치(w)대로 한 사람 */
@@ -122,9 +149,13 @@ export function demoChat(days = 184): ChatMessage[] {
       for (let i = 0; i < length; i++) {
         const s = STYLE[who];
         if (rand() < s.photoP) rows.push({ ts, sender: who, kind: "photo", text: "사진" });
+        else if (randLong() < s.longP) rows.push({ ts, sender: who, kind: "text", text: LONG_LINES[Math.floor(randLong() * LONG_LINES.length)] });
         else {
           const laugh = rand() < s.laughP ? `${"ㅋ".repeat(Math.round(between(s.laugh)))}` : "";
-          const line = pick(LINES);
+          // 버릇·자주 꺼내는 말(v2.9)도 따로 굴린다
+          const base = pick(LINES);
+          const flavored = randFlavor() < 0.18 ? FLAVOR[who][Math.floor(randFlavor() * FLAVOR[who].length)] : base;
+          const line = HABIT[who].reduce((t, [tail, p]) => (randFlavor() < p ? `${t}${tail}` : t), flavored);
           rows.push({ ts, sender: who, kind: "text", text: laugh === "" ? line : rand() < 0.5 ? `${laugh} ${line}` : `${line} ${laugh}` });
         }
         // 다음 사람: 같은 사람이 이어 말할 때도 있다(말 많은 사람일수록)

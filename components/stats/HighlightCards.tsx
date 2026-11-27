@@ -1,5 +1,5 @@
 // 리포트 맨 위 '하이라이트 한 줄 카드'(v2.8): 표지 폴라로이드 아래에 흰 카드를 한 줄씩 쌓는다(2열 타일 벽은 쓰지 않는다).
-// 카드는 lib/stats/highlights가 통계로 고른다(케미 온도만 AI가 매긴 값). 읽는 순서는 이름표(dt) → 숫자(dd) → 한 줄.
+// 카드는 lib/stats/highlights가 통계로 고른다(케미 온도만 AI가 매긴 값). 읽는 순서는 이름표(dt) → 숫자(dd) → 재치 한 줄(v2.9, 코드 문구) → AI 한 줄.
 // 케미 온도의 한 줄은 모델이 쓴 글이라 StatText(React 텍스트 노드)로 그린다. 훅이 없어 서버·클라이언트 어디서나 쓴다
 import { StatText } from "@/components/episode/StatText";
 import type { HighlightCard } from "@/lib/stats/highlights";
@@ -24,6 +24,7 @@ export function HighlightCards({ cards, stats }: { cards: HighlightCard[]; stats
               <span className="min-w-0 wrap-anywhere">{c.label}</span>
             </dt>
             <dd className="pl-7 text-[1.125rem] leading-snug font-bold tabular-nums wrap-anywhere">{c.value}</dd>
+            {c.quip && <dd className="pl-7 text-base leading-snug text-ink-soft">{c.quip}</dd>}
             {c.note && (
               <dd className="pt-1 pl-7 text-base leading-relaxed wrap-anywhere">
                 <StatText text={c.note} stats={stats} />

@@ -13,7 +13,9 @@ test("처음 화면과 안내 페이지에서 [데모 리포트 보기]로 초�
   await expect(page).toHaveURL("/demo");
 });
 
-test("/demo: noindex(메타·헤더), 데모 안내, 하이라이트 6장(케미 온도부터)·ㅋ 유형·MBTI 칩, 테이프 1개·h1 1개, [나도 해보기]는 바깥", async ({ page }) => {
+test("/demo: noindex(메타·헤더), 데모 안내, 하이라이트 6장(케미 온도부터)·칭호·ㅋ 유형·MBTI 칩·페르소나·관계 카드·숫자 부록, 테이프 1개·h1 1개, [나도 해보기]는 바깥", async ({
+  page,
+}) => {
   const requests: string[] = [];
   page.on("request", (r) => requests.push(r.url()));
   const res = await page.goto("/demo");
@@ -26,7 +28,12 @@ test("/demo: noindex(메타·헤더), 데모 안내, 하이라이트 6장(케미
   await expect(highlights.locator("dt")).toHaveCount(6);
   await expect(highlights.locator("dt").first()).toHaveText(/케미 온도$/);
   await expect(highlights.locator("dd").first()).toHaveText("87°");
-  await expect(highlights).toContainText("ㅋ 폭격기 1위");
+  await expect(highlights).toContainText("라면 물 끓기 전에 온다");
+  // v2.9 칭호 여섯(사람을 견주는 카드는 하이라이트가 아니라 여기)
+  const titles = page.getByRole("region", { name: "누가 더 ___?" });
+  await expect(titles.locator("dt")).toHaveText([/집착왕/, /광속답장러/, /읽씹 마스터/, /ㅋ 폭격기/, /장문 장인/, /새벽요정/]);
+  await expect(titles).toContainText("영희 · ㅋ");
+  await expect(page.getByText("단편집 한 권은 나올 분량")).toBeVisible();
 
   for (const [name, laugh, mbti] of [
     ["민지", "ㅋ 폭발형", "MBTI ENFP"],
@@ -37,8 +44,23 @@ test("/demo: noindex(메타·헤더), 데모 안내, 하이라이트 6장(케미
   ]) {
     await expect(page.getByRole("list", { name: `${name}의 유형` }).getByRole("listitem")).toHaveText([laugh, mbti]);
   }
+  // v2.9 페르소나 다섯(명대사 말풍선 포함), 마무리 앞의 관계 카드, 끝의 숫자 부록
+  await expect(page.getByRole("region", { name: /프로필$/ })).toHaveCount(5);
+  await expect(page.getByRole("region", { name: "민지 프로필" }).getByRole("figure")).toHaveCount(3);
+  const relation = page.getByRole("heading", { level: 2, name: /이 방의 관계$/ });
+  await expect(relation).toBeVisible();
+  const appendix = page.getByRole("region", { name: "부록 · 숫자로 본 이 방" });
+  await expect(appendix.getByRole("heading", { level: 3 })).toHaveText(["읽씹 리포트", "대화 버릇", "자주 쓰는 단어 TOP 10"]);
+  await expect(appendix.getByRole("table")).toBeVisible();
   const groups = page.getByRole("group");
   await expect(groups).toHaveCount(3);
+  // 관계 카드는 마무리 부분 바로 앞
+  const order = await page.evaluate(() => {
+    const h = [...document.querySelectorAll("h2")].find((x) => x.textContent?.endsWith("이 방의 관계"))!;
+    const outro = document.querySelector('[aria-labelledby="report-stage-outro"]')!;
+    return h.compareDocumentPosition(outro) & Node.DOCUMENT_POSITION_FOLLOWING;
+  });
+  expect(order).toBeTruthy();
   await expect(page.locator(".tape")).toHaveCount(1);
   await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
   // 버튼·링크는 #report-capture 바깥

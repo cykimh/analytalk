@@ -5,7 +5,9 @@
 // 띄어 쓰지 않은 긴 글(ㅋ 줄, 붙여 쓴 문장)은 keep-all에서 끊을 곳이 없는 한 단어다. 글이 든 grid는 grid-cols-1(minmax(0,1fr))로
 // 칸이 그 단어 폭만큼 넓어지지 않게 하고, 모델이 쓴 글은 wrap-anywhere로 카드 폭에서 줄을 바꾼다(DESIGN.md 레이아웃)
 // v2.8: 폴라로이드 다음에 하이라이트 한 줄 카드(통계 + 케미 온도)를, 사람 섹션(about이 참여자)의 제목 아래에 칩(ㅋ 유형·MBTI 추측)과
-// MBTI 이유 한 줄을 그린다. 칩은 그 사람의 첫 섹션에만 단다. 예전 리포트(케미 온도·MBTI 없음)는 통계로 만든 카드·ㅋ 유형만 보인다
+// MBTI 이유 한 줄을 그린다. 칩은 그 사람의 첫 섹션에만 단다. 예전 리포트(케미 온도·MBTI 없음)는 통계로 만든 카드·ㅋ 유형만 보인다.
+// v2.9: 하이라이트 다음에 '누가 더 ___?' 칭호, 사람 섹션 끝에 페르소나 카드, 마무리 부분 앞에 관계 카드, 리포트 끝에 숫자 부록(읽씹·버릇·단어).
+// 칭호·부록은 통계로 만들고(예전 통계에 없는 칸은 빠진다) 페르소나·관계 카드는 검증을 거친 AI 글이다(예전 리포트에는 없다)
 import { Fragment, type ReactNode } from "react";
 import { Highlight } from "@/components/scrap/Highlight";
 import { Paper } from "@/components/scrap/Paper";
@@ -13,13 +15,18 @@ import { ChatRoom } from "@/components/scrap/ChatBubble";
 import { Sticker } from "@/components/scrap/Sticker";
 import { alternate, highlightAt, tapeAt } from "@/components/scrap/tilt";
 import { HighlightCards } from "@/components/stats/HighlightCards";
+import { StatAppendix } from "@/components/stats/StatAppendix";
+import { TitleCards } from "@/components/stats/TitleCards";
 import { hasStatText } from "@/lib/episode/statText";
 import type { StoredReport } from "@/lib/llm/schema";
 import type { ChatStats } from "@/lib/stats/compute";
 import { highlightCards } from "@/lib/stats/highlights";
 import { LAUGH_TYPE_HINT, LAUGH_TYPE_LABEL, laughType } from "@/lib/stats/laughType";
+import { titleCards } from "@/lib/stats/titles";
 import { Evidence } from "./Evidence";
 import { groupStages, placeEvidence, STAGE_LABEL } from "./model";
+import { PersonaCard } from "./PersonaCard";
+import { RelationshipCard } from "./RelationshipCard";
 import { StatText } from "./StatText";
 
 export function ReportView({
@@ -45,6 +52,12 @@ export function ReportView({
   // 부분이 둘 이상일 때만 머리말을 단다(사람 섹션이 없는 예전·짧은 리포트는 그대로)
   const labeled = stages.length > 1;
   const highlights = highlightCards(stats, { chemistry: content.chemistry });
+  const pair = Object.keys(stats.byPerson).length === 2;
+  // 관계 카드는 마무리 부분 바로 앞(마무리가 없으면 맨 끝 부분 뒤)에 둔다
+  const relationAt = stages.findIndex((g) => g.stage === "outro");
+  const relationship = content.relationship ? (
+    <RelationshipCard relationship={content.relationship} stats={stats} pair={pair} color={highlightAt(content.sections.length + 1)} />
+  ) : null;
   // 사람마다 첫 섹션(리포트 전체 순서)에만 칩을 단다(같은 사람을 두 섹션에 쓴 경우)
   const chipAt = new Set<number>();
   const seen = new Set<string>();
@@ -74,62 +87,69 @@ export function ReportView({
       {snapshot}
 
       <HighlightCards cards={highlights} stats={stats} />
+      <TitleCards cards={titleCards(stats)} />
 
-      {stages.map(({ stage, sections }) => (
-        <div
-          key={stage}
-          role={labeled ? "group" : undefined}
-          aria-labelledby={labeled ? `report-stage-${stage}` : undefined}
-          className="grid min-w-0 grid-cols-1 gap-3"
-        >
-          {labeled && (
-            <p id={`report-stage-${stage}`} className="flex items-center gap-3 px-1 text-[0.875rem] font-bold text-ink-soft">
-              {STAGE_LABEL[stage]}
-              <span aria-hidden className="h-px flex-1 bg-ink/15" />
-            </p>
-          )}
-          <div className="grid min-w-0 grid-cols-1 gap-8">
-            {sections.map(({ section, index: si }) => (
-              <Paper
-                as="section"
-                key={`${si}-${section.title}`}
-                tilt={alternate(si + 1)}
-                calm
-                className="grid grid-cols-1 gap-4 px-5 pt-7 pb-6"
-              >
-                <h2 className="flex min-w-0 items-start gap-2 text-[1.25rem] leading-tight font-bold wrap-anywhere tracking-tight">
-                  <Sticker aria-hidden index={si} className="mt-0.5 shrink-0 px-1.5 font-sans text-lg leading-none">
-                    {section.icon}
-                  </Sticker>
-                  <span className="min-w-0">
-                    <Highlight color={highlightAt(si + 1)}>
-                      <StatText text={section.title} stats={stats} />
-                    </Highlight>
-                  </span>
-                </h2>
-                <PersonChips name={chipAt.has(si) ? section.about : null} stats={stats} mbti={section.mbti} reason={section.mbti_reason} />
-                {placeEvidence(section).map(({ paragraph: p, evidence }, pi) => (
-                  <Fragment key={`${pi}-${p?.key ?? "rest"}`}>
-                    {p && (
-                      <p className="text-[1.0625rem] leading-[1.8] wrap-anywhere">
-                        <StatText text={p.text} stats={stats} />
-                      </p>
-                    )}
-                    {/* 한 문단의 근거는 카톡 대화방처럼 한 판에 쌓는다 */}
-                    {evidence.length > 0 && (
-                      <ChatRoom>
-                        {evidence.map(({ e }) => (
-                          <Evidence key={e.id} sender={e.sender} at={e.at} quote={e.quote} />
-                        ))}
-                      </ChatRoom>
-                    )}
-                  </Fragment>
-                ))}
-              </Paper>
-            ))}
+      {stages.map(({ stage, sections }, gi) => (
+        <Fragment key={stage}>
+          {gi === relationAt && relationship}
+          <div
+            role={labeled ? "group" : undefined}
+            aria-labelledby={labeled ? `report-stage-${stage}` : undefined}
+            className="grid min-w-0 grid-cols-1 gap-3"
+          >
+            {labeled && (
+              <p id={`report-stage-${stage}`} className="flex items-center gap-3 px-1 text-[0.875rem] font-bold text-ink-soft">
+                {STAGE_LABEL[stage]}
+                <span aria-hidden className="h-px flex-1 bg-ink/15" />
+              </p>
+            )}
+            <div className="grid min-w-0 grid-cols-1 gap-8">
+              {sections.map(({ section, index: si }) => (
+                <Paper
+                  as="section"
+                  key={`${si}-${section.title}`}
+                  tilt={alternate(si + 1)}
+                  calm
+                  className="grid grid-cols-1 gap-4 px-5 pt-7 pb-6"
+                >
+                  <h2 className="flex min-w-0 items-start gap-2 text-[1.25rem] leading-tight font-bold wrap-anywhere tracking-tight">
+                    <Sticker aria-hidden index={si} className="mt-0.5 shrink-0 px-1.5 font-sans text-lg leading-none">
+                      {section.icon}
+                    </Sticker>
+                    <span className="min-w-0">
+                      <Highlight color={highlightAt(si + 1)}>
+                        <StatText text={section.title} stats={stats} />
+                      </Highlight>
+                    </span>
+                  </h2>
+                  <PersonChips name={chipAt.has(si) ? section.about : null} stats={stats} mbti={section.mbti} reason={section.mbti_reason} />
+                  {placeEvidence(section).map(({ paragraph: p, evidence }, pi) => (
+                    <Fragment key={`${pi}-${p?.key ?? "rest"}`}>
+                      {p && (
+                        <p className="text-[1.0625rem] leading-[1.8] wrap-anywhere">
+                          <StatText text={p.text} stats={stats} />
+                        </p>
+                      )}
+                      {/* 한 문단의 근거는 카톡 대화방처럼 한 판에 쌓는다 */}
+                      {evidence.length > 0 && (
+                        <ChatRoom>
+                          {evidence.map(({ e }) => (
+                            <Evidence key={e.id} sender={e.sender} at={e.at} quote={e.quote} />
+                          ))}
+                        </ChatRoom>
+                      )}
+                    </Fragment>
+                  ))}
+                  {section.persona && chipAt.has(si) && <PersonaCard name={section.about} persona={section.persona} stats={stats} />}
+                </Paper>
+              ))}
+            </div>
           </div>
-        </div>
+        </Fragment>
       ))}
+      {relationAt < 0 && relationship}
+
+      <StatAppendix stats={stats} />
     </article>
   );
 }

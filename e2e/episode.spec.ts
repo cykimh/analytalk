@@ -52,12 +52,18 @@ function content(quote: string, statText = false, paragraph?: string, emptyHeadl
   };
 }
 
-/** v2.8 저장 리포트: 케미 온도(인트로)와 민지 사람 섹션(MBTI 추측과 이유) */
+/** v2.8·v2.9 저장 리포트: 케미 온도(인트로), 민지 사람 섹션(MBTI 추측과 이유, 페르소나), 관계 카드(마무리) */
 function v28Content() {
   const base = content("집에서 쉬는 중");
   return {
     ...base,
     chemistry: { score: 78, line: "사흘 내내 저녁 8시에 모인 둘, {{stat:total}}개면 합격이다" },
+    relationship: {
+      one_line: "저녁 8시마다 출석하는 2인조",
+      to_each_other: "철수에게 민지는 하루의 마침표다.",
+      inside_jokes: ["오늘 뭐해?로 시작하는 저녁"],
+      conflict: "",
+    },
     sections: [
       ...base.sections,
       {
@@ -69,6 +75,15 @@ function v28Content() {
         evidence: [{ id: "e1", msg_id: "m1", quote: "집에서 쉬는 중", sender: "민지", at: "2026-10-01T20:04:00+09:00" }],
         mbti: "INFJ",
         mbti_reason: "답은 늦지 않게, 말은 아껴서. 속으로 다 계산하는 타입이다.",
+        persona: {
+          intro: "4분이면 답하는 저녁의 마침표",
+          traits: { communication: "짧고 정확하다.", emotion: "", humor: "", energy: "저녁 8시에 켜진다." },
+          interests: ["집", "휴식"],
+          values: ["쉬는게최고"],
+          quotes: [{ msg_id: "m1", quote: "집에서 쉬는 중", sender: "민지", at: "2026-10-01T20:04:00+09:00" }],
+          hidden: "",
+          tip: "저녁 8시에 물어보면 된다.",
+        },
       },
     ],
   };
@@ -559,15 +574,16 @@ test.describe("AI 리포트", () => {
     expect(await bodyText()).not.toMatch(/\{\{|stat:/);
   });
 
-  test("v2.8 리포트 화면: 폴라로이드 아래 하이라이트 카드(케미 온도 → 통계), 사람 섹션 제목 아래 MBTI 칩과 이유. 예전 리포트는 통계 카드만", async ({
+  test("v2.8·v2.9 리포트 화면: 하이라이트(케미 온도 → 방 전체 숫자), 사람 섹션의 MBTI 칩·이유·페르소나, 관계 카드. 예전 리포트는 통계 카드만", async ({
     page,
     context,
   }) => {
     await fakeApi(context, "done", { v28: true });
     await page.goto(`/c/${ID}/report`);
     const highlights = page.getByRole("region", { name: "한 줄 하이라이트" });
-    // 이름표(dt) 앞의 이모지는 장식이라 글자 끝만 본다
-    await expect(highlights.locator("dt")).toHaveText([/케미 온도$/, /최장 연속 대화$/, /하루 평균$/]);
+    // 이름표(dt) 앞의 이모지는 장식이라 글자 끝만 본다. v2.9: 방 전체 답장 속도(재치 한 줄 포함)
+    await expect(highlights.locator("dt")).toHaveText([/케미 온도$/, /답장 속도\(방 전체 중앙값\)$/, /최장 연속 대화$/, /하루 평균$/]);
+    await expect(highlights).toContainText("라면 물 끓기 전에 온다");
     await expect(highlights.locator("dd").first()).toHaveText("78°");
     // 케미 온도 한 줄의 {{stat:…}}도 채운다
     await expect(highlights).toContainText("사흘 내내 저녁 8시에 모인 둘, 6개면 합격이다");
@@ -580,15 +596,25 @@ test.describe("AI 리포트", () => {
     // 메시지가 적어(20개 미만) ㅋ 유형은 없다. pair 섹션에는 칩이 없다
     await expect(page.getByText(/^ㅋ /)).toHaveCount(0);
     await expect(page.getByRole("list", { name: /의 유형$/ })).toHaveCount(1);
-    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(2);
+    // v2.9: 민지 섹션 끝의 페르소나(명대사는 말풍선), 끝에 관계 카드(h2). 데이터가 적어 칭호는 없다
+    const profile = person.getByRole("region", { name: "민지 프로필" });
+    await expect(profile).toContainText("4분이면 답하는 저녁의 마침표");
+    await expect(profile.getByRole("list", { name: "가치관 해시태그" })).toHaveText("#쉬는게최고");
+    await expect(profile.getByRole("figure")).toHaveCount(1);
+    await expect(profile).not.toContainText("감정 표현");
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(3);
+    await expect(page.getByRole("heading", { level: 2 }).last()).toHaveText(/두 사람의 관계$/);
+    await expect(page.getByRole("region", { name: "누가 더 ___?" })).toHaveCount(0);
     await expect(page.locator(".tape")).toHaveCount(1);
 
     await fakeApi(context, "done");
     await page.goto(`/c/${ID}/report`);
     await expect(page.getByRole("heading", { name: "리포트 헤드라인" })).toBeVisible();
-    await expect(page.getByRole("region", { name: "한 줄 하이라이트" }).locator("dt")).toHaveText([/최장 연속 대화$/, /하루 평균$/]);
+    await expect(page.getByRole("region", { name: "한 줄 하이라이트" }).locator("dt")).toHaveText([/답장 속도/, /최장 연속 대화$/, /하루 평균$/]);
     await expect(page.getByText("케미 온도")).toHaveCount(0);
     await expect(page.getByText(/^MBTI /)).toHaveCount(0);
+    await expect(page.getByRole("region", { name: /프로필$/ })).toHaveCount(0);
+    await expect(page.getByText(/의 관계$/)).toHaveCount(0);
   });
 
   test("표지 칩은 말투('잔소리하는 친구')이고, 대화 홈·리포트·미리보기 공유 화면마다 테이프 1개·h1 1개이며, 옛 주소는 404", async ({ page, context }) => {
