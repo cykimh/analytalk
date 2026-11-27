@@ -76,6 +76,18 @@ describe("validatePayload", () => {
     expect(reject({ ...p, stats: { ...p.stats, monthly } })).toMatch(/stats/);
   });
 
+  it("v2.8 laughChars: 없어도(예전 페이로드) 받고, 있으면 0 이상 정수이고 키가 members 안이어야 한다", () => {
+    const p = payload();
+    expect(p.stats.laughChars).toBeDefined();
+    expect(reject(p)).toBe("ok");
+    const { laughChars: _, ...old } = p.stats;
+    expect(reject({ ...p, stats: old })).toBe("ok");
+    const [name] = p.members;
+    expect(reject({ ...p, stats: { ...p.stats, laughChars: { [name]: 3, 김민지: 1 } } })).toMatch(/stats/);
+    expect(reject({ ...p, stats: { ...p.stats, laughChars: { [name]: -1 } } })).toMatch(/구조/);
+    expect(reject({ ...p, stats: { ...p.stats, laughChars: { [name]: 1.5 } } })).toMatch(/구조/);
+  });
+
   it("concept couple + kind group → 거부", () => {
     expect(reject({ ...payload(), kind: "group" })).toMatch(/concept/);
     expect(reject({ ...payload(), concept: "group", kind: "pair" })).toMatch(/concept/);

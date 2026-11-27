@@ -115,6 +115,19 @@ describe("computeStats", () => {
     expect(s.addressTerms.철수?.형 ?? 0).toBe(0);
   });
 
+  it("v2.8 laughChars: 글 메시지의 ㅋ 글자 수(길이 상한 없음, ㅎ·사진은 세지 않음). 글을 보낸 사람은 0이어도 키가 있다", () => {
+    const s = computeStats([
+      msg("민지", T0 + HOUR, `${"ㅋ".repeat(14)} 미쳤다 ㅋㅋ`),
+      msg("민지", T0 + HOUR + MIN, "ㅎㅎㅎ"),
+      msg("철수", T0 + HOUR + 2 * MIN, "응"),
+      msg("철수", T0 + HOUR + 3 * MIN, "", "photo"),
+      msg("영희", T0 + HOUR + 4 * MIN, "", "photo"),
+    ]);
+    expect(s.laughChars).toEqual({ 민지: 16, 철수: 0 });
+    // laughLength는 그대로 10 이상을 한 칸에 모은다
+    expect(s.laughLength.민지[10]).toBe(1);
+  });
+
   it("호칭은 구간당 한 번만 센다 (자기야가 자기로 중복되지 않음)", () => {
     const s = computeStats([
       msg("민지", T0 + HOUR, "자기야 뭐해 자기 ㅋ"),

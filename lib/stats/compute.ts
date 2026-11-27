@@ -50,6 +50,12 @@ export interface ChatStats {
   busiestDay: { date: string; count: number } | null;
   /** ㅋ·ㅎ 연속 길이 히스토그램. 인덱스 = 길이(1~10), 10은 "10 이상". 길이 11, 인덱스 0은 항상 0 */
   laughLength: Record<string, number[]>;
+  /**
+   * v2.8: 글 메시지의 ㅋ 글자 수(길이 상한 없음, ㅎ는 세지 않는다). 글을 보낸 사람마다 있다(0 포함).
+   * 화면의 하이라이트 카드('ㅋ 폭격기')만 쓴다. 모델에게 보여 주는 통계(statsForPrompt)에는 넣지 않는다.
+   * v2.8 전에 만든 대화(DB·이 브라우저의 예전 페이로드)에는 없다
+   */
+  laughChars?: Record<string, number>;
   /** 텍스트 메시지 중 물음표가 든 비율 */
   questionRate: Record<string, number>;
   media: Record<string, { photo: number; emoticon: number; link: number }>;
@@ -63,6 +69,7 @@ const LAUGH_MAX = 10;
 
 const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 const LAUGH_RE = /[ㅋㅎ]+/g;
+const KEK_RE = /ㅋ/g;
 const QUESTION_RE = /[?？]/;
 
 // 호칭 사전. 앞뒤가 한글이면 다른 단어의 일부라서 세지 않는다(조사는 허용).
@@ -112,6 +119,7 @@ export function computeStats(messages: ChatMessage[]): ChatStats {
   const weekdayHistogram = new Array<number>(7).fill(0);
   const dailyCounts: Record<string, number> = {};
   const laughLength: Record<string, number[]> = {};
+  const laughChars: Record<string, number> = {};
   const media: ChatStats["media"] = {};
   const addressTerms: ChatStats["addressTerms"] = {};
   const textCount: Record<string, number> = {};
@@ -179,6 +187,7 @@ export function computeStats(messages: ChatMessage[]): ChatStats {
       }
       const hist = (laughLength[who] ??= new Array<number>(LAUGH_MAX + 1).fill(0));
       for (const run of m.text.match(LAUGH_RE) ?? []) hist[Math.min(run.length, LAUGH_MAX)]++;
+      bump(laughChars, who, m.text.match(KEK_RE)?.length ?? 0);
       const body = m.text.replace(URL_RE, " ");
       for (const hit of body.matchAll(ADDRESS_RE)) bump((addressTerms[who] ??= {}), hit[1], 1);
     }
@@ -265,6 +274,7 @@ export function computeStats(messages: ChatMessage[]): ChatStats {
     longestStreakDays,
     busiestDay,
     laughLength,
+    laughChars,
     questionRate,
     media,
     addressTerms,

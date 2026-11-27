@@ -43,6 +43,8 @@ const statsSchema = z.strictObject({
   longestStreakDays: z.number(),
   busiestDay: z.strictObject({ date: z.string().regex(DAY), count: z.number() }).nullable(),
   laughLength: z.record(z.string(), z.array(z.number()).length(11)),
+  // v2.8: ㅋ 글자 수(화면 전용). 이 브라우저에 남은 예전 페이로드([다시 쓰기])에는 없다
+  laughChars: z.record(z.string(), count).optional(),
   questionRate: byPerson,
   media: z.record(z.string(), z.strictObject({ photo: z.number(), emoticon: z.number(), link: z.number() })),
   addressTerms: z.record(z.string(), z.record(z.string(), z.number())),
@@ -89,6 +91,7 @@ function statsPeople(s: ChatStats): string[] {
     s.replyMedianMs,
     s.replyP75Ms,
     s.laughLength,
+    s.laughChars ?? {},
     s.questionRate,
     s.media,
     s.addressTerms,
