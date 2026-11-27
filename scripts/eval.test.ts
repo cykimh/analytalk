@@ -166,6 +166,9 @@ describe("scoreReport", () => {
       evidenceMatched: 2,
       bannedHits: 1,
       dropByPart: { nag_open: { in: 2, dropped: 1 }, nag_room: { in: 1, dropped: 0 } },
+      // v2.4: 지운 까닭(금지 표현 1문단, 원문과 안 맞는 근거 1개)
+      dropReasons: { banned: 1, evidence_unmatched: 1 },
+      relinked: 0,
     });
     expect(score.dropRate).toBeCloseTo(1 / 3, 10);
   });
@@ -193,6 +196,8 @@ const score = (over: Partial<ReportScore> = {}): ReportScore => ({
   paragraphsDropped: 1,
   dropRate: 0.1,
   dropByPart: { chronicle: { in: 10, dropped: 1 } },
+  dropReasons: { banned: 1 },
+  relinked: 0,
   evidenceIn: 8,
   evidenceMatched: 8,
   bannedHits: 0,

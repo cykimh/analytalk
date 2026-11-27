@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/lib/parse/parse";
-import { BANNED_PATTERNS } from "./banned";
+import { BANNED_PATTERNS, isBannedAbout } from "./banned";
 import { buildPayload, payloadIndex } from "./build";
 import { dropSafetyFlagged, safetyKind } from "./safety";
 
@@ -136,6 +136,13 @@ describe("BANNED_PATTERNS", () => {
     "삐진 것 같아요",
     "설렌 것 같아요",
     "사랑이 느껴지는 대화예요",
+    // v2.4: 숨은 호감을 밝히는 투, 연애·속마음을 점치는 확률
+    "사실은 P2를 좋아한다",
+    "알고 보면 P1은 P2에게 관심이 있다",
+    "사귈 확률이 높다",
+    "썸일 확률",
+    "확률로 보는 마음",
+    "확률 99",
     // 앞에 한글이 없는 화·짜증은 그대로 막는다 (N3)
     "화난 것 같아요",
     "P2는 화나 보여요",
@@ -169,8 +176,28 @@ describe("BANNED_PATTERNS", () => {
     "불교 사찰 여행 사진이 공유됐어요",
     "민주당 이야기로 단톡이 시끄러웠던 날",
     "3/10에 만났어요",
+    // v2.4: 행동·역할에 대한 과감한 판정은 막지 않는다(틀려도 된다)
+    "이 방의 실세는 창엽이다",
+    "범인은 민수다",
+    "약속 증발 사건의 범인은 민수임이 틀림없다",
+    "이 방의 분위기 반장인 것 같다",
+    "민수가 범인일 확률이 매우 높다",
+    "오늘의 MVP는 민지로 확정!",
+    "이 무리의 우두머리는 민수다",
+    "사실 이 방의 엄마는 민지다",
   ])("안 걸린다: %s", (s) => {
     expect(banned(s)).toBe(false);
+  });
+
+  it("isBannedAbout(v2.4): 멤버를 대상으로 한 호감 단정만 잡는다(행동을 좋아하는 것·판정은 둔다)", () => {
+    const members = ["민수", "으리", "J.K"];
+    for (const s of ["민수는 사실 으리를 좋아한다", "민수는 으리한테 반했다", "민수는 으리에게 은근히 관심이 있다", "으리를 몰래 사랑한다", "J.K를 좋아한다"]) {
+      expect(isBannedAbout(s, members), s).toBe(true);
+    }
+    for (const s of ["민수는 으리를 놀리는 걸 좋아한다", "이 방의 실세는 으리다", "범인은 민수다", "민수는 치킨을 좋아한다", "JXK를 좋아한다"]) {
+      expect(isBannedAbout(s, members), s).toBe(false);
+    }
+    expect(isBannedAbout("으리를 좋아한다", [""])).toBe(false);
   });
 
   it("test()가 상태를 갖지 않도록 g·y 플래그를 쓰지 않는다", () => {

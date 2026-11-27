@@ -5,7 +5,7 @@ import { resolveStat } from "@/lib/stats/paths";
 import { memberCodes } from "@/lib/payload/build";
 import type { Tone } from "./concepts";
 import type { Report } from "./schema";
-import { validateReport } from "./validate";
+import { RELINK_NEAR, validateReport } from "./validate";
 
 /** KST 벽시계 → UTC epoch ms */
 const kst = (d: number, h: number, mi: number) => Date.UTC(2026, 9, d, h, mi) - 9 * 3_600_000;
@@ -58,7 +58,7 @@ describe("validateReport", () => {
     ]);
     const r = run(raw);
     expect(r.status).toBe("done");
-    expect(r.dropped).toEqual({ paragraphs: 0, evidence: 0 });
+    expect(r.dropped).toMatchObject({ paragraphs: 0, evidence: 0 });
     expect(r.content?.sections[0].evidence).toEqual([
       { id: "e1", msg_id: "m1", quote: "쉬는 중", sender: "민지", at: "2026-10-01T20:05:00+09:00" },
     ]);
@@ -78,7 +78,7 @@ describe("validateReport", () => {
     );
     expect(r.content?.sections[0].evidence.map((e) => e.id)).toEqual(["e4"]);
     expect(r.content?.sections[0].paragraphs[0].evidence_ids).toEqual(["e4"]);
-    expect(r.dropped).toEqual({ paragraphs: 0, evidence: 3 });
+    expect(r.dropped).toMatchObject({ paragraphs: 0, evidence: 3 });
   });
 
   it("줄바꿈(⏎)이 든 본문은 줄바꿈으로 비교하고 저장한다", () => {
@@ -182,7 +182,7 @@ describe("validateReport", () => {
       ["p2", "민지는 웃음이 많아요", ["e2"]],
     ]);
     expect(r.content?.sections[0].evidence.map((e) => e.id)).toEqual(["e2"]);
-    expect(r.dropped).toEqual({ paragraphs: 2, evidence: 1 });
+    expect(r.dropped).toMatchObject({ paragraphs: 2, evidence: 1 });
   });
 
   it("문단 안 큰따옴표 인용은 보낸 메시지의 부분 문자열이어야 한다: 지어낸 인용이 든 문단은 지운다", () => {
@@ -333,7 +333,7 @@ describe("validateReport", () => {
       ["p1", "저녁 8시에 대화가 몰려요"],
       ["p2", "주말엔 조용해요"],
     ]);
-    expect(r.dropped).toEqual({ paragraphs: 3, evidence: 1 });
+    expect(r.dropped).toMatchObject({ paragraphs: 3, evidence: 1 });
   });
 
   const evidence = (prefix: string, n: number) =>
@@ -422,7 +422,7 @@ describe("validateReport", () => {
       ]),
     );
     expect(r.content?.sections.map((s) => s.title)).toEqual(["남음"]);
-    expect(r.dropped).toEqual({ paragraphs: 1, evidence: 1 });
+    expect(r.dropped).toMatchObject({ paragraphs: 1, evidence: 1 });
   });
 
   it("headline·dek·섹션 제목·reading_notes의 금지 표현은 비운다", () => {
@@ -618,7 +618,7 @@ describe("validateReport", () => {
     );
     const r = run(report(sections));
     expect(r.status).toBe("done");
-    expect(r.dropped).toEqual({ paragraphs: 0, evidence: 0 });
+    expect(r.dropped).toMatchObject({ paragraphs: 0, evidence: 0 });
     expect(r.content?.sections).toHaveLength(10);
     expect(r.content?.sections.flatMap((s) => s.evidence)).toHaveLength(30);
     expect(r.content?.sections.flatMap((s) => s.paragraphs)).toHaveLength(50);
@@ -633,13 +633,13 @@ describe("validateReport", () => {
 
   it("safety.flag가 none이 아니면 safety", () => {
     const r = run(report([sec("s", [para("p1", "저녁 대화")])], { safety: { flag: "self_harm" } }));
-    expect(r).toEqual({ status: "safety", content: null, dropped: { paragraphs: 0, evidence: 0 } });
+    expect(r).toEqual({ status: "safety", content: null, dropped: { paragraphs: 0, evidence: 0, checks: { relinked: 0, dropped_by: {} } } });
   });
 
   it("표에 없는 none 아닌 flag도 safety (SDK 스키마 변환이 enum을 강제하지 않는다)", () => {
     for (const flag of ["unknown", "self-harm", "자해", ""]) {
       const r = run(report([sec("s", [para("p1", "저녁 대화")])], { safety: { flag: flag as "none" } }));
-      expect(r, flag).toEqual({ status: "safety", content: null, dropped: { paragraphs: 0, evidence: 0 } });
+      expect(r, flag).toEqual({ status: "safety", content: null, dropped: { paragraphs: 0, evidence: 0, checks: { relinked: 0, dropped_by: {} } } });
     }
   });
 
@@ -666,6 +666,102 @@ describe("validateReport", () => {
     expect(run({ ...report([sec("s", [para("p1", "저녁 대화")])]), safety: null }).status).toBe("failed");
     expect(run(report([])).status).toBe("failed");
     expect(run(report([sec("s", [para("p1", "확률 99")])])).content).toBeNull();
+  });
+
+  // v2.4: 긴 입력에서 m번호를 잘못 옮겨도 quote가 글자 그대로 든 메시지가 있으면 가장 가까운 번호로 다시 잇는다
+  it("relink: msg_id가 틀린 근거는 quote가 든 가장 가까운 메시지로 다시 잇고, 보낸 사람·시각은 그 메시지의 것이다", () => {
+    const r = run(
+      report([
+        sec(
+          "민지",
+          [para("p1", "민지는 저녁마다 집에서 쉬었다", ["e1"]), para("p2", "약속에는 늘 좋다고 답했다", ["e2"])],
+          // e1: 없는 번호, 긴 quote → 전체에서 가장 가까운 m9. e2: m4에는 없지만 가까운 m3(민지)에 있다
+          [ev("e1", "m999", "집에서 쉬는 중"), ev("e2", "m4", "좋아!")],
+          "민지",
+        ),
+      ]),
+    );
+    expect(r.status).toBe("done");
+    expect(r.content?.sections[0].evidence).toEqual([
+      { id: "e1", msg_id: "m9", quote: "집에서 쉬는 중", sender: "민지", at: "2026-10-03T20:05:00+09:00" },
+      { id: "e2", msg_id: "m3", quote: "좋아!", sender: "민지", at: "2026-10-01T20:10:00+09:00" },
+    ]);
+    expect(r.dropped).toMatchObject({ paragraphs: 0, evidence: 0, checks: { relinked: 2, dropped_by: {} } });
+    expect(r.content?.checks).toEqual({ relinked: 2, dropped_by: {} });
+  });
+
+  it(`relink: 짧은 quote는 ${RELINK_NEAR}번 안에서만 찾고, 없으면 예전처럼 근거와 그 근거만 단 문단을 지운다`, () => {
+    const r = run(
+      report([
+        sec(
+          "근거",
+          [para("p1", "저녁 대화가 이어졌다", ["e1"]), para("p2", "주말엔 조용했다")],
+          [ev("e1", `m${11 + RELINK_NEAR + 1}`, "좋아!")],
+        ),
+      ]),
+    );
+    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual(["주말엔 조용했다"]);
+    expect(r.dropped.checks).toEqual({ relinked: 0, dropped_by: { evidence_unmatched: 1, fake_evidence: 1 } });
+  });
+
+  it("relink: 사람 섹션이면 그 사람이 보낸 메시지를 먼저 고른다(더 가까운 다른 사람 메시지보다)", () => {
+    const at = "2026-10-01T20:00:00+09:00";
+    const own = new Map([
+      ["m10", { sender: "민지", at, text: "오늘 저녁 맛있었다" }],
+      ["m20", { sender: "철수", at, text: "오늘 저녁 맛있었다" }],
+    ]);
+    const r = validateReport(
+      report([sec("민지", [para("p1", "민지는 저녁 이야기를 했다", ["e1"])], [ev("e1", "m21", "오늘 저녁 맛있었다")], "민지")]),
+      own,
+      stats,
+      { truncated: false, tone: "fact", members },
+    );
+    expect(r.content?.sections[0].evidence.map((e) => [e.msg_id, e.sender])).toEqual([["m10", "민지"]]);
+  });
+
+  it("checks: 지운 까닭을 센다(숫자만 저장한다)", () => {
+    const r = run(
+      report([
+        sec(
+          "까닭",
+          [
+            para("p1", "저녁 대화가 이어졌다", ["e1"]),
+            para("p2", "철수는 속마음은 분명 민지를 좋아해요"),
+            para("p3", "민지는 \"나는 철수가 제일 좋아\"라고 했다"),
+            para("p4", "대화는 {{stat:nope}}개"),
+            para("p5", "이 문단은 근거가 틀렸다", ["e2"]),
+            para("p6", ""),
+          ],
+          [ev("e1", "m1", "쉬는 중"), ev("e2", "m1", "없는 말"), ev("e3", "m3", "좋아!")],
+        ),
+      ]),
+    );
+    expect(r.content?.checks).toEqual({
+      relinked: 0,
+      dropped_by: { banned: 1, inline_quote: 1, placeholder: 1, fake_evidence: 1, empty: 1, evidence_unmatched: 1, evidence_orphan: 1 },
+    });
+  });
+
+  // v2.4: 행동·역할에 대한 과감한 판정은 남기고, 멤버를 대상으로 한 호감 단정만 지운다
+  it("판정 문장(실세·범인·~임이 틀림없다·~인 것 같다·범인일 확률)은 남고, 멤버를 향한 호감 단정은 지운다", () => {
+    const keep = [
+      "이 방의 실세는 철수다.",
+      "약속 증발 사건의 범인은 민지다.",
+      "새벽 수다의 주범이 철수임이 틀림없다.",
+      "민지가 이 방의 연결 반장인 것 같다.",
+      "철수가 범인일 확률이 매우 높다.",
+      "철수는 민지를 놀리는 걸 좋아한다.",
+    ];
+    const drop = ["민지는 사실 철수를 좋아한다.", "철수는 민지한테 반했다.", "철수는 민지에게 은근히 관심이 있다."];
+    // 사람 이름이 든 문단이 남으려면 섹션에 원문과 맞는 근거가 하나 있어야 한다(사람 근거 규칙)
+    const grounded = para("p0", "저녁마다 쉬는 이야기가 나왔다", ["e1"]);
+    const r = run(report([sec("판정", [grounded, ...[...keep, ...drop].map((t, i) => para(`p${i + 1}`, t))], [ev("e1", "m1", "쉬는 중")])]));
+    expect(r.content?.sections[0].paragraphs.map((p) => p.text).slice(1)).toEqual(keep);
+    expect(r.dropped.checks.dropped_by).toEqual({ banned: drop.length });
+    // 제목·헤드라인도 같은 검사
+    const head = run(report([sec("민지는 철수를 좋아한다", [para("p1", "저녁 대화가 이어졌다")])], { headline: "이 방의 실세는 철수다" }));
+    expect(head.content?.sections[0].title).toBe("");
+    expect(head.content?.headline).toBe("이 방의 실세는 철수다");
   });
 
   it("truncated: 빠진 뒤쪽 필드에 기본값을 넣고, 결과는 partial", () => {

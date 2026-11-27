@@ -26,7 +26,7 @@ import { renderStatPlain } from "../lib/episode/statText";
 import { PICKABLE_TONES, type PickableTone, TONES } from "../lib/llm/concepts";
 import { estimateCostUsd } from "../lib/llm/cost";
 import { buildRequest, PROMPT_VERSION } from "../lib/llm/prompt";
-import type { StoredReport } from "../lib/llm/schema";
+import type { DropReason, StoredReport } from "../lib/llm/schema";
 import { type ModelSettings, modelSettings } from "../lib/llm/settings";
 import { runReport } from "../lib/llm/stream";
 import { validateReport } from "../lib/llm/validate";
@@ -190,6 +190,9 @@ export interface ReportScore {
   dropRate: number;
   /** 구성(part)별 쓴 문단·지운 문단. 구성 키가 아닌 part는 "none" */
   dropByPart: Record<string, { in: number; dropped: number }>;
+  /** 검증이 지운 까닭별 수(v2.4, validateReport의 checks.dropped_by)와 m번호를 다시 이은 근거 수 */
+  dropReasons: Partial<Record<DropReason, number>>;
+  relinked: number;
   /** 모델이 쓴 근거 수와 본문에서 확인된 수 */
   evidenceIn: number;
   evidenceMatched: number;
@@ -201,7 +204,17 @@ export interface ReportScore {
 
 type Scored = Pick<
   ReportScore,
-  "status" | "kind" | "paragraphsIn" | "paragraphsDropped" | "dropRate" | "dropByPart" | "evidenceIn" | "evidenceMatched" | "bannedHits"
+  | "status"
+  | "kind"
+  | "paragraphsIn"
+  | "paragraphsDropped"
+  | "dropRate"
+  | "dropByPart"
+  | "dropReasons"
+  | "relinked"
+  | "evidenceIn"
+  | "evidenceMatched"
+  | "bannedHits"
 >;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -241,7 +254,19 @@ export function scoreReport(
     raw = JSON.parse(rawText);
   } catch {
     return {
-      score: { status: "failed", kind, paragraphsIn: 0, paragraphsDropped: 0, dropRate: 0, dropByPart: {}, evidenceIn: 0, evidenceMatched: 0, bannedHits: 0 },
+      score: {
+        status: "failed",
+        kind,
+        paragraphsIn: 0,
+        paragraphsDropped: 0,
+        dropRate: 0,
+        dropByPart: {},
+        dropReasons: {},
+        relinked: 0,
+        evidenceIn: 0,
+        evidenceMatched: 0,
+        bannedHits: 0,
+      },
       content: null,
     };
   }
@@ -266,6 +291,8 @@ export function scoreReport(
       paragraphsDropped: v.dropped.paragraphs,
       dropRate: w.paragraphs === 0 ? 0 : v.dropped.paragraphs / w.paragraphs,
       dropByPart,
+      dropReasons: v.dropped.checks.dropped_by,
+      relinked: v.dropped.checks.relinked,
       evidenceIn: w.evidence,
       evidenceMatched: w.evidence - v.dropped.evidence,
       bannedHits: w.texts.filter((t) => t !== "" && isBanned(t)).length,

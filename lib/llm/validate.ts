@@ -14,28 +14,40 @@
 //   원문과 맞는 근거를 쓰는 문단이나 풀리는 자리표시자가 섹션 어디든 하나 있으면 된다. 둘 다 없으면 이름이 든 문단(about이 사람이면 전부)을 지운다.
 //   몫 때문에 근거 카드가 빠져도 원문과 맞은 근거를 단 문단은 남는다(카드만 빠진다). 문단을 지우는 것은 몫과 상관없이 정해진다.
 // 구성 키(part)는 그 말투의 구성(TONES[tone].parts)만 남긴다.
+// v2.4: 근거의 msg_id가 틀려도(긴 입력에서 m번호를 잘못 옮긴 경우) quote가 글자 그대로 든 메시지가 있으면 가장 가까운 번호의 그 메시지로
+//   다시 잇는다(relink). 보낸 사람·시각은 이은 메시지의 것이라 카드가 거짓이 되지 않는다. 짧은 quote(RELINK_SHORT_CHARS자 미만)는
+//   흔한 말("ㅋㅋ")이 엉뚱한 곳에 붙지 않게 가까운 번호(RELINK_NEAR) 안에서만 찾는다. 사람 섹션이면 그 사람이 보낸 메시지를 먼저 본다.
+// v2.4: 지운 까닭을 센다(checks.dropped_by). 대화 원문·이름 없는 숫자뿐이라 저장한다(운영에서 문단이 왜 줄었는지 확인용).
+// v2.4: 멤버를 대상으로 한 호감 단정(isBannedAbout)도 금지 표현으로 본다.
 // 나머지 모델 글(headline·dek·제목)도 같은 검사(금지 표현·개인정보·글자 수)에 걸리면 비운다. icon·about·part는 허용 모양만 남긴다.
 // 자리표시자 경로 속 범례 기호(A, B…)는 표시 이름으로 바꾼다(모델이 줄의 기호를 그대로 옮겨 쓴 경우).
 import "server-only";
 import { MAX_QUOTES_PER_REPORT, PARTIAL_DROP_RATIO } from "@/lib/config";
-import { isBanned } from "@/lib/payload/banned";
+import { isBanned, isBannedAbout } from "@/lib/payload/banned";
 import { memberCodes, type payloadIndex } from "@/lib/payload/build";
 import { hasPII } from "@/lib/payload/mask";
 import type { ChatStats } from "@/lib/stats/compute";
 import { resolveStat } from "@/lib/stats/paths";
 import { type Tone, TONES } from "./concepts";
 import { sanitizeNotes } from "./notes";
-import { DECLINED_TOPICS, type Report, reportSchema, type StoredReport } from "./schema";
+import { DECLINED_TOPICS, type DropReason, type Report, reportSchema, type StoredReport, type ValidationChecks } from "./schema";
 
 type Index = ReturnType<typeof payloadIndex>;
+type IndexLine = Index extends Map<string, infer L> ? L : never;
 type StoredSection = StoredReport["sections"][number];
 type Paragraph = Report["sections"][number]["paragraphs"][number];
 
 export interface ValidateResult {
   status: "done" | "partial" | "safety" | "failed";
   content: StoredReport | null;
-  dropped: { paragraphs: number; evidence: number };
+  /** 지운 문단·근거 수. checks는 지운 까닭별 수와 다시 이은 근거 수(failed·safety면 빈 값) */
+  dropped: { paragraphs: number; evidence: number; checks: ValidationChecks };
 }
+
+/** 다시 잇기(relink): 짧은 quote는 이 번호 거리 안에서만 찾는다 */
+export const RELINK_NEAR = 30;
+/** 이 글자 수보다 짧은 quote는 가까운 번호에서만 다시 잇는다 */
+export const RELINK_SHORT_CHARS = 6;
 
 /** 페이로드 본문의 줄바꿈 표시(build.ts의 render) */
 const LINE_BREAK_MARK = " ⏎ ";
@@ -189,12 +201,16 @@ const withoutStats = (text: string, stats: ChatStats) =>
   text.replace(PLACEHOLDER, (whole, inner: string) =>
     inner.startsWith(STAT) && resolveStat(inner.slice(STAT.length), stats) !== null ? "" : whole,
   );
-/** 저장해도 되는 모델 글인가: 금지 표현·개인정보(PRD 5장 6)가 없고 글자 수 상한 이하(PRD 5장 1) */
-const storable = (text: string, max: number, stats: ChatStats) =>
-  length(text) <= max && !isBanned(text) && !hasPII(withoutStats(text, stats));
+/** 저장할 수 없는 까닭(글자 수·금지 표현·개인정보, PRD 5장 1·6). 저장해도 되면 null */
+function unstorable(text: string, max: number, stats: ChatStats, members: string[]): DropReason | null {
+  if (length(text) > max) return "too_long";
+  if (isBanned(text) || isBannedAbout(text, members)) return "banned";
+  if (hasPII(withoutStats(text, stats))) return "pii";
+  return null;
+}
 /** 제목·headline·dek: 저장할 수 없거나 원문에 없는(말한 사람이 다른) 인용이 들었으면 비운다 */
 const clean = (text: string, max: number, stats: ChatStats, corpus: Corpus, members: string[]) =>
-  storable(text, max, stats) && inlineQuotesOk(text, corpus, members) ? text : "";
+  unstorable(text, max, stats, members) === null && inlineQuotesOk(text, corpus, members) ? text : "";
 /** 이모지 몇 글자만. 글자·숫자가 들었으면(문장을 넣었으면) 비운다 */
 const cleanIcon = (icon: string) => {
   const t = icon.trim();
@@ -261,13 +277,33 @@ function placeholderCount(text: string, stats: ChatStats): number | null {
   return n;
 }
 
+/** m번호(m123) → 123. 모양이 다르면 null */
+const refNumber = (ref: string) => (/^m\d+$/.test(ref) ? Number(ref.slice(1)) : null);
+
+/**
+ * quote가 글자 그대로 든 메시지 중 claimed(모델이 적은 m번호)에 가장 가까운 것(v2.4 relink). 없으면 null.
+ * prefer(사람 섹션의 그 사람)가 보낸 메시지가 있으면 그중에서만 고른다. 짧은 quote는 RELINK_NEAR 안에서만
+ */
+function relink(lines: [ref: string, n: number, line: IndexLine][], claimed: string, quote: string, prefer: string | null) {
+  const at = refNumber(claimed);
+  const short = length(quote.trim()) < RELINK_SHORT_CHARS;
+  if (short && at === null) return null;
+  const found = lines.filter(([, n, line]) => (!short || Math.abs(n - at!) <= RELINK_NEAR) && toNewlines(line.text).includes(quote));
+  const pool = prefer !== null && found.some(([, , line]) => line.sender === prefer) ? found.filter(([, , line]) => line.sender === prefer) : found;
+  if (pool.length === 0) return null;
+  const distance = (n: number) => (at === null ? n : Math.abs(n - at));
+  return pool.reduce((best, x) => (distance(x[1]) < distance(best[1]) ? x : best));
+}
+
+const emptyChecks = (): ValidationChecks => ({ relinked: 0, dropped_by: {} });
+
 export function validateReport(
   raw: unknown,
   idx: Index,
   stats: ChatStats,
   opts: { truncated: boolean; tone: Tone; members: string[] },
 ): ValidateResult {
-  const none = { paragraphs: 0, evidence: 0 };
+  const none = { paragraphs: 0, evidence: 0, checks: emptyChecks() };
   // safety가 먼저다: 걸린 응답이 구조 검사에서 failed가 되면 도움 안내 대신 [다시 쓰기]가 보이고,
   // 같은 위험 대화가 다시 유료 호출로 간다
   const flag = rawSafetyFlag(raw);
@@ -284,30 +320,62 @@ export function validateReport(
   const corpus = corpusOf(idx);
   const paragraphsIn = report.sections.reduce((n, s) => n + s.paragraphs.length, 0);
   const evidenceIn = report.sections.reduce((n, s) => n + s.evidence.length, 0);
+  const checks = emptyChecks();
+  const drop = (reason: DropReason, n = 1) => {
+    if (n > 0) checks.dropped_by[reason] = (checks.dropped_by[reason] ?? 0) + n;
+  };
+  // 다시 잇기에 쓰는 번호 붙은 줄 목록. 틀린 근거가 있을 때 한 번만 만든다
+  let numbered: [string, number, IndexLine][] | null = null;
+  const lines = () =>
+    (numbered ??= Array.from(idx, ([ref, line]): [string, number, IndexLine] => [ref, refNumber(ref) ?? -1, line]).filter(([, n]) => n >= 0));
 
   // 1차: 섹션마다 남을 문단과 그 문단이 쓰는 근거를 정한다. 근거 몫과 상관없이 정해진다
   const judged = report.sections.flatMap((section) => {
-    // 1) 근거: 보낸 줄에 있고 본문의 부분 문자열인 것만(원문 일치), 같은 id는 처음 것만
+    // 1) 근거: 보낸 줄에 있고 본문의 부분 문자열인 것만(원문 일치), 같은 id는 처음 것만.
+    // m번호가 틀렸으면 quote가 든 가장 가까운 메시지로 다시 잇는다(relink)
+    const aboutPerson = people.includes(section.about);
     const valid: StoredSection["evidence"] = [];
     for (const e of section.evidence) {
-      const line = idx.get(e.msg_id);
       const quote = toNewlines(e.quote);
-      if (!line || quote.trim() === "" || valid.some((v) => v.id === e.id)) continue;
-      if (!toNewlines(line.text).includes(quote)) continue;
-      valid.push({ id: e.id, msg_id: e.msg_id, quote, sender: line.sender, at: line.at });
+      if (quote.trim() === "" || valid.some((v) => v.id === e.id)) {
+        drop("evidence_unmatched");
+        continue;
+      }
+      const line = idx.get(e.msg_id);
+      if (line && toNewlines(line.text).includes(quote)) {
+        valid.push({ id: e.id, msg_id: e.msg_id, quote, sender: line.sender, at: line.at });
+        continue;
+      }
+      const found = relink(lines(), e.msg_id, quote, aboutPerson ? section.about : null);
+      if (!found) {
+        drop("evidence_unmatched");
+        continue;
+      }
+      checks.relinked++;
+      valid.push({ id: e.id, msg_id: found[0], quote, sender: found[2].sender, at: found[2].at });
     }
     const verified = new Set(valid.map((e) => e.id));
 
     // 2) 문단: 글 검사(빈 글·자리표시자·금지 표현·개인정보·글자 수·큰따옴표 인용)와 가짜 근거 검사.
     // 근거를 달았는데 원문과 맞는 것이 하나도 없으면 지운다. evidence_ids는 원문과 맞은 것만 남긴다
-    const aboutPerson = people.includes(section.about);
     const written = section.paragraphs.flatMap((p): (Paragraph & { placeholders: number })[] => {
       const text = named(p.text);
       const placeholders = placeholderCount(text, stats);
-      if (text.trim() === "" || placeholders === null || !storable(text, MAX_CHARS.paragraph, stats)) return [];
-      if (!inlineQuotesOk(text, corpus, opts.members)) return [];
       const ids = p.evidence_ids.filter((id) => verified.has(id));
-      if (p.evidence_ids.length > 0 && ids.length === 0) return [];
+      // 지울 까닭을 앞에서부터 하나 고른다(빈 글 → 자리표시자 → 글자 수·금지 표현·개인정보 → 글 안 인용 → 가짜 근거)
+      const reason = (): DropReason | null => {
+        if (text.trim() === "") return "empty";
+        if (placeholders === null) return "placeholder";
+        const bad = unstorable(text, MAX_CHARS.paragraph, stats, opts.members);
+        if (bad !== null) return bad;
+        if (!inlineQuotesOk(text, corpus, opts.members)) return "inline_quote";
+        return p.evidence_ids.length > 0 && ids.length === 0 ? "fake_evidence" : null;
+      };
+      const why = reason();
+      if (why !== null || placeholders === null) {
+        drop(why ?? "placeholder");
+        return [];
+      }
       return [{ ...p, text, evidence_ids: ids, placeholders }];
     });
     // 3) 사람 근거(섹션 단위): 근거를 달지 않은 문단만 본다. 원문과 맞은 근거를 쓰는 문단이나 자리표시자가 섹션 어디든 있으면 된다.
@@ -315,10 +383,12 @@ export function validateReport(
     const grounded = written.some((p) => p.evidence_ids.length > 0 || p.placeholders > 0);
     const isPerson = (text: string) => aboutPerson || people.some((name) => text.includes(name));
     const paragraphs = written.filter((p) => grounded || !isPerson(p.text)).map(({ placeholders: _placeholders, ...p }) => p);
-    // 문단이 다 지워진 섹션은 빼고, 그 근거는 몫에서 쓰지 않는다
-    if (paragraphs.length === 0) return [];
+    drop("ungrounded", written.length - paragraphs.length);
     // 남는 문단이 쓰는 근거만 몫을 센다(고아 근거는 버린다)
     const used = new Set(paragraphs.flatMap((p) => p.evidence_ids));
+    drop("evidence_orphan", valid.filter((e) => !used.has(e.id)).length);
+    // 문단이 다 지워진 섹션은 빼고, 그 근거는 몫에서 쓰지 않는다
+    if (paragraphs.length === 0) return [];
     return [{ section, aboutPerson, paragraphs, wanted: valid.filter((e) => used.has(e.id)) }];
   });
 
@@ -336,6 +406,7 @@ export function validateReport(
     const closing = isClosing(j);
     const budget = closing ? quotesLeft : quotesLeft - reserveLeft;
     const evidence = j.wanted.slice(0, Math.max(0, budget));
+    drop("evidence_over_budget", j.wanted.length - evidence.length);
     const kept = new Set(evidence.map((e) => e.id));
     quotesLeft -= evidence.length;
     if (closing) reserveLeft = Math.max(0, reserveLeft - evidence.length);
@@ -352,10 +423,11 @@ export function validateReport(
     };
   });
 
-  const dropped = { paragraphs: paragraphsIn - paragraphsOut, evidence: evidenceIn - evidenceOut };
+  const dropped = { paragraphs: paragraphsIn - paragraphsOut, evidence: evidenceIn - evidenceOut, checks };
   if (sections.length === 0) return { status: "failed", content: null, dropped };
   const content: StoredReport = {
     ...report,
+    checks,
     reading_notes: sanitizeNotes(report.reading_notes.map((n) => ({ ...n, note: named(n.note) }))),
     headline: clean(named(report.headline), MAX_CHARS.headline, stats, corpus, opts.members),
     dek: clean(named(report.dek), MAX_CHARS.dek, stats, corpus, opts.members),
