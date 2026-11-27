@@ -129,7 +129,7 @@ describe("placeEvidence", () => {
   });
   const shape = (rows: ReturnType<typeof placeEvidence>) => rows.map((r) => [r.paragraph?.key ?? null, r.evidence.map((x) => [x.e.id, x.index])]);
 
-  it("근거 메모지는 그 근거를 처음 쓴 문단 바로 아래에 한 번만, 섹션 안 순서(index)는 그대로", () => {
+  it("근거 말풍선은 그 근거를 처음 쓴 문단 바로 아래에 한 번만, 섹션 안 순서(index)는 그대로", () => {
     const rows = placeEvidence(section([p("p1", ["e2"]), p("p2", []), p("p3", ["e2", "e1", "e9"])], [e("e1"), e("e2")]));
     expect(shape(rows)).toEqual([
       ["p1", [["e2", 1]]],

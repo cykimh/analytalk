@@ -470,13 +470,18 @@ test.describe("AI 리포트", () => {
     await expect(page.getByText(XSS)).toBeVisible();
     await expect(page.locator('img[src="x"]')).toHaveCount(0);
     await expect(page.getByText("둘의 대화 연재 · AI 생성, 재미·참고용")).toBeVisible();
-    // 헤드라인 → dek → 섹션 → 근거(표시 이름·시각·quote). 다음 편 예고는 없다
+    // 헤드라인 → dek → 섹션 → 근거 카톡 말풍선(표시 이름 → quote → 시각). 다음 편 예고는 없다
     const text = (await page.getByRole("article").innerText()).replace(/\s+/g, " ");
-    const at = ["리포트 헤드라인", "사흘 동안의 흐름", "저녁의 리듬", "민지의 답장은 4분 안에 왔어요", "2026-10-01 20:04", XSS].map((x) => text.indexOf(x));
+    const at = ["리포트 헤드라인", "사흘 동안의 흐름", "저녁의 리듬", "민지의 답장은 4분 안에 왔어요", XSS, "2026-10-01 20:04"].map((x) => text.indexOf(x));
     expect(at.every((x) => x >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
     expect(text).not.toContain("예고");
-    await expect(page.getByRole("figure")).toContainText(/민지\s*·\s*2026-10-01 20:04/);
+    // 말풍선: 이름(캡션) → 본문(흰 말풍선) → 옆 아래 시각(<time>)
+    const bubble = page.getByRole("figure");
+    await expect(bubble.locator("figcaption")).toHaveText("민지");
+    await expect(bubble.locator("blockquote.bubble")).toHaveText(XSS);
+    await expect(bubble.locator("time")).toHaveAttribute("datetime", /^2026-10-01T20:04/);
+    await expect(bubble).toContainText(/민지[\s\S]*2026-10-01\s*20:04/);
     await expect(page.getByRole("link", { name: "← 대화 홈" })).toHaveAttribute("href", `/c/${ID}`);
 
     await page.getByRole("button", { name: "틀렸어요" }).click();

@@ -103,6 +103,10 @@
     /* 메모지 줄 */
     --note-line: #e9dfcd;
 
+    /* 근거 인용 카톡 말풍선: 대화방 바탕(옅은 따뜻한 회색, 옅은 잉크 5:1 이상)과 흰 상대 말풍선 */
+    --chat-room: #ece8e1;
+    --bubble: #ffffff;
+
     /* 종이가 살짝 떠 보이는 옅고 따뜻한 그림자 */
     --shadow-paper: 0 1px 2px rgb(92 70 40 / 0.06);
     --shadow-sticker: 0 0 0 1px rgb(92 70 40 / 0.07), 0 1px 2px rgb(92 70 40 / 0.2);
@@ -233,25 +237,25 @@
     box-shadow: inset 0 0 0 1px rgb(92 70 40 / 0.07);
   }
 
-  /* 찢은 메모지: 위아래가 들쭉날쭉. 그림자는 바깥 .torn-shadow의 drop-shadow가 모양을 따라 그린다 */
-  .torn-shadow {
-    filter: none;
+  /* 근거 인용 대화방(ChatRoom): 흰 카드 위에서 흰 말풍선이 보이게 까는 옅은 판 */
+  .chat-room {
+    background-color: var(--chat-room);
   }
-  .torn {
-    background-color: #fffcf2;
-    border-left: 3px solid var(--note-line);
-    border-radius: 2px 6px 6px 2px;
+  /* 카톡 상대 말풍선: 흰 바탕, 둥근 모서리, 왼쪽 위 꼬리(왼쪽 위 모서리만 작게 굴리고 삼각형을 붙인다) */
+  .bubble {
+    position: relative;
+    background-color: var(--bubble);
+    border-radius: 4px 14px 14px 14px;
   }
-  /* 왼쪽 위 큰 따옴표 */
-  .torn::before {
-    content: "\201C";
+  .bubble::before {
+    content: "";
     position: absolute;
-    left: 0.4rem;
-    top: 0.1rem;
-    font-size: 2rem;
-    line-height: 1;
-    color: var(--ink-soft);
-    opacity: 0.55;
+    top: 0;
+    left: -6px;
+    width: 7px;
+    height: 9px;
+    background-color: var(--bubble);
+    clip-path: polygon(0 0, 100% 0, 100% 100%);
   }
 
   /* 메모지 줄(28px 간격, 줄 높이와 같다) */

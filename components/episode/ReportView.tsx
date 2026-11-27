@@ -1,4 +1,4 @@
-// 리포트 한 편: 표지 카드(킥커·헤드라인·dek·스티커) → (있으면) 폴라로이드 → 섹션 카드(아이콘 스티커·제목·문단마다 그 문단이 처음 쓴 근거 메모지).
+// 리포트 한 편: 표지 카드(킥커·헤드라인·dek·스티커) → (있으면) 폴라로이드 → 섹션 카드(아이콘 스티커·제목·문단마다 그 문단이 처음 쓴 근거 말풍선).
 // 킥커에 'AI 생성, 재미·참고용'을 단다. 모든 글은 React 텍스트 노드로만 그린다. 모델이 쓴 글은 모두 StatText로 그려
 // {{stat:경로}}를 통계 값으로 채운다. 채운 뒤 빈 헤드라인은 fallbackTitle로, 빈 dek는 그리지 않는다.
 // 문단 [틀렸어요]는 여기 없다: 리포트 화면이 #report-capture 바깥 아래에 ParagraphFeedback으로 둔다.
@@ -7,6 +7,7 @@
 import { Fragment, type ReactNode } from "react";
 import { Highlight } from "@/components/scrap/Highlight";
 import { Paper } from "@/components/scrap/Paper";
+import { ChatRoom } from "@/components/scrap/ChatBubble";
 import { Sticker } from "@/components/scrap/Sticker";
 import { alternate, highlightAt, tapeAt } from "@/components/scrap/tilt";
 import { hasStatText } from "@/lib/episode/statText";
@@ -79,12 +80,13 @@ export function ReportView({
                   <StatText text={p.text} stats={stats} />
                 </p>
               )}
+              {/* 한 문단의 근거는 카톡 대화방처럼 한 판에 쌓는다 */}
               {evidence.length > 0 && (
-                <div className="grid grid-cols-1 gap-3">
-                  {evidence.map(({ e, index }) => (
-                    <Evidence key={e.id} index={index} sender={e.sender} at={e.at} quote={e.quote} />
+                <ChatRoom>
+                  {evidence.map(({ e }) => (
+                    <Evidence key={e.id} sender={e.sender} at={e.at} quote={e.quote} />
                   ))}
-                </div>
+                </ChatRoom>
               )}
             </Fragment>
           ))}

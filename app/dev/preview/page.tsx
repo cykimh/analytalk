@@ -1,7 +1,8 @@
-// dev 미리보기 첫 장: 콜라주 조각 모음(종이·테이프·형광펜·스티커·폴라로이드·메모지·크레파스 막대).
+// dev 미리보기 첫 장: 콜라주 조각 모음(종이·테이프·형광펜·스티커·폴라로이드·근거 말풍선·크레파스 막대).
 // 리포트 화면은 /dev/preview/home·report·share. 링크로 들어오는 곳이 없고 프로덕션은 404다
 import type { Metadata } from "next";
 import { Evidence } from "@/components/episode/Evidence";
+import { ChatRoom } from "@/components/scrap/ChatBubble";
 import { PageFrame } from "@/components/episode/PageState";
 import { Highlight } from "@/components/scrap/Highlight";
 import { Paper } from "@/components/scrap/Paper";
@@ -81,10 +82,13 @@ export default function PreviewSheetPage() {
           <Polaroid index={2} tone="pink" caption="가장 뜨거웠던 날" value="388" unit="개" sub="2024-03-02" />
         </PolaroidStrip>
 
-        <Label>근거 메모지</Label>
+        <Label>근거 말풍선</Label>
         <Paper calm className="grid gap-3">
-          <Evidence index={0} sender="멤버01" at="2025-01-03T19:12:00+09:00" quote="오늘 저녁 뭐 먹을까?" />
-          <Evidence index={1} sender="멤버02" at="2025-07-19T23:58:00+09:00" quote={"아 그거 나도 들었어 대박이다\n내일 자세히 얘기해 줘"} />
+          <ChatRoom>
+            <Evidence sender="멤버01" at="2025-01-03T19:12:00+09:00" quote="오늘 저녁 뭐 먹을까?" />
+            <Evidence sender="멤버02" at="2025-07-19T23:58:00+09:00" quote={"아 그거 나도 들었어 대박이다\n내일 자세히 얘기해 줘"} />
+            <Evidence sender="멤버03" at="2025-07-19T23:59:00+09:00" quote={"ㅋ".repeat(60)} />
+          </ChatRoom>
         </Paper>
 
         <Label>크레파스 막대</Label>

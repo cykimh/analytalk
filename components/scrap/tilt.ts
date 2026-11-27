@@ -43,10 +43,6 @@ export const stickerTiltAt = (i: number): string => STICKER_TILTS[i % STICKER_TI
 const POLAROID_TILTS = [""] as const;
 export const polaroidTiltAt = (i: number): string => POLAROID_TILTS[i % POLAROID_TILTS.length];
 
-/** 근거 인용 기울기(지금은 0°) */
-const NOTE_TILTS = [""] as const;
-export const noteTiltAt = (i: number): string => NOTE_TILTS[i % NOTE_TILTS.length];
-
 /** 클래스 글자에서 기울기(도)를 읽는다. 테스트가 "긴 본문 카드 ±0.5° 이하"를 확인하는 데 쓴다 */
 export function degreesOf(className: string): number {
   if (className === "") return 0;

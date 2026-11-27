@@ -4,7 +4,6 @@ import {
   CALM_TILT_CLASS,
   degreesOf,
   highlightAt,
-  noteTiltAt,
   polaroidTiltAt,
   stickerTiltAt,
   TAPE_COLORS,
@@ -24,9 +23,9 @@ describe("콜라주 기울기", () => {
     expect([0, 1, 2, 3].map(alternate)).toEqual(["left", "right", "left", "right"]);
   });
 
-  it("스티커·폴라로이드·인용은 기울이지 않는다", () => {
+  it("스티커·폴라로이드는 기울이지 않는다(근거 인용은 v2.3부터 기울기 없는 카톡 말풍선)", () => {
     for (let i = 0; i < 12; i++) {
-      for (const c of [stickerTiltAt(i), polaroidTiltAt(i), noteTiltAt(i)]) expect(degreesOf(c)).toBe(0);
+      for (const c of [stickerTiltAt(i), polaroidTiltAt(i)]) expect(degreesOf(c)).toBe(0);
     }
   });
 

@@ -135,7 +135,7 @@ export function episodeAction(status: string, paused: boolean, n = 0): { read: b
 type Section = StoredReport["sections"][number];
 
 /**
- * 근거 메모지를 그 근거를 처음 쓴 문단 바로 아래에 둔다(v2.2: 섹션이 문단 3~5개로 길어져 인용이 문단과 멀어지지 않게).
+ * 근거 말풍선을 그 근거를 처음 쓴 문단 바로 아래에 둔다(v2.2: 섹션이 문단 3~5개로 길어져 인용이 문단과 멀어지지 않게).
  * 어느 문단도 쓰지 않는 근거(예전 리포트)는 섹션 끝에 둔다. index는 섹션 안 근거 순서 그대로다
  */
 export function placeEvidence(section: Section): { paragraph: Section["paragraphs"][number] | null; evidence: { e: Section["evidence"][number]; index: number }[] }[] {
