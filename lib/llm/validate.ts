@@ -24,7 +24,7 @@
 // 자리표시자 경로 속 범례 기호(A, B…)는 표시 이름으로 바꾼다(모델이 줄의 기호를 그대로 옮겨 쓴 경우).
 import "server-only";
 import { MAX_QUOTES_PER_REPORT, PARTIAL_DROP_RATIO } from "@/lib/config";
-import { isBanned } from "@/lib/payload/banned";
+import { isBannedFor } from "@/lib/payload/banned";
 import { memberCodes, type payloadIndex } from "@/lib/payload/build";
 import { hasPII } from "@/lib/payload/mask";
 import type { ChatStats } from "@/lib/stats/compute";
@@ -215,17 +215,17 @@ const withoutStats = (text: string, stats: ChatStats) =>
   text.replace(PLACEHOLDER, (whole, inner: string) =>
     inner.startsWith(STAT) && resolveStat(inner.slice(STAT.length), stats) !== null ? "" : whole,
   );
-/** 저장할 수 없는 까닭(글자 수·금지 표현·개인정보, PRD 5장 1·6). 저장해도 되면 null */
-function unstorable(text: string, max: number, stats: ChatStats): DropReason | null {
+/** 저장할 수 없는 까닭(글자 수·금지 표현·개인정보, PRD 5장 1·6). 저장해도 되면 null. members는 커밍아웃을 멤버에게 붙였는지 볼 때 쓴다 */
+function unstorable(text: string, max: number, stats: ChatStats, members: readonly string[]): DropReason | null {
   if (length(text) > max) return "too_long";
-  if (isBanned(text)) return "banned";
+  if (isBannedFor(text, members)) return "banned";
   if (hasPII(withoutStats(text, stats))) return "pii";
   return null;
 }
 /** 제목·headline·dek: 원문과 안 맞는 인용은 따옴표를 떼고(v2.5), 그래도 저장할 수 없으면 비운다 */
 function clean(text: string, max: number, stats: ChatStats, corpus: Corpus, members: string[], checks: ValidationChecks): string {
   const fixed = unquoteUnmatched(text, corpus, members);
-  if (unstorable(fixed.text, max, stats) !== null) return "";
+  if (unstorable(fixed.text, max, stats, members) !== null) return "";
   checks.unquoted += fixed.unquoted;
   return fixed.text;
 }
@@ -413,7 +413,7 @@ export function validateReport(
       const text = fixed.text;
       // 지울 까닭을 앞에서부터 하나 고른다(빈 글 → 자리표시자 → 글자 수·금지 표현·개인정보)
       const why: DropReason | null =
-        text.trim() === "" ? "empty" : placeholderCount(text, stats) === null ? "placeholder" : unstorable(text, MAX_CHARS.paragraph, stats);
+        text.trim() === "" ? "empty" : placeholderCount(text, stats) === null ? "placeholder" : unstorable(text, MAX_CHARS.paragraph, stats, opts.members);
       if (why !== null) {
         drop(why);
         return [];
