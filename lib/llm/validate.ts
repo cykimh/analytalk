@@ -31,7 +31,7 @@ import type { ChatStats } from "@/lib/stats/compute";
 import { resolveStat } from "@/lib/stats/paths";
 import { type Tone, TONES } from "./concepts";
 import { sanitizeNotes } from "./notes";
-import { normalizeQuote, OVERLAP_MIN, originalSpan, overlapRatio, matchesSpeech } from "./quoteMatch";
+import { matchesSpeech, normalizeQuote, OVERLAP_MIN, originalSpan, overlapRatio, type SpeechIndex, speechIndex } from "./quoteMatch";
 import { DECLINED_TOPICS, type DropReason, type Report, reportSchema, type StoredReport, type ValidationChecks } from "./schema";
 
 type Index = ReturnType<typeof payloadIndex>;
@@ -123,22 +123,29 @@ const SENTENCE_END = /[.!?。\n]/;
 const NOT_SPEAKER = /^이?(?:에게|한테|께(?!서)|더러|를|을)/;
 const blank = (s: string) => " ".repeat(s.length);
 
-/** 원문과 대 볼 보낸 메시지(정규화본, 보낸 순서). 보낸 사람별로, 처음 쓸 때 한 번만 만든다 */
-type Corpus = { senders: () => string[]; of: (sender: string) => string[] };
+/**
+ * 원문과 대 볼 보낸 메시지(정규화본, 보낸 순서). 보낸 사람마다 이어 붙인 글까지 처음 쓸 때 한 번만 만든다(리뷰 minor 3).
+ * all은 모든 보낸 사람의 것이다(인용이 든 문장에 이름이 없을 때)
+ */
+type Corpus = { all: () => SpeechIndex[]; of: (senders: string[]) => SpeechIndex[] };
 function corpusOf(idx: Index): Corpus {
-  let bySender: Map<string, string[]> | null = null;
+  let bySender: Map<string, SpeechIndex> | null = null;
   const build = () => {
     if (bySender === null) {
-      bySender = new Map();
+      const lists = new Map<string, string[]>();
       for (const line of idx.values()) {
-        const list = bySender.get(line.sender) ?? [];
+        const list = lists.get(line.sender) ?? [];
         list.push(normalizeQuote(toNewlines(line.text)));
-        bySender.set(line.sender, list);
+        lists.set(line.sender, list);
       }
+      bySender = new Map(Array.from(lists, ([name, sent]) => [name, speechIndex(sent)]));
     }
     return bySender;
   };
-  return { senders: () => [...build().keys()], of: (sender) => build().get(sender) ?? [] };
+  return {
+    all: () => [...build().values()],
+    of: (senders) => senders.flatMap((name) => build().get(name) ?? []),
+  };
 }
 
 /**
@@ -189,7 +196,7 @@ function unquoteUnmatched(text: string, corpus: Corpus, members: string[]): { te
     if (quote === "") return false;
     const speakers = speakersNear(masked, q.start, q.end, members);
     const nq = normalizeQuote(quote);
-    return !(speakers.length > 0 ? speakers : corpus.senders()).some((name) => matchesSpeech(nq, corpus.of(name)));
+    return !matchesSpeech(nq, speakers.length > 0 ? corpus.of(speakers) : corpus.all());
   });
   if (wrong.length === 0) return { text, unquoted: 0 };
   // 따옴표는 모두 한 글자(UTF-16 한 칸)다. 뒤에서부터 떼어 앞쪽 자리가 밀리지 않게 한다

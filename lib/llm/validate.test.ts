@@ -820,6 +820,21 @@ describe("validateReport", () => {
     expect(r.status).toBe("done");
   });
 
+  it("리뷰 I1: 뜻을 뒤집은 따옴표 대사(부정어를 더함·글자 순서를 바꿈)는 비슷해도 따옴표를 뗀다", () => {
+    const texts = [
+      "민지는 \"집에서 안 쉬는 중 ㅋㅋ\"이라고 답했다.",
+      "철수는 \"내일 저녁 영화 볼래?\"라고 물었다.",
+      "철수는 \"영화 안 볼래? 내일 저녁\"이라고 물었다.",
+    ];
+    const r = run(report([sec("민지", texts.map((t, i) => para(`p${i + 1}`, t, ["e1"])), [ev("e1", "m1", "쉬는 중")], "민지")]));
+    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual([
+      "민지는 집에서 안 쉬는 중 ㅋㅋ이라고 답했다.",
+      "철수는 내일 저녁 영화 볼래?라고 물었다.",
+      "철수는 영화 안 볼래? 내일 저녁이라고 물었다.",
+    ]);
+    expect(r.content?.checks).toMatchObject({ unquoted: 3, dropped_by: {} });
+  });
+
   it("v2.5: 따옴표 대사가 많이 틀려도 문단이 지워지지 않아 partial이 되지 않는다", () => {
     const paragraphs = Array.from({ length: 10 }, (_, i) => para(`p${i + 1}`, `민지는 \"지어낸 말 ${i}번\"이라고 했다.`));
     const r = run(report([sec("민지", paragraphs, [], "민지")]));
@@ -872,6 +887,42 @@ describe("validateReport", () => {
     expect(r.content?.checks).toMatchObject({ relinked: 1, requoted: 2, dropped_by: { evidence_unmatched: 1 } });
     // 문단은 남고 못 찾은 근거 id만 빠진다
     expect(r.content?.sections[0].paragraphs[0].evidence_ids).toEqual(["e1", "e3"]);
+  });
+
+  // 리뷰 minor 3: 검증은 270초 마감 뒤에 돌고 maxDuration까지 30초뿐이다. 이름 없는 따옴표는 모든 메시지와 대 보므로 큰 대화에서도 빨라야 한다
+  it("큰 가짜 대화(메시지 약 5만 개·60만 자)에서 지어낸 따옴표 320개가 든 리포트도 1초 안에 검증한다", () => {
+    const names = ["민지", "철수", "영희", "지훈", "수아"];
+    const syll = "가나다라마바사아자차카타파하오늘내일영화보러갈래진짜너무좋아싫어회사집밥먹자언제어디왜ㅋㅋㅎㅎ";
+    let seed = 7;
+    const rnd = (k: number) => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed % k;
+    };
+    const word = () => Array.from({ length: 1 + rnd(4) }, () => syll[rnd(syll.length)]).join("");
+    const messages: ChatMessage[] = [];
+    for (let chars = 0, id = 0; chars < 600_000; id++) {
+      const text = Array.from({ length: 2 + rnd(10) }, word).join(" ");
+      chars += text.length;
+      messages.push({ id, ts: Date.UTC(2026, 0, 1) + id * 60_000, sender: names[rnd(names.length)], kind: "text", text, line: id + 1 });
+    }
+    const p = buildPayload({ messages, tone: "fact", concept: "group", kind: "group", tokenBudget: 2_000_000, tokensPerChar: 1 });
+    const big = payloadIndex(p);
+    expect(big.size).toBeGreaterThan(50_000);
+    const fake = () => `"${word()}${word()} ${word()} ${word()}"`;
+    const sections = Array.from({ length: 16 }, (_, s) =>
+      sec(
+        `섹션 ${s}`,
+        Array.from({ length: 5 }, (_, k) => para(`p${k + 1}`, `누군가 ${fake()} 하고 말했다. 그리고 또 ${fake()} 하고 이어졌다. `.repeat(2))),
+        [],
+        "group",
+      ),
+    );
+    const t0 = performance.now();
+    const r = validateReport(report(sections), big, p.stats, { truncated: false, tone: "fact", members: p.members });
+    const ms = performance.now() - t0;
+    expect(r.status).toBe("done");
+    expect(r.content?.checks?.unquoted).toBeGreaterThan(100);
+    expect(ms, `검증 ${Math.round(ms)}ms`).toBeLessThan(1_000);
   });
 
   it("truncated: 빠진 뒤쪽 필드에 기본값을 넣고, 결과는 partial", () => {
