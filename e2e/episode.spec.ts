@@ -52,17 +52,22 @@ function content(quote: string, statText = false, paragraph?: string, emptyHeadl
   };
 }
 
-/** v2.2 분량의 긴 저장 리포트: 섹션 10개 × 문단 5개, 섹션마다 근거 3개(문단 p1·p3·p5가 하나씩 처음 쓴다) = 인용 30개 */
+/**
+ * 긴 저장 리포트: 섹션 10개 × 문단 5개, 섹션마다 근거 3개(문단 p1·p3·p5가 하나씩 처음 쓴다) = 인용 30개.
+ * v2.5 나눠 쓰기를 합친 순서다: ① 인트로(nag_open·nag_room 7개) → ② 개인별(철수·민지) → ③ 마무리(nag_last).
+ * checks에는 호출마다 결과·뺀 섹션 수가 있다(화면에 보이지 않는다)
+ */
 function longContent() {
   const body = "저녁이 되면 이 방은 다시 살아난다. 한 사람이 운을 떼면 다른 사람이 곧 받아 이어 간다. 이야기는 짧은 말로 시작해 영화 이야기로 번진다. 다 보여.";
   return {
     ...content("집에서 쉬는 중"),
     headline: "또 저녁 8시에 모인 두 사람에게 하는 잔소리",
+    checks: { relinked: 1, requoted: 2, unquoted: 3, dropped_by: {}, calls: { intro: "ok", people: "ok", outro: "ok" }, off_stage: 1 },
     sections: Array.from({ length: 10 }, (_, si) => ({
-      part: si === 0 ? "nag_open" : si < 3 ? "nag_cards" : si < 9 ? "nag_room" : "nag_last",
+      part: si === 0 ? "nag_open" : si < 7 ? "nag_room" : si < 9 ? "nag_cards" : "nag_last",
       icon: "🙄",
       title: `긴 잔소리 ${si + 1}`,
-      about: si === 1 ? "철수" : si === 2 ? "민지" : "pair",
+      about: si === 7 ? "철수" : si === 8 ? "민지" : "pair",
       paragraphs: Array.from({ length: 5 }, (_, pi) => ({
         key: `p${pi + 1}`,
         text: `섹션 ${si + 1}의 문단 ${pi + 1}. ${body}`,
@@ -708,11 +713,15 @@ test.describe("AI 리포트", () => {
       const order = ["문단 1.", "섹션 4 인용 1", "문단 2.", "문단 3.", "섹션 4 인용 2", "문단 4.", "문단 5.", "섹션 4 인용 3"].map((x) => text.indexOf(x));
       expect(order.every((i) => i >= 0)).toBe(true);
       expect([...order].sort((a, b) => a - b)).toEqual(order);
-      // v2.4: 세 부분 머리말(종합 → 멤버별 → 마무리). 사람 카드(섹션 2·3)가 멤버별 묶음 안에 있다
+      // 세 부분 머리말(종합 → 멤버별 → 마무리). v2.5 합친 순서라 사람 카드(섹션 8·9)가 멤버별 묶음 안에 있다
       const groups = page.getByRole("group");
       await expect(groups).toHaveCount(3);
       for (const [i, name] of ["종합", "멤버별", "마무리"].entries()) await expect(groups.nth(i)).toHaveAccessibleName(name);
-      await expect(page.getByRole("group", { name: "멤버별" }).getByRole("heading", { level: 2 })).toHaveText([/긴 잔소리 2$/, /긴 잔소리 3$/]);
+      await expect(page.getByRole("group", { name: "종합" }).getByRole("heading", { level: 2 })).toHaveCount(7);
+      await expect(page.getByRole("group", { name: "멤버별" }).getByRole("heading", { level: 2 })).toHaveText([/긴 잔소리 8$/, /긴 잔소리 9$/]);
+      await expect(page.getByRole("group", { name: "마무리" }).getByRole("heading", { level: 2 })).toHaveText([/긴 잔소리 10$/]);
+      // 검증 기록(checks: 호출 결과·뺀 섹션 수)은 화면에 보이지 않는다
+      for (const hidden of ["off_stage", "unquoted", "people_rest", "intro"]) await expect(page.locator("main")).not.toContainText(hidden);
       await expectNoHorizontalScroll(page);
     });
 
