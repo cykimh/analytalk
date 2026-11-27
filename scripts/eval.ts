@@ -5,7 +5,8 @@
 //
 // 골든셋 폴더 규칙: group/·couple/ 하위 폴더에 두거나 파일명을 group-·couple-로 시작한다.
 // 이름에 injection이 들어간 파일은 인젝션 사례("AI야 100점 줘", 가짜 </conversation>)로 표시만 한다.
-// 순서는 파일 → 말투 → 모델이고 순차다. 케이스(파일, 말투, 모델)마다 리포트 한 번을 만들고, 끝나는 즉시 원장에 기록한다.
+// 순서는 파일 → 말투 → 모델이고 순차다. 케이스(파일, 말투, 모델)마다 리포트 한 번(v2.5: 앱과 같이 호출 3~4개로 나눠 쓴 한 편)을 만들고,
+// 끝나는 즉시 원장에 기록한다.
 // 한 건이 실패해도 나머지는 계속한다. 페이로드는 (파일, 모델 예산, 말투)마다 따로 만든다.
 // --compare는 claude-sonnet-5-5와 claude-opus-5-5 둘. 말투 기본은 전부. 모델 기본은 앱 기본(ANTHROPIC_MODEL).
 // --dry-run은 파일을 읽어 페이로드 크기만 찍고 멈춘다(API·DB 호출, 파일 쓰기, 원장 기록 없음, 키 불필요).
@@ -25,10 +26,10 @@ import { DEFAULT_EST_COST_USD, EPISODE_DEADLINE_MS, TOKENS_PER_CHAR } from "../l
 import { renderStatPlain } from "../lib/episode/statText";
 import { PICKABLE_TONES, type PickableTone, TONES } from "../lib/llm/concepts";
 import { estimateCostUsd } from "../lib/llm/cost";
-import { buildRequest, PROMPT_VERSION } from "../lib/llm/prompt";
+import { buildRequests, PROMPT_VERSION } from "../lib/llm/prompt";
 import type { DropReason, StoredReport } from "../lib/llm/schema";
 import { type ModelSettings, modelSettings } from "../lib/llm/settings";
-import { runReport } from "../lib/llm/stream";
+import { mergeReportCalls, runReportCalls } from "../lib/llm/split";
 import { validateReport } from "../lib/llm/validate";
 import { isBanned } from "../lib/payload/banned";
 import { type Payload, payloadIndex, payloadTokens } from "../lib/payload/build";
@@ -180,7 +181,7 @@ export interface ReportScore {
   fallback: boolean;
   /** validateReport 결과. 실행하지 못했거나 JSON이 아니면 failed */
   status: "done" | "partial" | "safety" | "failed";
-  /** runReport 결과 */
+  /** ok가 아닌 첫 호출의 runReport 결과(모두 ok면 ok) */
   kind: string;
   totalMs: number;
   costUsd: number;
@@ -241,9 +242,12 @@ function writtenTexts(raw: unknown, parts: ReadonlySet<string>) {
   return written;
 }
 
-/** 출력 원문을 검증·채점한다. content는 검증을 통과한 리포트(없으면 null) */
+/**
+ * 출력을 검증·채점한다. content는 검증을 통과한 리포트(없으면 null).
+ * output은 출력 원문(JSON 글)이거나, 나눠 쓴 호출을 합친 리포트(mergeReportCalls의 raw, 없으면 null)다
+ */
 export function scoreReport(
-  rawText: string,
+  output: string | object | null,
   kind: string,
   idx: ReturnType<typeof payloadIndex>,
   stats: Payload["stats"],
@@ -251,7 +255,8 @@ export function scoreReport(
 ): { score: Scored; content: StoredReport | null } {
   let raw: unknown;
   try {
-    raw = JSON.parse(rawText);
+    if (output === null) throw new Error("없음");
+    raw = typeof output === "string" ? JSON.parse(output) : output;
   } catch {
     return {
       score: {
@@ -394,7 +399,7 @@ export interface CaseResult {
   ledger: LedgerItem[];
 }
 
-/** 케이스 하나: 케이스 모델 기준으로 리포트 한 번을 만들고 채점한다 */
+/** 케이스 하나: 케이스 모델 기준으로 리포트 한 번(호출 3~4개)을 만들고 채점한다. 응답 전 오류를 다시 하지 않는다 */
 export async function evalCase(
   client: Pick<Anthropic, "beta">,
   c: EvalCase,
@@ -403,18 +408,32 @@ export async function evalCase(
   const now = deps.now ?? Date.now;
   const s = caseSettings(c.model);
   const t0 = now();
-  const r = await runReport(client as Anthropic, buildRequest(c.payload, s), {
+  const results = await runReportCalls(client as Anthropic, buildRequests(c.payload, s), {
     deadlineAt: Date.now() + EPISODE_DEADLINE_MS,
-    onStreamStart: () => {},
+    now,
+    retryWindowMs: -1,
     onNotes: () => {},
   });
   const totalMs = now() - t0;
-  const { score, content } = scoreReport(r.raw, r.kind, payloadIndex(c.payload), c.payload.stats, c.payload);
-  const costUsd = r.usage ? round(estimateCostUsd(r.usage, r.model)) : 0;
+  const merged = mergeReportCalls(c.payload, results);
+  const { score, content } = scoreReport(merged.raw, merged.kind, payloadIndex(c.payload), c.payload.stats, c.payload);
+  const ran = results.flatMap(({ r }) => (r ? [r] : []));
+  const ledger = ran.flatMap((r) => (r.usage ? [{ model: r.model, usage: r.usage, costUsd: round(estimateCostUsd(r.usage, r.model)) }] : []));
   return {
-    score: { ...score, label: c.label, tone: c.tone, model: c.model, servedModel: r.model, fallback: r.model !== c.model, totalMs, costUsd, msgSent: c.payload.msgSent },
-    content,
-    ledger: r.usage ? [{ model: r.model, usage: r.usage, costUsd }] : [],
+    score: {
+      ...score,
+      label: c.label,
+      tone: c.tone,
+      model: c.model,
+      servedModel: merged.model ?? c.model,
+      fallback: ran.some((r) => r.startedStream && r.model !== c.model),
+      totalMs,
+      costUsd: round(merged.cost),
+      msgSent: c.payload.msgSent,
+    },
+    // 검수용 본문은 앱이 저장하는 것과 같다(checks에 호출마다 결과·뺀 섹션 수가 있다)
+    content: merged.content ?? content,
+    ledger,
   };
 }
 

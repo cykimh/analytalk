@@ -18,7 +18,9 @@ import {
   messageDelta,
   messageStart,
   messageStop,
+  partFromInstruction,
   request,
+  stageJson,
   textStart,
 } from "@/test/generation";
 import { nextCycleStart } from "../jobs";
@@ -44,9 +46,12 @@ function withTextTokens(p: Payload, target: number): Payload {
 }
 
 describe("POST /api/conversations", () => {
-  it("정상 흐름: 202, 스트림 1번, report done, startReport 1번, fetch 0번. status는 DB만 읽는다 (Review Focus 1)", async () => {
+  it("정상 흐름: 202, 스트림 3번(v2.5 나눠 쓰기: 인트로·개인별·마무리), report done, startReport 1번, fetch 0번. status는 DB만 읽는다 (Review Focus 1)", async () => {
+    // 몫마다 한 조각으로 보내는 응답(인트로·개인별·마무리)
     const h = await harness({
-      reply: () => ({ steps: [messageStart(), textStart, delta(JSON.stringify(reportJson())), blockStop, messageDelta("end_turn"), messageStop] }),
+      reply: (_call, body) => ({
+        steps: [messageStart(), textStart, delta(JSON.stringify(stageJson(partFromInstruction(body)))), blockStop, messageDelta("end_turn"), messageStop],
+      }),
     });
     const start = vi.spyOn(h.repo, "startReport");
     const payload = makePayload();
@@ -57,7 +62,7 @@ describe("POST /api/conversations", () => {
     await h.settle();
 
     expect(start.mock.calls).toEqual([[id]]);
-    expect(h.streams).toHaveLength(1);
+    expect(h.streams).toHaveLength(3);
     expect(h.fetches).toHaveLength(0);
     expect((await h.repo.getConversation(id))!.report.status).toBe("done");
 
@@ -112,7 +117,8 @@ describe("POST /api/conversations", () => {
     expect(again.body).toEqual(first.body);
     expect(later.body).toEqual(first.body);
     expect(h.counts).toHaveLength(1);
-    expect(h.streams).toHaveLength(1);
+    // 리포트 한 번 = 호출 3개(인트로·개인별·마무리)
+    expect(h.streams).toHaveLength(3);
   });
 
   it("429 enforced_spend_limit_reached → 정지, 다음 POST는 423, Anthropic 재호출 0번(생성·countTokens 모두) (Review Focus 3)", async () => {

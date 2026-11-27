@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cut, cutInSecondSection, reportJson, harness, makePayload, request, whole } from "@/test/generation";
+import { cut, cutInSecondSection, harness, makePayload, request, stagedDefault } from "@/test/generation";
 import { handleCreateConversation } from "./conversations";
 import { handleRetry } from "./retry";
 import { handleStatus } from "./status";
@@ -38,8 +38,9 @@ const spend = (h: Awaited<ReturnType<typeof harness>>, cost: number) =>
 
 describe("POST /api/episodes/retry", () => {
   it("리포트가 HTTP 503을 두 번 냄 → failed(retryable). retry가 202 → done, fetch 0번 (Review Focus 2)", async () => {
-    const h = await harness({ reply: (call) => (call <= 2 ? unavailable : whole(JSON.stringify(reportJson()))) });
+    const h = await harness({ reply: (call, body) => (call <= 2 ? unavailable : stagedDefault(call, body)) });
     const { id, payload } = await created(h);
+    // ①이 두 번 다 응답 전에 실패해 ②·③은 시작하지 않았다
     expect(await reportOf(h, id)).toEqual(["failed", "retryable"]);
     expect(h.streams).toHaveLength(2);
 
@@ -47,12 +48,13 @@ describe("POST /api/episodes/retry", () => {
     expect(again.status).toBe(202);
     await h.settle();
     expect(await reportOf(h, id)).toEqual(["done", null]);
-    expect(h.streams).toHaveLength(3);
+    // 다시 쓰기 한 번 = 호출 3개
+    expect(h.streams).toHaveLength(5);
     expect(h.fetches).toHaveLength(0);
   });
 
   it("옛 본문 {id, n, payload}도 받는다(n은 버린다)", async () => {
-    const h = await harness({ reply: (call) => (call <= 2 ? unavailable : whole(JSON.stringify(reportJson()))) });
+    const h = await harness({ reply: (call, body) => (call <= 2 ? unavailable : stagedDefault(call, body)) });
     const { id, payload } = await created(h);
     expect((await handleRetry(retry(h.cookie, { id, n: 3, payload }), h.deps)).status).toBe(202);
     await h.settle();
@@ -96,7 +98,7 @@ describe("POST /api/episodes/retry", () => {
   });
 
   it("정지 중이면 423: 리포트를 시작하지 않고 Anthropic을 부르지 않는다. 정지가 풀리면 받는다", async () => {
-    const h = await harness({ reply: (call) => (call <= 2 ? unavailable : whole(JSON.stringify(reportJson()))) });
+    const h = await harness({ reply: (call, body) => (call <= 2 ? unavailable : stagedDefault(call, body)) });
     const { id, payload } = await created(h);
     expect(await reportOf(h, id)).toEqual(["failed", "retryable"]);
 
@@ -123,15 +125,16 @@ describe("POST /api/episodes/retry", () => {
     }
     expect(await handleRetry(retry(h.cookie, { id, payload }), h.deps)).toEqual({ status: 429, body: { reason: "retry_limit" } });
     await h.settle();
-    expect(h.streams).toHaveLength(3);
+    // 실행 3번 × 호출 3개. 다시 쓰기 횟수는 호출 수가 아니라 실행(usage 한 행) 수로 센다
+    expect(h.streams).toHaveLength(9);
     expect(await reportOf(h, id)).toEqual(["partial", null]);
   });
 
-  it("주간 상한: 최근 7일 원가 + 이번 몫(평균 원가 전체 1.2)이 22.5를 넘으면 429 global_limit, 리포트를 시작하지 않는다", async () => {
-    const h = await harness({ reply: (call) => (call <= 2 ? unavailable : whole(JSON.stringify(reportJson()))) });
+  it("주간 상한: 최근 7일 원가 + 이번 몫(평균 원가 전체 1.8)이 22.5를 넘으면 429 global_limit, 리포트를 시작하지 않는다", async () => {
+    const h = await harness({ reply: (call, body) => (call <= 2 ? unavailable : stagedDefault(call, body)) });
     const { id, payload } = await created(h);
     expect(await reportOf(h, id)).toEqual(["failed", "retryable"]);
-    // 21.4 + 1.2 = 22.6 > 22.5
+    // 21.4 + 1.8 = 23.2 > 22.5
     await spend(h, 21.4);
     const streams = h.streams.length;
     expect(await handleRetry(retry(h.cookie, { id, payload }), h.deps)).toEqual({ status: 429, body: { reason: "global_limit" } });
@@ -139,8 +142,8 @@ describe("POST /api/episodes/retry", () => {
     expect(h.streams).toHaveLength(streams);
     expect(await reportOf(h, id)).toEqual(["failed", "retryable"]);
 
-    // 20.0 + 1.2 = 21.2 ≤ 22.5
-    const ok = await harness({ reply: (call) => (call <= 2 ? unavailable : whole(JSON.stringify(reportJson()))) });
+    // 20.0 + 1.8 = 21.8 ≤ 22.5
+    const ok = await harness({ reply: (call, body) => (call <= 2 ? unavailable : stagedDefault(call, body)) });
     const c = await created(ok);
     await spend(ok, 20);
     expect((await handleRetry(retry(ok.cookie, { id: c.id, payload: c.payload }), ok.deps)).status).toBe(202);

@@ -6,6 +6,7 @@ import { SESSION_COOKIE } from "@/lib/config";
 import { hashCode } from "@/lib/invite/code";
 import { signSession } from "@/lib/invite/session";
 import type { PickableTone } from "@/lib/llm/concepts";
+import { buildRequests, type CallPart } from "@/lib/llm/prompt";
 import type { ChatMessage } from "@/lib/parse/parse";
 import { buildPayload, type Payload } from "@/lib/payload/build";
 import { memoryRepo } from "@/lib/server/repo";
@@ -19,7 +20,7 @@ const frame = (e: Ev) => enc.encode(`event: ${e.type}\ndata: ${JSON.stringify(e)
 
 /** message_start의 usage. 원가가 작아서 주간·일간 한도에 걸리지 않는다 */
 export const START_USAGE = { input_tokens: 100, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
-export const messageStart = (model = "claude-sonnet-5-5"): Ev => ({
+export const messageStart = (model = "claude-sonnet-5-5", usage: Partial<typeof START_USAGE> = {}): Ev => ({
   type: "message_start",
   message: {
     id: "msg_test",
@@ -29,7 +30,7 @@ export const messageStart = (model = "claude-sonnet-5-5"): Ev => ({
     content: [],
     stop_reason: null,
     stop_sequence: null,
-    usage: { ...START_USAGE },
+    usage: { ...START_USAGE, ...usage },
   },
 });
 export const textStart: Ev = { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
@@ -56,15 +57,18 @@ export const sseError = (type: string): Ev => ({ type: "error", error: { type, m
  */
 export type Reply = { status: number; error: object } | { steps: (Ev | (() => Promise<void>))[]; open?: boolean };
 
-/** text를 두 조각으로 보내고 닫는 응답 */
-export const whole = (text: string, o: { stop?: string; model?: string; stopCategory?: string } = {}): Reply => ({
+/** text를 두 조각으로 보내고 닫는 응답. usage·output은 message_start의 usage와 출력 토큰을 바꾼다 */
+export const whole = (
+  text: string,
+  o: { stop?: string; model?: string; stopCategory?: string; usage?: Partial<typeof START_USAGE>; output?: number } = {},
+): Reply => ({
   steps: [
-    messageStart(o.model),
+    messageStart(o.model, o.usage),
     textStart,
     delta(text.slice(0, 20)),
     delta(text.slice(20)),
     blockStop,
-    messageDelta(o.stop ?? "end_turn", 200, o.stopCategory),
+    messageDelta(o.stop ?? "end_turn", o.output ?? 200, o.stopCategory),
     messageStop,
   ],
 });
@@ -83,8 +87,11 @@ const errorResponse = (r: { status: number; error: object }) =>
 /** count_tokens 응답: 토큰 수, 또는 JSON 오류 본문의 HTTP 응답 */
 export type Counted = () => number | { status: number; error: object };
 
-/** 요청을 기록하고 reply(몇 번째 리포트 호출인지, 1부터)로 응답하는 Anthropic 클라이언트. count_tokens는 counted()를 돌려준다 */
-export function fakeAnthropic(reply: (call: number) => Reply, counted: Counted = () => 1000) {
+/** 리포트 호출 하나에 돌려줄 응답을 고른다: 몇 번째 리포트 호출인지(1부터)와 그 요청 본문 */
+export type ReplyFn = (call: number, body: StreamCall["body"]) => Reply;
+
+/** 요청을 기록하고 reply(몇 번째 리포트 호출인지, 요청 본문)로 응답하는 Anthropic 클라이언트. count_tokens는 counted()를 돌려준다 */
+export function fakeAnthropic(reply: ReplyFn, counted: Counted = () => 1000) {
   const streams: StreamCall[] = [];
   const counts: Record<string, unknown>[] = [];
   const fetch = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -95,7 +102,7 @@ export function fakeAnthropic(reply: (call: number) => Reply, counted: Counted =
       return typeof c === "number" ? Response.json({ input_tokens: c }) : errorResponse(c);
     }
     streams.push({ body });
-    const r = reply(streams.length);
+    const r = reply(streams.length, body);
     if ("status" in r) return errorResponse(r);
     let ctrl!: ReadableStreamDefaultController<Uint8Array>;
     let closed = false;
@@ -147,6 +154,20 @@ export function makePayload(variant = 0, tone: PickableTone = "fact"): Payload {
   rows.push(["민지", kst(3, 21, 0), `잘 자 ${"ㅎ".repeat(variant + 1)}`]);
   const messages: ChatMessage[] = rows.map(([sender, ts, text], id) => ({ id, ts, sender, kind: "text", text, line: id + 1 }));
   return buildPayload({ messages, tone, concept: "couple", kind: "pair", tokenBudget: 100_000, tokensPerChar: 1 });
+}
+
+/** 사흘 저녁 다섯 명 단톡. 하루에 민지 5·철수 4·영희 3·지훈 2·수아 1개라 메시지 많은 순은 민지·철수·영희·지훈·수아. 본문은 "<이름> 왔어 <n>" */
+export const GROUP_NAMES = ["민지", "철수", "영희", "지훈", "수아"] as const;
+export function makeGroupPayload(tone: PickableTone = "fact"): Payload {
+  const rows: [string, number, string][] = [];
+  for (let d = 1; d <= 3; d++) {
+    let minute = 0;
+    GROUP_NAMES.forEach((name, k) => {
+      for (let j = 0; j < GROUP_NAMES.length - k; j++) rows.push([name, kst(d, 20, minute++), `${name} 왔어 ${d}${j}`]);
+    });
+  }
+  const messages: ChatMessage[] = rows.map(([sender, ts, text], id) => ({ id, ts, sender, kind: "text", text, line: id + 1 }));
+  return buildPayload({ messages, tone, concept: "group", kind: "group", tokenBudget: 100_000, tokensPerChar: 1 });
 }
 
 const section = (part: string, title: string) => ({
@@ -210,6 +231,76 @@ export function longReportJson() {
   });
 }
 
+// ── v2.5 나눠 쓰기: 호출마다 자기 몫을 쓰는 가짜 응답 ──
+
+/** 요청 본문의 마지막 지시(mid-conversation system 메시지) 글 */
+export function instructionOf(body: StreamCall["body"]): string {
+  const m = body.messages.at(-1)!;
+  return typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+}
+
+/** 그 페이로드의 호출 지시 → 몫(intro·people·people_rest·outro). 지시 글이 같으면 같은 호출이다 */
+export function partsOf(payload: Payload): (body: StreamCall["body"]) => CallPart {
+  const parts = new Map(buildRequests(payload).map((c) => [instructionOf(c.req as unknown as StreamCall["body"]), c.part]));
+  return (body) => {
+    const part = parts.get(instructionOf(body));
+    if (!part) throw new Error("[test] 모르는 지시");
+    return part;
+  };
+}
+
+/** 사람 섹션(잔소리 카드). 근거는 그 사람이 makePayload에서 보낸 메시지 */
+const personSection = (name: string) => ({
+  part: "nag_cards",
+  icon: "🙄",
+  title: `${name} 카드`,
+  about: name,
+  paragraphs: [{ key: "p1", text: `${name}는 저녁마다 짧게 답했다`, evidence_ids: ["e1"] }],
+  evidence: [name === "철수" ? { id: "e1", msg_id: "m0", quote: "오늘 뭐해?" } : { id: "e1", msg_id: "m1", quote: "쉬는 중" }],
+});
+
+/**
+ * makePayload(1:1, 잔소리, small)의 몫별 출력. 인트로는 nag_open 하나와 제목·메모, 개인별은 철수·민지 카드, 마무리는 nag_last.
+ * 인트로가 아닌 몫은 제목·메모를 비운다
+ */
+export function stageJson(part: CallPart, over: Record<string, unknown> = {}) {
+  const blank = { reading_notes: [], headline: "", dek: "" };
+  switch (part) {
+    case "intro":
+      return reportJson({ sections: [section("nag_open", "저녁의 리듬")], ...over });
+    case "people":
+    case "people_rest":
+      return reportJson({ ...blank, sections: [personSection("철수"), personSection("민지")], ...over });
+    case "outro":
+      return reportJson({ ...blank, sections: [section("nag_last", "마지막 한마디")], ...over });
+  }
+}
+
+/** 지시 마지막 줄(이번 응답의 몫)로 몫을 가린다. 개인별 둘(people·people_rest)은 가리지 않는다(people) */
+export function partFromInstruction(body: StreamCall["body"]): CallPart {
+  const last = instructionOf(body).split("\n").at(-1) ?? "";
+  if (last.startsWith("이번 응답: [1.")) return "intro";
+  if (last.startsWith("이번 응답: [3.")) return "outro";
+  return "people";
+}
+
+/** 기본 응답: 몫마다 makePayload(철수·민지)의 stageJson을 그대로 끝낸다. 몇 번째 호출이든 성공한다 */
+export const stagedDefault: ReplyFn = (_call, body) => whole(JSON.stringify(stageJson(partFromInstruction(body))));
+
+/** 몫마다 응답을 고르는 reply. 몫에 없는 것은 stageJson 그대로 끝낸다. 함수는 그 몫의 몇 번째 시도인지(1부터)를 받는다 */
+export function staged(payload: Payload, over: Partial<Record<CallPart, Reply | ((attempt: number) => Reply)>> = {}): ReplyFn {
+  const partOf = partsOf(payload);
+  const tries = new Map<CallPart, number>();
+  return (_call, body) => {
+    const part = partOf(body);
+    const attempt = (tries.get(part) ?? 0) + 1;
+    tries.set(part, attempt);
+    const r = over[part];
+    if (r === undefined) return whole(JSON.stringify(stageJson(part)));
+    return typeof r === "function" ? r(attempt) : r;
+  };
+}
+
 /** 리포트 출력을 2번째 섹션의 인용 앞에서 자른 글. 완결된 섹션은 1개다 */
 export function cutInSecondSection(over: Record<string, unknown> = {}): string {
   const raw = JSON.stringify(reportJson(over));
@@ -236,7 +327,7 @@ export interface FetchCall {
  */
 export async function harness(
   o: {
-    reply?: (call: number) => Reply;
+    reply?: ReplyFn;
     counted?: Counted;
     monthlyLimit?: number;
     deadlineMs?: number;
@@ -248,7 +339,7 @@ export async function harness(
       { code: OTHER_CODE, monthlyLimit: 2 },
     ],
   });
-  const anthropic = fakeAnthropic(o.reply ?? (() => whole(JSON.stringify(reportJson()))), o.counted);
+  const anthropic = fakeAnthropic(o.reply ?? stagedDefault, o.counted);
   const pending: Promise<void>[] = [];
   const queued: (() => Promise<void>)[] = [];
   const fetches: FetchCall[] = [];

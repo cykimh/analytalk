@@ -1,4 +1,4 @@
-// 실측(비용이 드는 실행, 사용자가 직접 돌린다). 리포트 한 번을 기준으로 잰다.
+// 실측(비용이 드는 실행, 사용자가 직접 돌린다). 리포트 한 번을 기준으로 잰다(v2.5: 앱과 같이 호출 3~4개로 나눠 쓴 한 편).
 //
 //   pnpm measure <파일> [--concept group|couple] [--tone fact|warm|show|docu|detective|record] [--model id] [--budget n] [--runs n]
 //                       [--count-only | --check-limits] [--dry-run] [--prod] [--yes]
@@ -6,7 +6,7 @@
 // 파싱 → 표시 이름(카톡 이름) → buildPayloadForBudget → (실행 모드에 따라)
 //   --dry-run      추정 토큰만 찍고 멈춘다(API·DB 호출, 파일 쓰기 없음, 키 불필요)
 //   --count-only   countTokens만(무료): 글자당 토큰, 고정 몫(system·통계·지시)
-//   --check-limits buildRequest와 같은 모양의 아주 작은 요청을 보내 rate limit 헤더를 찍는다(유료, 소액)
+//   --check-limits 첫 호출(buildRequests[0])과 같은 모양의 아주 작은 요청을 보내 rate limit 헤더를 찍는다(유료, 소액)
 //   (기본)         countTokens + 리포트 --runs회 실행(유료). 실행마다 원장(record_script_usage)에 바로 기록
 // 유료 모드는 confirmSpend(추정 원가·남은 주간 한도·DB 호스트, y/N)를 통과해야 API를 부른다.
 // --prod는 .env.production.local의 DB로 원장·한도를 본다(API 키는 .env.local의 것을 우선 쓴다).
@@ -26,13 +26,12 @@ import { parseEnv } from "node:util";
 import { DEFAULT_EST_COST_USD, EPISODE_DEADLINE_MS, TOKENS_PER_CHAR } from "../lib/config";
 import { DEFAULT_TONE, PICKABLE_TONES, type PickableTone } from "../lib/llm/concepts";
 import { estimateCostUsd } from "../lib/llm/cost";
-import { buildRequest } from "../lib/llm/prompt";
+import { buildRequests, countRequest } from "../lib/llm/prompt";
 import { type ModelSettings, modelSettings } from "../lib/llm/settings";
-import { runReport } from "../lib/llm/stream";
-import { validateReport } from "../lib/llm/validate";
+import { mergeReportCalls, runReportCalls } from "../lib/llm/split";
 import { applyDisplayNames, defaultNames, isBotOrUnknown, type NameMap } from "../lib/payload/names";
 import { dropSafetyFlagged } from "../lib/payload/safety";
-import { buildPayloadForBudget, type Payload, payloadIndex, payloadTokens } from "../lib/payload/build";
+import { buildPayloadForBudget, type Payload, payloadTokens } from "../lib/payload/build";
 import { type ChatMessage, parseExport } from "../lib/parse/parse";
 import { readUploads } from "../lib/parse/uploads";
 import { privilegedDb } from "../lib/server/privileged";
@@ -152,10 +151,17 @@ export function percentile(values: number[], q: number): number {
 }
 
 export interface ReportMeasure {
-  /** 요청부터 message_start까지. 응답 시작 전에 끝났으면 null */
+  /** 요청부터 ①의 message_start까지. 응답 시작 전에 끝났으면 null */
   ttftMs: number | null;
+  /** 요청부터 마지막 호출이 끝날 때까지 */
   totalMs: number;
+  /** 호출 수(v2.5: 3~4)와 호출마다 runReport 결과(시작하지 않았으면 not_started) */
+  calls: number;
+  callKinds: string[];
+  /** 아래 토큰은 호출 합이다. inputTokens는 캐시 밖 입력만 */
   inputTokens: number;
+  cacheWriteTokens: number;
+  cacheReadTokens: number;
   outputTokens: number;
   /** 출력 중 생각 몫. 응답이 알려 줄 때만 */
   thinkingTokens: number | null;
@@ -166,9 +172,9 @@ export interface ReportMeasure {
   fallback: boolean;
   /** 거절 분류. 거절이 아니면 null */
   stopCategory: string | null;
-  /** validateReport 결과. JSON이 아니면 failed */
-  status: "done" | "partial" | "safety" | "failed";
-  /** runReport 결과 */
+  /** 합친 리포트의 저장 상태(mergeReportCalls) */
+  status: "done" | "partial" | "safety" | "failed" | "refused";
+  /** ok가 아닌 첫 호출의 runReport 결과(모두 ok면 ok) */
   kind: string;
 }
 
@@ -222,9 +228,9 @@ export interface TokenMeasure {
 
 type CountClient = Pick<Anthropic, "messages">;
 
-/** 서버 countInputTokens와 같은 5필드 요청의 입력 토큰(betas·fallbacks·max_tokens 제외) */
+/** 서버 countInputTokens와 같은 5필드 요청(지시가 가장 긴 호출)의 입력 토큰(betas·fallbacks·max_tokens 제외) */
 async function countInput(client: CountClient, p: Payload, s: ModelSettings): Promise<number> {
-  const { model, system, messages, thinking, output_config } = buildRequest(p, s);
+  const { model, system, messages, thinking, output_config } = countRequest(p, s);
   const counted = await client.messages.countTokens({
     model,
     system,
@@ -258,7 +264,7 @@ export async function measureTokens(client: CountClient, payload: Payload, s: Mo
 
 // ── 리포트 실행 ──
 
-/** 리포트 한 번. 응답 시간·토큰·원가·요청/응답 모델을 잰다 */
+/** 리포트 한 번(호출 3~4개). 응답 시간·토큰·원가·요청/응답 모델을 잰다. 응답 전 오류를 다시 하지 않는다(있는 그대로 잰다) */
 export async function measureReport(
   client: Anthropic,
   payload: Payload,
@@ -268,39 +274,39 @@ export async function measureReport(
   const now = deps.now ?? Date.now;
   const t0 = now();
   let ttftMs: number | null = null;
-  const r = await runReport(client, buildRequest(payload, s), {
+  const results = await runReportCalls(client, buildRequests(payload, s), {
     deadlineAt: Date.now() + EPISODE_DEADLINE_MS,
-    onStreamStart: () => {
-      ttftMs = now() - t0;
-    },
+    now,
+    retryWindowMs: -1,
     onNotes: () => {},
+    onStreamStart: (part) => {
+      if (part === "intro" && ttftMs === null) ttftMs = now() - t0;
+    },
   });
   const totalMs = now() - t0;
-  let status: ReportMeasure["status"] = "failed";
-  try {
-    status = validateReport(JSON.parse(r.raw), payloadIndex(payload), payload.stats, {
-      truncated: r.kind === "truncated" || r.kind === "partial",
-      tone: payload.tone,
-      members: payload.members,
-    }).status;
-  } catch {
-    // JSON이 아니면 failed
-  }
-  const costUsd = r.usage ? round(estimateCostUsd(r.usage, r.model)) : 0;
+  const merged = mergeReportCalls(payload, results);
+  const ran = results.flatMap(({ r }) => (r ? [r] : []));
+  const sum = (pick: (u: NonNullable<(typeof ran)[number]["usage"]>) => number) => ran.reduce((n, r) => n + (r.usage ? pick(r.usage) : 0), 0);
+  const thinking = ran.flatMap((r) => (r.thinkingTokens === undefined ? [] : [r.thinkingTokens]));
+  const ledger = ran.flatMap((r) => (r.usage ? [{ model: r.model, usage: r.usage, costUsd: round(estimateCostUsd(r.usage, r.model)) }] : []));
   return {
     ttftMs,
     totalMs,
-    inputTokens: r.usage?.input_tokens ?? 0,
-    outputTokens: r.usage?.output_tokens ?? 0,
-    thinkingTokens: r.thinkingTokens ?? null,
-    costUsd,
+    calls: results.length,
+    callKinds: results.map(({ r }) => r?.kind ?? "not_started"),
+    inputTokens: sum((u) => u.input_tokens),
+    cacheWriteTokens: sum((u) => u.cache_creation_input_tokens),
+    cacheReadTokens: sum((u) => u.cache_read_input_tokens),
+    outputTokens: sum((u) => u.output_tokens),
+    thinkingTokens: thinking.length > 0 ? thinking.reduce((a, b) => a + b, 0) : null,
+    costUsd: round(merged.cost),
     requestedModel: s.model,
-    servedModel: r.model,
-    fallback: r.model !== s.model,
-    stopCategory: r.stopCategory,
-    status,
-    kind: r.kind,
-    ledger: r.usage ? [{ model: r.model, usage: r.usage, costUsd }] : [],
+    servedModel: merged.model ?? s.model,
+    fallback: ran.some((r) => r.startedStream && r.model !== s.model),
+    stopCategory: ran.find((r) => r.stopCategory !== null)?.stopCategory ?? null,
+    status: merged.status,
+    kind: merged.kind,
+    ledger,
   };
 }
 
@@ -326,7 +332,7 @@ export function recommendBudget(itpm: number | null, budget: number): number | n
 }
 
 /**
- * buildRequest와 같은 모양(user 데이터 + 지시 자리, betas, fallbacks)의 아주 작은 요청(max_tokens 16)을 보내 한도 헤더를 읽는다.
+ * 첫 호출(buildRequests[0])과 같은 모양(user 데이터 + 지시 자리, betas, fallbacks)의 아주 작은 요청(max_tokens 16)을 보내 한도 헤더를 읽는다.
  * 400이면 그 요청 모양이 이 모델·fallback 조합에서 막힌 것이라 상태만 돌려준다(결정 20: 지시 자리를 user로 바꾸는 근거)
  */
 export async function checkLimits(
@@ -335,7 +341,7 @@ export async function checkLimits(
   s: ModelSettings,
 ): Promise<{ status: number; limits: ReturnType<typeof rateLimitsFrom>; ledger: LedgerItem[] }> {
   const tiny: Payload = { ...payload, anchors: "", transcript: "m0|00:00|A|." };
-  const req = { ...buildRequest(tiny, s), max_tokens: 16, stream: false } as unknown as MessageCreateParamsNonStreaming;
+  const req = { ...buildRequests(tiny, s)[0].req, max_tokens: 16, stream: false } as unknown as MessageCreateParamsNonStreaming;
   try {
     const { data, response } = await client.beta.messages.create(req).withResponse();
     const u = data.usage;
@@ -413,7 +419,7 @@ async function main(): Promise<void> {
         // 실행마다 바로 원장에 남긴다(중간에 죽어도 쓴 돈이 잡힌다)
         if (ledger.length > 0) await recordUsage(db, ledger);
         console.log(
-          `run ${i + 1} ttft ${r.ttftMs ?? "-"}ms 총 ${r.totalMs}ms 입력 ${r.inputTokens} 출력 ${r.outputTokens} 생각 ${r.thinkingTokens ?? "-"} 원가 $${r.costUsd} 모델 ${r.servedModel}${r.fallback ? "(fallback)" : ""} ${r.kind}/${r.status}${r.stopCategory ? ` 거절 ${r.stopCategory}` : ""}`,
+          `run ${i + 1} 호출 ${r.calls}(${r.callKinds.join(",")}) ttft ${r.ttftMs ?? "-"}ms 총 ${r.totalMs}ms 입력 ${r.inputTokens} 캐시 쓰기 ${r.cacheWriteTokens} 읽기 ${r.cacheReadTokens} 출력 ${r.outputTokens} 생각 ${r.thinkingTokens ?? "-"} 원가 $${r.costUsd} 모델 ${r.servedModel}${r.fallback ? "(fallback)" : ""} ${r.kind}/${r.status}${r.stopCategory ? ` 거절 ${r.stopCategory}` : ""}`,
         );
       }
       const summary = summarize(reports);

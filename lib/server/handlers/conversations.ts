@@ -1,11 +1,12 @@
 // POST /api/conversations 본체: 초대 코드 → 페이로드 재검사 → 중복 → 정지 → 입력 토큰 → claim → 리포트 예약.
-// 중복이거나 정지 중이면 Claude를 부르지 않는다(중복은 기존 id, 정지는 423). 리포트는 after()에서 이 함수 호출 안에서 한 번 돈다.
+// 중복이거나 정지 중이면 Claude를 부르지 않는다(중복은 기존 id, 정지는 423). 리포트는 after()에서 이 함수 호출 안에서 한 번 돈다
+// (v2.5: 그 안에서 호출 3~4개를 Promise로 동시에 돌린다).
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { MessageCountTokensParams } from "@anthropic-ai/sdk/resources/messages";
 import { DEFAULT_EST_COST_USD, PROMPT_RESERVE_TOKENS, TOKENS_PER_CHAR } from "@/lib/config";
 import { classifyError } from "@/lib/llm/errors";
-import { buildRequest, PROMPT_VERSION } from "@/lib/llm/prompt";
+import { countRequest, PROMPT_VERSION } from "@/lib/llm/prompt";
 import { modelSettings } from "@/lib/llm/settings";
 import { type Payload, payloadTokens } from "@/lib/payload/build";
 import { sha256Hex } from "@/lib/payload/hash";
@@ -20,11 +21,12 @@ const BUDGET_TOLERANCE = 1.05;
 
 /**
  * 리포트 요청의 입력 토큰. 모델이 읽는 부분만 보낸다(betas·fallbacks·max_tokens 제외).
- * buildRequest는 GA 모양(텍스트 블록·mid-conversation system·adaptive thinking·json_schema)만 만들어
+ * v2.5: 나눠 쓰는 호출들은 데이터 블록이 같고 지시만 달라서, 지시가 가장 긴 호출(countRequest) 하나만 센다.
+ * buildRequests는 GA 모양(텍스트 블록·cache_control·mid-conversation system·adaptive thinking·json_schema)만 만들어
  * 베타가 아닌 countTokens에 그대로 보낼 수 있다. 베타 타입이 더 넓어서 두 필드만 좁힌다
  */
 async function countInputTokens(client: Anthropic, p: Payload): Promise<number> {
-  const { model, system, messages, thinking, output_config } = buildRequest(p);
+  const { model, system, messages, thinking, output_config } = countRequest(p);
   const counted = await client.messages.countTokens({
     model,
     system,

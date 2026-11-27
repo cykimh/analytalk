@@ -125,7 +125,11 @@ describe("percentile", () => {
 const rep = (over: Partial<ReportMeasure> = {}): ReportMeasure => ({
   ttftMs: 2000,
   totalMs: 100_000,
-  inputTokens: 300_000,
+  calls: 3,
+  callKinds: ["ok", "ok", "ok"],
+  inputTokens: 3_000,
+  cacheWriteTokens: 300_000,
+  cacheReadTokens: 600_000,
   outputTokens: 20_000,
   thinkingTokens: null,
   costUsd: DEFAULT_EST_COST_USD,
@@ -146,8 +150,11 @@ describe("summarize / judge", () => {
   });
   it("통과 기준: p95 240초 이하, 평균 원가 추정 ±30%, fallback 0, ok 아닌 회차 0", () => {
     expect(judge(summarize([rep()]))).toEqual({ p95: true, cost: true, fallback: true, ok: true, pass: true });
-    expect(judge(summarize([rep({ costUsd: 1.7 })])).cost).toBe(false);
-    expect(judge(summarize([rep({ costUsd: 0.8 })])).cost).toBe(false);
+    // v2.5 추정 $1.8 ±30% = $1.26~$2.34
+    expect(DEFAULT_EST_COST_USD).toBe(1.8);
+    expect(judge(summarize([rep({ costUsd: 2.34 })])).cost).toBe(true);
+    expect(judge(summarize([rep({ costUsd: 2.4 })])).cost).toBe(false);
+    expect(judge(summarize([rep({ costUsd: 1.2 })])).cost).toBe(false);
     expect(judge(summarize([rep({ fallback: true })])).pass).toBe(false);
     expect(judge(summarize([rep({ totalMs: 240_001 })])).p95).toBe(false);
     expect(judge(summarize([rep({ kind: "partial" })])).ok).toBe(false);
@@ -252,17 +259,31 @@ describe("measureTokens", () => {
 });
 
 describe("measureReport", () => {
-  it("스트림을 한 번 열고, 응답 모델이 요청과 다르면 fallback", async () => {
+  it("앱과 같이 호출 3개(인트로·개인별·마무리)로 한 편을 재고, 토큰·원가는 합, 응답 모델이 요청과 다르면 fallback", async () => {
     const { fetch, calls } = fakeFetch();
     let t = 0;
     const r = await measureReport(clientOf(fetch), payload, modelSettings({ ANTHROPIC_MODEL: "claude-sonnet-5-5" }), { now: () => (t += 100) });
-    expect(calls.messages).toHaveLength(1);
+    expect(calls.messages).toHaveLength(3);
     expect(calls.count).toHaveLength(0);
-    expect(calls.messages[0].model).toBe("claude-sonnet-5-5");
-    expect(r).toMatchObject({ requestedModel: "claude-sonnet-5-5", servedModel: "claude-opus-5-5", fallback: true, status: "done", kind: "ok", outputTokens: 1000, inputTokens: 5000 });
+    for (const m of calls.messages) expect(m.model).toBe("claude-sonnet-5-5");
+    expect(r).toMatchObject({
+      requestedModel: "claude-sonnet-5-5",
+      servedModel: "claude-opus-5-5",
+      fallback: true,
+      status: "done",
+      kind: "ok",
+      calls: 3,
+      callKinds: ["ok", "ok", "ok"],
+      outputTokens: 3000,
+      inputTokens: 15_000,
+      cacheWriteTokens: 0,
+      cacheReadTokens: 0,
+    });
     expect(r.ttftMs).toBeGreaterThan(0);
     expect(r.totalMs).toBeGreaterThanOrEqual(r.ttftMs!);
-    expect(r.costUsd).toBeCloseTo((5000 * 4 + 1000 * 20) / 1e6, 10);
+    expect(r.costUsd).toBeCloseTo((3 * (5000 * 4 + 1000 * 20)) / 1e6, 10);
+    // 원장은 호출마다 한 항목(측정 스크립트의 record_script_usage)
+    expect(r.ledger).toHaveLength(3);
   });
   it("요청한 모델이 그대로 답하면 fallback이 아니다", async () => {
     const { fetch } = fakeFetch();

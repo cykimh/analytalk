@@ -36,7 +36,12 @@ export const RETENTION_DAYS = 30;
 export const DEFAULT_MONTHLY_LIMIT = 2; // 초대 코드 기본 월 한도(건)
 export const WEEKLY_CAP_USD = 22.5; // 전역 주간 차단
 export const MONTHLY_BUDGET_USD = 90;
-export const DEFAULT_EST_COST_USD = 1.2; // 실측 전 건당 추정 원가(대화 한 건 = 리포트 한 번). 실측 뒤 보정
+/**
+ * 건당 추정 원가(대화 한 건 = 리포트 한 번). v2.5 나눠 쓰기(호출 3~4개, Sonnet 5.5, 입력 48만 토큰) 어림:
+ * 캐시 쓰기 48만 × $2.5/MTok ≈ $1.2 + 캐시 읽기 2~3회 × 48만 × $0.10/MTok ≈ $0.1~0.15 + 출력 합 약 4.5만 × $10/MTok ≈ $0.45 → 약 $1.8.
+ * v2.4까지 한 번 호출은 $1.2(실측 3: $1.03). 실측 뒤 보정
+ */
+export const DEFAULT_EST_COST_USD = 1.8;
 export const MAX_REPORT_RUNS = 3; // 리포트의 유료 실행 상한(처음 1번 + [다시 쓰기] 2번). 넘으면 retry가 429 retry_limit
 export const CYCLE_ANCHOR_DAY = 1; // 크레딧 주기 기준일(서울 00:00 시작). settings.cycle_anchor_day 기본값과 같다
 

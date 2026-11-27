@@ -290,23 +290,27 @@ function fakeFetch(servedModel = "claude-opus-5-5") {
 const theCase = (model: string): EvalCase => ({ label: "group-1", concept: "group", injection: false, tone: "warm", model, payload });
 
 describe("evalCase", () => {
-  it("케이스 모델·출력 상한으로 요청하고, 점수·검수용 본문·원장 한 항목을 돌려준다", async () => {
+  it("케이스 모델·출력 상한으로 앱과 같이 호출 3개를 보내고, 점수·검수용 본문·호출마다 원장 한 항목을 돌려준다", async () => {
     const { fetch, calls } = fakeFetch("claude-sonnet-5-5");
     const client = new Anthropic({ apiKey: "test", fetch: fetch as typeof globalThis.fetch, maxRetries: 0 });
     let t = 0;
     const r = await evalCase(client, theCase("claude-sonnet-5-5"), { now: () => (t += 100) });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].model).toBe("claude-sonnet-5-5");
-    expect(calls[0].max_tokens).toBe(modelSettings({ ANTHROPIC_MODEL: "claude-sonnet-5-5" }).maxTokens);
+    expect(calls).toHaveLength(3);
+    for (const c of calls) {
+      expect(c.model).toBe("claude-sonnet-5-5");
+      expect(c.max_tokens).toBe(modelSettings({ ANTHROPIC_MODEL: "claude-sonnet-5-5" }).maxTokens);
+    }
     expect(r.score).toMatchObject({
       label: "group-1", tone: "warm", model: "claude-sonnet-5-5", servedModel: "claude-sonnet-5-5", fallback: false,
       status: "partial", kind: "ok", bannedHits: 1, msgSent: payload.msgSent,
     });
     expect(r.score.totalMs).toBeGreaterThan(0);
-    expect(r.score.costUsd).toBeCloseTo((5000 * 2 + 1000 * 10) / 1e6, 10);
-    expect(r.ledger).toHaveLength(1);
+    expect(r.score.costUsd).toBeCloseTo((3 * (5000 * 2 + 1000 * 10)) / 1e6, 10);
+    expect(r.ledger).toHaveLength(3);
     expect(r.ledger[0]).toMatchObject({ model: "claude-sonnet-5-5", usage: { input_tokens: 5000, output_tokens: 1000 } });
+    // 같은 출력을 받은 ②·③의 인트로 섹션은 다른 몫이라 빠진다
     expect(r.content?.sections).toHaveLength(2);
+    expect(r.content?.checks?.off_stage).toBe(4);
   });
   it("응답 모델이 케이스 모델과 다르면 fallback", async () => {
     const { fetch } = fakeFetch("claude-sonnet-5");

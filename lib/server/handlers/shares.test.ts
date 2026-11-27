@@ -138,7 +138,8 @@ describe("공유 화면 읽기(loadSharedView)", () => {
     const { h, id, token } = await shared();
     const view = await loadSharedView(h.repo, token);
     expect(view!.report).toEqual((await h.repo.getConversation(id))!.report.content);
-    expect(view!.report!.sections).toHaveLength(2);
+    // 인트로 1 + 개인별 2(철수·민지) + 마무리 1
+    expect(view!.report!.sections).toHaveLength(4);
     expect([view!.concept, view!.tone]).toEqual(["couple", "fact"]);
   });
 

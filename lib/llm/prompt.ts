@@ -1,7 +1,10 @@
 // 리포트 요청을 만든다(v2 설계 G6·G7, v2.2). 서버 전용.
-// system(고정) + 데이터 블록(<members>·<stats>·<conversation>, 예전 사본이면 <anchors>도) + 지시(말투·방·기간·구성·분량).
-// 말투만 다른 요청끼리 system·데이터 블록이 바이트 단위로 같고 지시만 다르다(나눠 쓰기·캐시를 다시 켤 때 그대로 쓴다).
+// system(고정) + 데이터 블록(<members>·<stats>·<conversation>, 예전 사본이면 <anchors>도) + 지시(말투·방·기간·구성·분량·이번 응답의 몫).
 // 지시는 데이터 뒤에 둔다: 긴 입력에서는 지시가 끝에 있는 편이 잘 따른다.
+// v2.5(실측 3: 한 번에 약 6K 토큰만 써서 분량이 모자랐다): 리포트 한 편을 호출 3~4개로 나눠 쓴다(buildRequests).
+//   ① 인트로 종합 ② 개인별(사람이 많으면 ②a 상위 3명 / ②b 나머지 + 그 밖의 멤버) ③ 마무리. 호출끼리 system·데이터 블록이
+//   바이트 단위로 같고 마지막 지시(mid-conversation system 메시지)만 다르다. 데이터 블록에 cache_control(ephemeral)을 달아
+//   ①이 캐시를 쓰고 ②·③이 읽는다(lib/llm/split.ts가 ①의 message_start 뒤에 나머지를 시작한다). thinking·effort·스키마도 같다.
 // v2.2: 컨셉(말투)이 리포트의 형식과 목소리를 정한다. 말투마다 그 인물(잔소리하는 친구, 예능 MC…)의 구성으로 리포트를 짜고,
 // 방 종류(컨셉)는 소재만 정한다. 숫자는 양념(섹션당 0~2개), 근거의 중심은 대화 원문 인용이다.
 // v2.4: 모든 말투가 인트로 종합 → 개인별 특징 → 마무리 뼈대로 쓰고, 그 인물이 자기 관점에서 과감하게 판정한다(틀려도 된다).
@@ -14,10 +17,10 @@ import "server-only";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { BetaJSONOutputFormat, BetaMessageParam, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
 import { MAX_QUOTES_PER_REPORT, NOTE_MAX_CHARS, PROMPT_STATS_MAX_PEOPLE } from "@/lib/config";
-import { legendText, type Payload, readBlock } from "@/lib/payload/build";
+import { legendText, memberCodes, type Payload, readBlock } from "@/lib/payload/build";
 import { STAT_PATHS } from "@/lib/stats/paths";
 import { type PromptStats, statsForPrompt } from "@/lib/stats/view";
-import { type Concept, type Part, type PartOf, type PickableTone, type Tone, TONES } from "./concepts";
+import { type Concept, type Part, type PartOf, type PickableTone, type Stage, type Tone, TONES } from "./concepts";
 import { reportSchema } from "./schema";
 import { type ModelSettings, modelSettings } from "./settings";
 import { CLOSING_QUOTE_RESERVE, MAX_CHARS } from "./validate";
@@ -26,8 +29,11 @@ import { CLOSING_QUOTE_RESERVE, MAX_CHARS } from "./validate";
 export const PROMPT_VERSION = "2026-11-report-10";
 
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
-/** 데이터 블록에 cache_control을 다는가. 한 번 호출이라 읽을 요청이 없어 끈다(나눠 쓰기를 넣을 때 켠다) */
-const CACHE_DATA_BLOCK = false;
+/**
+ * 데이터 블록에 cache_control을 다는가(v2.5 켬). 캐시는 앞부분 일치라 system + 데이터 블록까지가 캐시되고, 그 뒤 지시만 호출마다 다르다.
+ * 5분 TTL: 쓰기는 입력 단가의 1.25배, 읽기는 Sonnet 5.5에서 $0.10/MTok(lib/llm/cost.ts)
+ */
+export const CACHE_DATA_BLOCK = true;
 /**
  * 지시를 싣는 자리. "system"이면 데이터 뒤의 mid-conversation system 메시지, "user"면 같은 user 메시지의 두 번째 글 블록.
  * Sonnet 5.5 + fallbacks:"default"에서 system 자리가 막히면 "user"로 바꾼다(결정 20)
@@ -39,40 +45,42 @@ const { type, schema } = betaZodOutputFormat(reportSchema);
 const OUTPUT_FORMAT: BetaJSONOutputFormat = { type, schema };
 
 /**
- * 분량(v2.2 Fix 1, v2.3, v2.4). 보낸 메시지 수(msgSent)로 세 단계를 고른다: 재료가 적은 대화에 큰 분량을 시키면 같은 말을 되풀이하거나
- * 장면·인용을 지어내기 쉽다. v2.4부터 모든 말투가 같은 뼈대다: 인트로 종합(intro) → 개인별(people·others) → 마무리(outro).
- * 개인별 섹션 수는 <conversation>에 말한 사람 수(speakerCount)와 PEOPLE_CAP으로 정하고(peopleLine), 그다음 순위는 others 섹션 하나에 한 문단씩.
+ * 분량(v2.2 Fix 1, v2.3, v2.4, v2.5). 보낸 메시지 수(msgSent)로 세 단계를 고른다: 재료가 적은 대화에 큰 분량을 시키면 같은 말을 되풀이하거나
+ * 장면·인용을 지어내기 쉽다. 모든 말투가 같은 뼈대다: 인트로 종합(intro) → 개인별(people·others) → 마무리(outro).
+ * 개인별 섹션은 <conversation>에 말한 사람 중 메시지 많은 순 상위 PEOPLE_CAP명이 받고(peopleOrder), 그다음 순위는 others 섹션 하나에 한 문단씩.
  * small은 인트로·마무리를 섹션 하나씩(첫 intro 구성·마지막 outro 구성)만 쓴다.
  *
- * 실측(2026-11-27 운영 2건, Sonnet 5.5, 단톡 8명, 입력 약 54만 토큰, end_turn):
- * - report-6(예능 MC): 63초, 출력 6,798토큰, 섹션 9·문단 31·본문 2,923자(문단당 약 94자)
- * - report-7(탐정): 79초, 출력 8,973토큰, 섹션 10·문단 24·본문 4,184자(문단당 약 174자)
- * 저장된 문단 중 250자를 넘는 것이 하나도 없다(가장 긴 것 221자). 검증은 문단을 줄이지 않고 통째로만 지우므로 짧은 문단은 모델이 쓴 그대로다.
- * 상태가 done이라 지워진 문단은 30% 미만이다(탐정은 많아야 10개). 그래서 문단 수·길이를 구성 줄마다 숫자로 못 박는다(v2.4).
+ * 실측(2026-11-27 운영, Sonnet 5.5, 단톡 8명, end_turn):
+ * - report-6(예능 MC): 입력 약 54만, 63초, 출력 6,798토큰, 섹션 9·문단 31·본문 2,923자
+ * - report-7(탐정): 79초, 출력 8,973토큰, 섹션 10·문단 24·본문 4,184자
+ * - report-9(잔소리, 실측 3): 입력 483,078, 51초, 출력 6,103토큰, 남은 섹션 5·문단 10·본문 1,865자(partial)
+ * 한 번에 시키면 모델은 지시 분량과 상관없이 6~9K 토큰 안팎만 쓴다. 그래서 v2.5는 호출마다 자기 몫만 크게 시킨다(3~4호출 합계로 2~3배).
  *
- * 270초 마감(EPISODE_DEADLINE_MS) 어림(DEADLINE_ESTIMATE). 실측 출력 속도 = 출력 토큰 / (전체 시간 − 첫 토큰까지).
- * 첫 토큰까지를 20초로 보면 8,973 / (79 − 20) ≈ 152, 6,798 / (63 − 20) ≈ 158 tok/s. 보수적으로 120 tok/s, 첫 토큰 25초, 여유 15초
- * → 출력에 쓸 수 있는 시간 230초 ≈ 27,600토큰(생각 포함). 한글 본문은 글자당 약 1토큰(TOKENS_PER_CHAR, 보수적).
- * JSON 뼈대(섹션 11개)·인용 30개·메모 12개 ≈ 3,200토큰, adaptive 생각(effort medium) ≈ 2,500토큰.
- * prompt.test가 말투·단계마다 지시 글에서 (구성 줄마다 섹션 수 × 최대 문단 수)를 더해 (× 문단 글자 수 위쪽 끝 400자)가 bodyCharsMax 이하이고,
- * full에서는 거기에 JSON·생각 어림을 더해도 마감 어림 안인지 확인한다.
- * - full 위쪽 끝(사람 많은 단톡): 인트로 2 × 4 + 개인별 6 × 5 + 그 밖의 6 × 1 + 마무리 2 × 4 = 52문단 × 400자 = 20,800자
- *   → 20,800 + 3,200 + 2,500 = 26,500토큰 → 출력 221초, 전체 246초. 27,600토큰까지 1,100토큰 남는다
- * - full 목표(8명 단톡): 인트로 2 × 3.5 + 개인별 6 × 4 + 그 밖의 2 + 마무리 2 × 3.5 = 40문단 × 약 300자 ≈ 12,000자
- *   → 약 17,700토큰, 실측 속도면 출력 약 115초
- * 마감에 끊기면 마지막 구성(마무리)이 먼저 빠진다. 완결된 섹션까지는 partial로 남는다. 빠듯하면 effort(ANTHROPIC_EFFORT)를 low로.
- * 출력 상한 32,000토큰(DEFAULT_REPORT_MAX_TOKENS)은 full 위쪽 끝(26,500토큰)보다 커서 마감이 먼저 온다(prompt.test가 확인한다)
+ * 270초 마감(EPISODE_DEADLINE_MS, ① 시작 기준) 어림(DEADLINE_ESTIMATE). 실측 출력 속도 = 출력 토큰 / (전체 시간 − 첫 토큰까지) ≈ 150 tok/s.
+ * 보수적으로 120 tok/s, 첫 토큰 25초, 여유 15초. ①은 0초에 시작하고, ②·③은 ①의 message_start(≈ 첫 토큰 25초) 뒤에 시작해
+ * 자기 첫 토큰(캐시 읽기, 실측 없음 → 같은 25초로 본다)을 또 기다린다. 그래서 출력 창은 ① 230초(27,600토큰), 나머지 205초(24,600토큰).
+ * 호출마다 JSON 뼈대·인용·메모 ≈ 3,200토큰과 adaptive 생각 ≈ 2,500토큰을 더한다(한 편 전체 몫을 호출마다 그대로 잡는 보수적 값).
+ * 한글 본문은 글자당 약 1토큰(TOKENS_PER_CHAR, 보수적).
+ * - ② 하나(사람 6명 + 그 밖의 6명, full 위쪽 끝): 6 × 6 + 6 = 42문단 × 400자 = 16,800 + 5,700 = 22,500토큰 → 188초. 205초 창 안이지만 17초 남는다
+ * - ②를 나누면(PEOPLE_SPLIT_FROM명부터, 상위 3명 / 나머지): ②a 18문단 → 12,900토큰(108초), ②b 24문단 → 15,300토큰(128초)
+ * 나누는 근거: (1) 한 응답이 6~9K 토큰에서 멈추는 경향이라 사람 6명을 한 응답에 몰면 사람당 분량이 다시 줄어든다
+ * (2) 마감 여유가 17초 → 77초로 커진다 (3) 하나가 끊겨도 사람 절반만 빠진다. 값: 캐시 읽기 한 번(48만 토큰 × $0.10/MTok ≈ $0.05)과
+ * JSON·생각 몫(≈ $0.03)이 더 든다. 사람이 3명 이하(1:1 포함)면 나누지 않는다.
+ * prompt.test가 말투·단계·호출마다 지시 글에서 (구성 줄마다 섹션 수 × 최대 문단 수 × 400자)가 그 호출의 본문 상한과 같고,
+ * full에서는 거기에 JSON·생각을 더해도 그 호출의 출력 창 안인지 확인한다.
+ * 마감에 끊기면 그 호출의 완결된 섹션까지만 남는다(partial). 빠듯하면 effort(ANTHROPIC_EFFORT)를 low로.
+ * 출력 상한 32,000토큰(DEFAULT_REPORT_MAX_TOKENS)은 호출 하나의 위쪽 끝(22,500토큰)보다 커서 마감이 먼저 온다(prompt.test가 확인한다)
  */
 export const DEADLINE_ESTIMATE = {
   /** 출력 속도(초당 토큰). 실측 약 150의 보수적 값 */
   outputTokensPerSec: 120,
-  /** 긴 입력(54만~60만 토큰)의 첫 토큰까지 걸리는 시간(초) */
+  /** 긴 입력(48만~60만 토큰)의 첫 토큰까지 걸리는 시간(초). 캐시를 읽는 ②·③도 같은 값으로 본다(실측 없음) */
   ttftSec: 25,
   /** 여유(초) */
   marginSec: 15,
-  /** JSON 뼈대·인용·메모 */
+  /** 호출 하나의 JSON 뼈대·인용·메모 */
   jsonTokens: 3_200,
-  /** adaptive 생각(effort medium) */
+  /** 호출 하나의 adaptive 생각(effort medium) */
   thinkingTokens: 2_500,
 } as const;
 type Volume = {
@@ -84,23 +92,20 @@ type Volume = {
   peopleParagraphs: string;
   /** 1:1의 개인별: 두 사람뿐이라 한 사람 섹션을 더 깊게 쓴다 */
   pairParagraphs: string;
-  bodyChars: string;
-  bodyCharsMax: string;
   quotesPerSection: string;
-  /** 리포트 전체 인용 수 목표 상한(검증 상한 MAX_QUOTES_PER_REPORT 이하) */
+  /** 리포트 전체 인용 수 목표 상한(검증 상한 MAX_QUOTES_PER_REPORT 이하). 호출마다 섹션 수에 비례해 나눈다(quoteShares) */
   quotes: number;
   readingNotes: number;
   /** 통계 자리표시자는 섹션마다 이만큼만 */
   statsPerSection: string;
 };
+/** v2.5: 호출마다 자기 몫만 쓰므로 부분별 목표를 키웠다(full: 인트로·마무리 섹션당 4~5문단, 사람당 4~6문단). small은 재료가 적어 그대로 */
 export const VOLUMES = {
   small: {
     blockParts: 1,
     blockParagraphs: "2~3",
     peopleParagraphs: "2~3",
     pairParagraphs: "3~4",
-    bodyChars: "4,000~6,000",
-    bodyCharsMax: "12,000",
     quotesPerSection: "1~2",
     quotes: 14,
     readingNotes: 6,
@@ -108,11 +113,9 @@ export const VOLUMES = {
   },
   medium: {
     blockParts: 2,
-    blockParagraphs: "2~3",
-    peopleParagraphs: "3~4",
-    pairParagraphs: "4~5",
-    bodyChars: "7,000~10,000",
-    bodyCharsMax: "16,800",
+    blockParagraphs: "3~4",
+    peopleParagraphs: "3~5",
+    pairParagraphs: "4~6",
     quotesPerSection: "1~3",
     quotes: 24,
     readingNotes: 10,
@@ -120,11 +123,9 @@ export const VOLUMES = {
   },
   full: {
     blockParts: 2,
-    blockParagraphs: "3~4",
-    peopleParagraphs: "3~5",
-    pairParagraphs: "4~6",
-    bodyChars: "10,000~13,000",
-    bodyCharsMax: "20,800",
+    blockParagraphs: "4~5",
+    peopleParagraphs: "4~6",
+    pairParagraphs: "5~7",
     quotesPerSection: "1~3",
     quotes: 30,
     readingNotes: 12,
@@ -150,6 +151,9 @@ const PARAGRAPH_CHARS = `${PARAGRAPH_MIN}~${PARAGRAPH_MAX}`;
 export const PEOPLE_CAP = 6;
 /** others 섹션에서 한 문단씩 다루는 그다음 순위 멤버 수 상한 */
 const ONE_LINERS_CAP = 6;
+/** 개인별 섹션을 받는 사람이 이만큼 이상이면 개인별 호출을 둘로 나눈다(상위 PEOPLE_SPLIT_AT명 / 나머지 + 그 밖의 멤버). 근거는 DEADLINE_ESTIMATE 주석 */
+export const PEOPLE_SPLIT_FROM = 4;
+const PEOPLE_SPLIT_AT = 3;
 
 const SYSTEM_PROMPT = `너는 '다봄'이다. 카카오톡 대화 내보내기를 읽고 리포트 한 편을 쓰는, 방 밖의 제3자 관찰자다. 리포트는 공유 링크로 이 대화의 멤버들이 함께 읽는다.
 신조: "보인 장면은 인용으로, 판정은 과감하게. 틀려도 좋다."
@@ -204,10 +208,11 @@ JSON 스키마를 따르고 필드를 이 순서로 쓴다.
 - declined_topics: 금지 주제라 다루지 않은 것
 - reading_notes: 그 구간 대화의 흐름 요약(너의 생각 과정이 아니다). 진행 화면에 먼저 보인다. range는 "MM-DD~MM-DD", note는 ${NOTE_MAX_CHARS}자 이하.
 - headline: 리포트 제목 한 줄(${MAX_CHARS.headline}자 이하). dek: 한두 문장 소개(${MAX_CHARS.dek}자 이하). 둘 다 컨셉의 목소리로 쓴다.
-- sections: 지시의 리포트 구성 순서대로(인트로 종합 → 개인별 → 마무리) 쓴다.
+- 리포트 한 편은 응답 여러 개가 같은 대화를 보고 나눠 쓰고, 화면이 인트로 종합 → 개인별 → 마무리 순서로 붙인다. reading_notes·headline·dek는 지시가 맡긴 응답만 쓰고, 맡지 않은 응답은 빈 배열·빈 글("")로 둔다.
+- sections: 지시가 이번 응답에 맡긴 구성만, 지시의 순서대로 쓴다. 다른 응답이 맡은 구성의 섹션은 쓰지 않는다.
   - part는 그 섹션이 속한 구성 키. icon은 이모지 하나. title은 ${MAX_CHARS.title}자 이하. about은 pair(두 사람 관계)·group(방 전체)·참여자 표시 이름 중 하나
   - paragraphs: key는 섹션 안에서 p1, p2…, text는 ${SENTENCES}문장, ${PARAGRAPH_CHARS}자(적어도 ${PARAGRAPH_MIN}자. ${MAX_CHARS.paragraph}자 이하, 넘으면 지워진다), evidence_ids는 이 섹션 evidence의 id(근거를 쓰는 문단만)
-  - evidence: id는 섹션 안에서 e1, e2…, msg_id는 줄 앞의 m번호 그대로, quote는 그 메시지 본문을 글자 그대로 잘라 온 부분이다. 고치거나 합치지 않는다. 어느 문단의 evidence_ids에도 없는 근거는 버려진다. 리포트 전체에서 ${MAX_QUOTES_PER_REPORT}개 이하.`;
+  - evidence: id는 섹션 안에서 e1, e2…, msg_id는 줄 앞의 m번호 그대로, quote는 그 메시지 본문을 글자 그대로 잘라 온 부분이다. 고치거나 합치지 않는다. 어느 문단의 evidence_ids에도 없는 근거는 버려진다. 이번 응답에서는 지시의 개수 이하(리포트 전체 ${MAX_QUOTES_PER_REPORT}개 이하).`;
 
 /** 말투 예시는 모양만 보여 준다. 말투와 상관없이 지킬 숫자 규칙 */
 const TONE_NUMBERS = "예시처럼 통계 숫자는 {{stat:…}} 자리표시자로만 쓰고, 절반·두 배처럼 숫자를 말로 대신 쓰지 않는다(인물이 매기는 점수·순위는 된다).";
@@ -218,7 +223,7 @@ const TONE_COMMON =
 const MERGE_BEATS = " 흐름이 문단 수보다 많으면 이어지는 둘을 한 문단에 담는다(문단 수는 줄이지 않는다).";
 /** 마무리 구성에서만 멤버에게 말을 걸어도 된다(system의 '지시가 따로 정한 구성'). 시점·편들기 규칙은 그대로 */
 const CLOSING_ADDRESS =
-  "이 섹션만 방 밖의 관찰자가 멤버들을 이름으로 불러 모두에게 직접 말을 건네도 된다('우리'로 쓰지 않는다). 한쪽 편을 들지 않고, 질문으로 끝내지 않는다. 앞에서 본 장면 하나를 근거 인용으로 다시 꺼내고, 그 인물의 마지막 판정(누구의 속마음이든 점수든)을 과감하게 못 박는다(틀려도 좋다).";
+  "이 섹션만 방 밖의 관찰자가 멤버들을 이름으로 불러 모두에게 직접 말을 건네도 된다('우리'로 쓰지 않는다). 한쪽 편을 들지 않고, 질문으로 끝내지 않는다. 이 방을 대표하는 장면 하나를 근거 인용으로 꺼내고, 그 인물의 마지막 판정(누구의 속마음이든 점수든)을 과감하게 못 박는다(틀려도 좋다).";
 
 /** 구성 설명을 채울 숫자. people은 한 사람 섹션의 문단 수(예: "3~5"), nags는 그중 잔소리 문단 수(마지막 인정 하나를 뺀 것) */
 type PeopleCounts = { people: string; nags: string };
@@ -372,45 +377,63 @@ function sentLine(p: Payload): string {
   return `전체 ${p.msgTotal}개 중 ${p.msgSent}개를 처음부터 끝까지 고르게 골라 보냈다.`;
 }
 
-/** <conversation>(예전 사본이면 <anchors>도)에 한 줄이라도 쓴 사람 수 */
-export function speakerCount(p: Pick<Payload, "anchors" | "transcript">): number {
+/** <conversation>(예전 사본이면 <anchors>도)에 한 줄이라도 쓴 사람의 범례 기호 */
+function speakerCodes(p: Pick<Payload, "anchors" | "transcript">): Set<string> {
   const codes = new Set<string>();
   for (const line of [...readBlock(p.anchors), ...readBlock(p.transcript)]) if (line.type === "message") codes.add(line.code);
-  return codes.size;
+  return codes;
 }
+/** <conversation>(예전 사본이면 <anchors>도)에 한 줄이라도 쓴 사람 수 */
+export const speakerCount = (p: Pick<Payload, "anchors" | "transcript">): number => speakerCodes(p).size;
 
 const isPair = (p: Payload) => p.kind === "pair" || p.members.length <= 2;
 
 /**
- * 누구를 얼마나 길게 쓰는지(v2.4). persons: 개인별 섹션을 받는 사람 수, others: others 섹션에서 한 문단씩 다루는 그다음 순위 수.
- * 1:1은 두 사람. 단톡은 <conversation>에 말한 사람만 섹션을 받고, 많으면 메시지 많은 순 상위 PEOPLE_CAP명만 섹션을 받는다.
- * 그다음 순위 많아야 ONE_LINERS_CAP명(<stats>에 있는 12명 안)만 others 섹션에서 한 문단씩. 그 아래는 이름 없이 한 문장으로 묶는다
- * (줄도 통계도 없는 실명 멤버를 지어내지 않게)
+ * 누구를 얼마나 길게 쓰는지(v2.4, v2.5). persons: 개인별 섹션을 받는 사람, others: others 섹션에서 한 문단씩 다루는 그다음 순위.
+ * 둘 다 members의 번호이고 메시지 많은 순이다(statsForPrompt와 같은 순서: byPerson 개수 내림차순, 동률은 이름 오름차순).
+ * 1:1은 두 사람. 단톡은 <conversation>에 말한 사람만, 상위 PEOPLE_CAP명이 섹션을 받는다. 그다음 순위 많아야 ONE_LINERS_CAP명
+ * (<stats>에 있는 PROMPT_STATS_MAX_PEOPLE명 안)만 others 섹션에서 한 문단씩. 그 아래는 이름 없이 한 문장으로 묶는다
+ * (줄도 통계도 없는 실명 멤버를 지어내지 않게). v2.5: 호출을 나눌 때 누가 어느 호출인지 범례 기호로 정확히 적으려고 목록으로 낸다
  */
+export function peopleOrder(p: Payload): { persons: number[]; others: number[] } {
+  const count = (i: number) => p.stats.byPerson[p.members[i]] ?? 0;
+  const ranked = p.members
+    .map((_, i) => i)
+    .sort((a, b) => count(b) - count(a) || (p.members[a] < p.members[b] ? -1 : p.members[a] > p.members[b] ? 1 : 0));
+  if (isPair(p)) return { persons: ranked, others: [] };
+  const codes = memberCodes(p.members);
+  const spoke = speakerCodes(p);
+  const inStats = new Set(ranked.slice(0, PROMPT_STATS_MAX_PEOPLE));
+  const speakers = ranked.filter((i) => spoke.has(codes[i]));
+  return {
+    persons: speakers.slice(0, PEOPLE_CAP),
+    others: speakers.slice(PEOPLE_CAP).filter((i) => inStats.has(i)).slice(0, ONE_LINERS_CAP),
+  };
+}
+/** 개인별 섹션 수와 그 밖의 멤버 수 */
 export function peopleShape(p: Payload): { persons: number; others: number } {
-  if (isPair(p)) return { persons: 2, others: 0 };
-  const speakers = speakerCount(p);
-  if (p.members.length <= PEOPLE_CAP) return { persons: Math.min(p.members.length, speakers), others: 0 };
-  if (speakers <= PEOPLE_CAP) return { persons: speakers, others: 0 };
-  const others = Math.min(ONE_LINERS_CAP, p.members.length - PEOPLE_CAP, speakers - PEOPLE_CAP, Math.max(0, PROMPT_STATS_MAX_PEOPLE - PEOPLE_CAP));
-  return { persons: PEOPLE_CAP, others };
+  const { persons, others } = peopleOrder(p);
+  return { persons: persons.length, others: others.length };
 }
 
 const partTitle = (p: Part) => `${p.key} 「${p.title}」`;
+/** 범례 기호 목록("B, A, D") */
+const codeList = (p: Payload, who: number[]) => {
+  const codes = memberCodes(p.members);
+  return who.map((i) => codes[i]).join(", ");
+};
 
-/** 사람 줄: 누구에게 개인별 섹션을 주고, 그다음 순위는 어디서 다루는지 */
-function peopleLine(p: Payload, people: Part, others: Part | undefined, shape: { persons: number; others: number }): string {
+/** 사람 줄: 누구에게 개인별 섹션을 주고, 그다음 순위는 어디서 다루는지(단톡은 범례 기호로) */
+function peopleLine(p: Payload, people: Part, others: Part | undefined, order: { persons: number[]; others: number[] }): string {
   if (isPair(p)) {
     return `사람: 1:1 두 사람이다. 같은 형식에서 두 사람 중심으로 쓴다. ${partTitle(people)}에서는 두 사람 각자 섹션 하나씩 깊게 쓰고, 인트로 종합과 마무리는 about을 pair로 두고 두 사람 사이에 오간 것을 쓴다.`;
   }
-  const silent = " <conversation>에 줄이 없는 멤버는 섹션을 만들지 않고 짐작으로 묘사하지 않는다.";
-  if (p.members.length <= PEOPLE_CAP) {
-    return `사람: 참여자 ${p.members.length}명 모두 ${partTitle(people)}에서 한 사람에 섹션 하나씩 쓴다.${shape.persons < p.members.length ? silent : ""}`;
-  }
-  if (shape.others === 0 || !others) {
-    return `사람: 참여자 ${p.members.length}명 중 <conversation>에 줄이 있는 ${shape.persons}명만 ${partTitle(people)}에서 한 사람에 섹션 하나씩 쓴다. 나머지 멤버는 이름을 부르지 않고 짐작으로 묘사하지 않는다.`;
-  }
-  return `사람: 메시지가 많은 상위 ${PEOPLE_CAP}명(<stats>의 byPerson 순서)만 ${partTitle(people)}에서 한 사람에 섹션 하나씩 길게 쓴다. 그다음 ${PEOPLE_CAP + 1}~${PEOPLE_CAP + shape.others}위 많아야 ${shape.others}명은 ${partTitle(others)} 섹션 하나에서 한 사람에 문단 하나씩 다룬다. <conversation>에 그 사람의 줄이 없으면 건너뛴다. 그 밖의 멤버는 이름을 부르지 않고 '나머지 멤버들'처럼 한 문장으로 묶는다. 줄이 없는 멤버를 짐작으로 묘사하지 않는다.`;
+  const head = `사람: 개인별 섹션은 <conversation>에 줄이 있는 멤버 중 메시지가 많은 ${order.persons.length}명이 ${partTitle(people)}에서 한 사람에 하나씩 받는다. 메시지 많은 순으로 기호 ${codeList(p, order.persons)}(<members>의 범례)다.`;
+  const rest = others && order.others.length > 0
+    ? ` 그다음 ${order.others.length}명(기호 ${codeList(p, order.others)})은 ${partTitle(others)} 섹션 하나에서 한 사람에 문단 하나씩 다룬다.`
+    : "";
+  const crowd = p.members.length > order.persons.length + order.others.length ? " 그 밖의 멤버는 이름을 부르지 않고 '나머지 멤버들'처럼 한 문장으로 묶는다." : "";
+  return `${head}${rest}${crowd} <conversation>에 줄이 없는 멤버는 짐작으로 묘사하지 않는다.`;
 }
 
 /** 개인별 구성의 문단 수: 1:1은 깊게(pairParagraphs), 단톡은 peopleParagraphs. 잔소리는 마지막 인정 하나를 뺀 수 */
@@ -446,22 +469,99 @@ export function reportParts(p: Payload): { intro: Part[]; people: Part; others: 
   };
 }
 
-/** 지시. 첫 줄(말투: 라벨)이 테스트 훅이고 둘째 줄이 그 컨셉의 인물이다. 참여자 이름은 싣지 않는다(데이터 블록의 범례에 있다) */
-function reportInstruction(p: Payload, stats: PromptStats): string {
+// ===== 나눠 쓰기(v2.5) =====
+
+/** 나눠 쓰는 호출의 몫: ① 인트로 ② 개인별(나누면 ②a people, ②b people_rest) ③ 마무리. 이 순서로 섹션을 붙인다 */
+export const CALL_PARTS = ["intro", "people", "people_rest", "outro"] as const;
+export type CallPart = (typeof CALL_PARTS)[number];
+
+/** 호출 하나가 쓰는 것. sections: 그 호출이 쓸 구성과 섹션 수, persons·others: 그 호출이 다루는 사람(members 번호) */
+interface CallPlan {
+  part: CallPart;
+  blocks: Part[];
+  persons: number[];
+  others: number[];
+}
+
+/** 이 리포트의 호출 계획. 사람이 PEOPLE_SPLIT_FROM명 이상이면 개인별을 상위 PEOPLE_SPLIT_AT명 / 나머지 + 그 밖의 멤버로 나눈다 */
+function callPlans(p: Payload): CallPlan[] {
+  const { intro, outro } = reportParts(p);
+  const order = peopleOrder(p);
+  const split = order.persons.length >= PEOPLE_SPLIT_FROM;
+  const people: CallPlan[] = split
+    ? [
+        { part: "people", blocks: [], persons: order.persons.slice(0, PEOPLE_SPLIT_AT), others: [] },
+        { part: "people_rest", blocks: [], persons: order.persons.slice(PEOPLE_SPLIT_AT), others: order.others },
+      ]
+    : order.persons.length > 0
+      ? [{ part: "people", blocks: [], persons: order.persons, others: order.others }]
+      : [];
+  return [{ part: "intro", blocks: intro, persons: [], others: [] }, ...people, { part: "outro", blocks: outro, persons: [], others: [] }];
+}
+/** 호출의 섹션 수: 인트로·마무리는 구성 수, 개인별은 사람 수 + (그 밖의 멤버가 있으면) 1 */
+const sectionsOf = (c: CallPlan) => c.blocks.length + c.persons.length + (c.others.length > 0 ? 1 : 0);
+
+/**
+ * 호출마다 근거 인용 몫. 리포트 전체 목표(vol.quotes)를 섹션 수에 비례해 내림으로 나누고 남는 것은 마무리가 받는다.
+ * 호출마다 섹션 수 × 섹션당 위쪽 끝을 넘지 않는다. 합은 리포트 전체 목표 이하다(검증 상한 MAX_QUOTES_PER_REPORT)
+ */
+export function quoteShares(sections: number[], vol: Pick<Volume, "quotes" | "quotesPerSection">): number[] {
+  const total = sections.reduce((a, b) => a + b, 0);
+  const perSection = Number(vol.quotesPerSection.split("~")[1]);
+  const shares = sections.map((n) => Math.floor((vol.quotes * n) / total));
+  shares[shares.length - 1] = vol.quotes - shares.slice(0, -1).reduce((a, b) => a + b, 0);
+  return shares.map((q, i) => Math.min(q, sections[i] * perSection));
+}
+
+const comma = (n: number) => n.toLocaleString("en-US");
+
+/** 지시. 첫 줄(말투: 라벨)이 테스트 훅이고 둘째 줄이 그 컨셉의 인물이다. 참여자 이름은 싣지 않는다(데이터 블록의 범례에 있고, 기호로 가리킨다) */
+function reportInstruction(p: Payload, stats: PromptStats, plans: CallPlan[], at: number): string {
   const { label } = TONES[p.tone];
   const guide = TONE_GUIDES[p.tone] as ToneGuide<Tone>;
   const examples = guide.examples.map((e) => `"${e}"`).join(" / ");
   const tier = volumeTier(p.msgSent);
   const vol = VOLUMES[tier];
-  const shape = peopleShape(p);
+  const order = peopleOrder(p);
   const { intro, people, others, outro } = reportParts(p);
-  const closing = outro[outro.length - 1].key;
+  const call = plans[at];
   const counts = peopleCounts(p, tier);
   const [peopleLo] = counts.people.split("~");
   const blockAbout = "about은 group(1:1이면 pair)";
   const block = (part: Part) =>
     `- ${partTitle(part)}: 섹션 하나, ${blockAbout}, 문단 ${vol.blockParagraphs}개. ${partText(guide.parts[part.key], counts)}`;
-  const sections = intro.length + shape.persons + (others ? 1 : 0) + outro.length;
+  const elsewhere = (parts: Part[]) => `  (다른 응답이 쓴다: ${parts.map(partTitle).join(", ")})`;
+  const isPeople = call.part === "people" || call.part === "people_rest";
+  const pair = isPair(p);
+  const whoHere = pair ? "두 사람" : `기호 ${codeList(p, call.persons)}`;
+  const peopleRow = `- ${partTitle(people)}: 사람마다 섹션 하나(about은 그 사람), 한 사람에 문단 ${counts.people}개(적어도 ${peopleLo}개). ${partText(guide.parts[people.key], counts)}`;
+  const othersRow = (n: number) =>
+    `- ${partTitle(others!)}: 섹션 하나, about은 group, 기호 ${codeList(p, call.others)} ${n}명을 한 사람에 문단 하나씩(문단 ${n}개). ${partText(guide.parts[others!.key], counts)}`;
+  const peopleParts = [people, ...(others ? [others] : [])];
+
+  // 이번 응답의 분량: 구성 줄마다 섹션 수 × 문단 수
+  const [blockLo, blockHi] = vol.blockParagraphs.split("~").map(Number);
+  const [personLo, personHi] = counts.people.split("~").map(Number);
+  const paragraphs = isPeople
+    ? { lo: call.persons.length * personLo + call.others.length, hi: call.persons.length * personHi + call.others.length }
+    : { lo: call.blocks.length * blockLo, hi: call.blocks.length * blockHi };
+  const sections = sectionsOf(call);
+  const quotes = quoteShares(plans.map(sectionsOf), vol)[at];
+  const closing = outro[outro.length - 1].key;
+  const shape = isPeople
+    ? `개인별 섹션 ${sections}개다(사람 ${call.persons.length}명${call.others.length > 0 ? " + 그 밖의 멤버 1" : ""})`
+    : `${call.part === "intro" ? "인트로" : "마무리"} 섹션 ${sections}개다`;
+
+  // 이번 응답의 몫(마지막 줄): 무엇을 쓰고, 무엇을 남기는지
+  const mine = {
+    intro: `이번 응답: [1. 인트로 종합 리포트]의 섹션 ${sections}개(${call.blocks.map((x) => x.key).join(", ")})만 쓴다. 개인별·마무리 섹션은 쓰지 않는다. 인트로는 방 전체의 장면·습관·흐름을 쓰고, 한 사람을 깊게 다루는 이야기는 개인별 응답에 남긴다. headline·dek와 reading_notes(${vol.readingNotes}개 이하)도 이 응답이 쓴다.`,
+    people: "",
+    people_rest: "",
+    outro: `이번 응답: [3. 마무리 리포트]의 섹션 ${sections}개(${call.blocks.map((x) => x.key).join(", ")})만 쓴다. 인트로·개인별 섹션은 쓰지 않는다. 마무리는 방 전체의 결론·총평이다: 사람마다 다시 분석하지 않는다. headline·dek는 빈 글(""), reading_notes는 빈 배열로 둔다.`,
+  }[call.part];
+  const someone = plans.filter((x) => x.part === "people" || x.part === "people_rest").length > 1 ? " 나머지 사람은 다른 응답이 쓴다." : "";
+  const peopleMine = `이번 응답: [2. 개인별 특징 리포트]의 섹션 ${sections}개만 쓴다: ${partTitle(people)}에서 ${whoHere} 각자 섹션 하나씩${call.others.length > 0 ? `, 그리고 ${partTitle(others!)} 섹션 하나` : ""}.${someone} 인트로·마무리 섹션은 쓰지 않는다. headline·dek는 빈 글(""), reading_notes는 빈 배열로 둔다.`;
+
   // 재료가 적은 대화: 구성 설명의 개수는 상한이고, 되풀이·지어내기로 분량을 채우지 않는다
   const material =
     tier === "full"
@@ -477,29 +577,26 @@ function reportInstruction(p: Payload, stats: PromptStats): string {
     `기간: ${p.period.start}~${p.period.end}. ${sentLine(p)}`,
     ...omittedLines(stats),
     CONCEPT_MATERIAL[p.concept],
-    peopleLine(p, people, others, shape),
+    peopleLine(p, people, others, order),
     "",
-    `리포트 구성(「${label}」의 형식이다. 세 부분을 이 순서로 쓴다. 섹션의 part는 앞의 키다):`,
+    `리포트 구성(「${label}」의 형식이다. 리포트 한 편을 응답 ${plans.length}개가 같은 대화를 보고 동시에 나눠 쓰고, 화면이 세 부분을 이 순서로 붙인다. 섹션의 part는 앞의 키다):`,
     STAGE_HEAD.intro(label),
-    ...intro.map(block),
+    ...(call.part === "intro" ? intro.map(block) : [elsewhere(intro)]),
     STAGE_HEAD.people(),
-    `- ${partTitle(people)}: 사람마다 섹션 하나(about은 그 사람), 한 사람에 문단 ${counts.people}개(적어도 ${peopleLo}개). ${partText(guide.parts[people.key], counts)}`,
-    ...(others
-      ? [
-          `- ${partTitle(others)}: 섹션 하나, about은 group, 그다음 ${PEOPLE_CAP + 1}~${PEOPLE_CAP + shape.others}위 많아야 ${shape.others}명을 한 사람에 문단 하나씩(문단 ${shape.others}개). ${partText(guide.parts[others.key], counts)}`,
-        ]
-      : []),
+    ...(isPeople ? [peopleRow, ...(call.others.length > 0 ? [othersRow(call.others.length)] : [])] : [elsewhere(peopleParts)]),
     STAGE_HEAD.outro(label),
-    ...outro.map(block),
+    ...(call.part === "outro" ? outro.map(block) : [elsewhere(outro)]),
     "",
-    `목소리: 헤드라인과 첫 섹션 제목부터 마지막 문단까지 ${label}의 목소리와 형식으로 쓴다. 섹션 제목도 그 구성의 말로 짓는다. 통계를 해설하는 분석 보고서 문단이 되면 안 된다: 문단마다 장면과 말이 먼저고, 숫자는 그 장면을 받칠 때만 쓴다. 사실을 설명하는 데서 멈추지 말고 ${label}의 관점에서 판정·해석을 내린다.`,
-    `분량: 리포트 전체 섹션 ${sections}개(인트로 ${intro.length} + 개인별 ${shape.persons + (others ? 1 : 0)} + 마무리 ${outro.length}). 섹션마다 문단 수는 구성 줄에 적힌 대로다. 문단 하나는 ${SENTENCES}문장, ${PARAGRAPH_CHARS}자다. 문단마다 적어도 ${PARAGRAPH_MIN}자를 쓴다: 한두 문장으로 짧게 끝내지 말고 장면 → 근거(인용) → 그 말투의 판정·리액션 → 앞뒤 흐름이나 다른 멤버의 반응을 이어서 한 문단을 채운다(예시가 문단 하나의 길이다). 본문(문단 글)은 리포트 전체 ${vol.bodyChars}자이고 ${vol.bodyCharsMax}자를 넘기지 않는다. 근거 인용은 섹션마다 ${vol.quotesPerSection}개, 리포트 전체 ${vol.quotes}개 이하이고, 마지막 구성 ${closing} 섹션 몫으로 ${CLOSING_QUOTE_RESERVE}개를 남겨 둔다. reading_notes는 ${vol.readingNotes}개 이하.`,
+    `목소리: ${call.part === "intro" ? "헤드라인과 첫 섹션 제목부터" : "첫 섹션 제목부터"} 마지막 문단까지 ${label}의 목소리와 형식으로 쓴다. 섹션 제목도 그 구성의 말로 짓는다. 통계를 해설하는 분석 보고서 문단이 되면 안 된다: 문단마다 장면과 말이 먼저고, 숫자는 그 장면을 받칠 때만 쓴다. 사실을 설명하는 데서 멈추지 말고 ${label}의 관점에서 판정·해석을 내린다.`,
+    `분량: 이번 응답은 ${shape}. 섹션마다 문단 수는 구성 줄에 적힌 대로다. 문단 하나는 ${SENTENCES}문장, ${PARAGRAPH_CHARS}자다. 문단마다 적어도 ${PARAGRAPH_MIN}자를 쓴다: 한두 문장으로 짧게 끝내지 말고 장면 → 근거(인용) → 그 말투의 판정·리액션 → 앞뒤 흐름이나 다른 멤버의 반응을 이어서 한 문단을 채운다(예시가 문단 하나의 길이다). 이번 응답의 본문(문단 글)은 적어도 ${comma(paragraphs.lo * PARAGRAPH_MIN)}자, 많아야 ${comma(paragraphs.hi * PARAGRAPH_MAX)}자다. 근거 인용은 섹션마다 ${vol.quotesPerSection}개, 이번 응답 전체 ${quotes}개 이하${call.part === "outro" ? `이고, 마지막 구성 ${closing} 섹션에도 ${Math.min(CLOSING_QUOTE_RESERVE, quotes)}개를 단다` : ""}.`,
     ...material,
     `숫자는 양념: 통계 자리표시자는 섹션마다 ${vol.statsPerSection}개, 장면을 받쳐 줄 때만 쓴다. 숫자를 나열하지 않는다. 안 되는 예: "<이름> {{stat:byPerson.<이름>}}개, <이름> {{stat:byPerson.<이름>}}개, <이름> {{stat:byPerson.<이름>}}개로 셋이 비슷하다"처럼 사람마다 숫자를 줄줄이 대기, 문단마다 통계 하나를 읽고 해설하기. 근거의 중심은 대화 원문 인용이다.`,
+    "",
+    isPeople ? peopleMine : mine,
   ].join("\n");
 }
 
-/** 데이터 블록과 지시를 role 자리에 싣는다. INSTRUCTION_ROLE의 두 모양을 시험하려고 내보낸다(그 밖에는 buildRequest만 쓴다) */
+/** 데이터 블록과 지시를 role 자리에 싣는다. INSTRUCTION_ROLE의 두 모양을 시험하려고 내보낸다(그 밖에는 buildRequests만 쓴다) */
 export function requestMessages(data: string, instruction: string, role: "system" | "user"): BetaMessageParam[] {
   const dataBlock = { type: "text" as const, text: data, ...(CACHE_DATA_BLOCK ? { cache_control: { type: "ephemeral" as const } } : {}) };
   if (role === "user") return [{ role: "user", content: [dataBlock, { type: "text", text: instruction }] }];
@@ -509,23 +606,51 @@ export function requestMessages(data: string, instruction: string, role: "system
   ];
 }
 
+/** 나눠 쓰는 호출 하나 */
+export interface ReportCall {
+  part: CallPart;
+  /** 이 호출이 쓰는 구성의 자리. 합칠 때 다른 자리 구성의 섹션(다른 호출 몫)을 뺀다 */
+  stages: Stage[];
+  /** 개인별 호출이 맡은 사람(표시 이름). 합칠 때 다른 개인별 호출이 맡은 사람의 섹션을 뺀다 */
+  people: string[];
+  req: BetaMessageStreamParams;
+}
+
 /**
- * 리포트 요청. model·max_tokens·effort는 s(기본은 env의 modelSettings)에서.
+ * 리포트 요청들(v2.5): ① 인트로 → ② 개인별(나누면 ②a·②b) → ③ 마무리 순서. model·max_tokens·effort는 s(기본은 env의 modelSettings)에서.
+ * 호출끼리 system·데이터 블록(cache_control)·thinking·output_config·betas가 같고 마지막 지시만 다르다(캐시 앞부분이 같아야 읽는다).
  * <stats>에는 모델용 요약(statsForPrompt)을 넣는다. 자리표시자 해석(validateReport)은 전체 p.stats를 쓴다
  */
-export function buildRequest(p: Payload, s: ModelSettings = modelSettings()): BetaMessageStreamParams {
+export function buildRequests(p: Payload, s: ModelSettings = modelSettings()): ReportCall[] {
   const stats = statsForPrompt(p.stats);
   // anchors는 예전 사본(v2.0)에만 있다. 비었으면 태그를 싣지 않는다
   const anchors = p.anchors === "" ? "" : `<anchors>${p.anchors}</anchors>`;
   const data = `<members>${legendText(p.members)}</members><stats>${JSON.stringify(stats)}</stats>${anchors}<conversation>${p.transcript}</conversation>`;
-  return {
-    model: s.model,
-    max_tokens: s.maxTokens,
-    thinking: { type: "adaptive" },
-    output_config: { effort: s.effort, format: OUTPUT_FORMAT },
-    betas: [FALLBACK_BETA],
-    fallbacks: "default",
-    system: SYSTEM_PROMPT,
-    messages: requestMessages(data, reportInstruction(p, stats), INSTRUCTION_ROLE),
-  };
+  const plans = callPlans(p);
+  return plans.map((plan, at) => {
+    const isPeople = plan.part === "people" || plan.part === "people_rest";
+    return {
+      part: plan.part,
+      stages: isPeople ? ["people", "others"] : [plan.part === "intro" ? "intro" : "outro"],
+      people: plan.persons.map((i) => p.members[i]),
+      req: {
+        model: s.model,
+        max_tokens: s.maxTokens,
+        thinking: { type: "adaptive" },
+        output_config: { effort: s.effort, format: OUTPUT_FORMAT },
+        betas: [FALLBACK_BETA],
+        fallbacks: "default",
+        system: SYSTEM_PROMPT,
+        messages: requestMessages(data, reportInstruction(p, stats, plans, at), INSTRUCTION_ROLE),
+      },
+    };
+  });
+}
+
+/** 입력 토큰을 셀 요청: 지시가 가장 긴 호출(데이터 블록은 모두 같다). 입력 예산 검사(countTokens)와 측정 스크립트가 쓴다 */
+export function countRequest(p: Payload, s: ModelSettings = modelSettings()): BetaMessageStreamParams {
+  const size = (r: BetaMessageStreamParams) => JSON.stringify(r.messages.at(-1)).length;
+  return buildRequests(p, s)
+    .map((c) => c.req)
+    .reduce((a, b) => (size(b) > size(a) ? b : a));
 }

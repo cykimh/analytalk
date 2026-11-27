@@ -312,6 +312,17 @@ function relink(lines: NumberedLine[], claimed: string, quote: string, nq: strin
 /** 번호 붙은 보낸 줄. 정규화본은 처음 볼 때 만든다 */
 type NumberedLine = { ref: string; n: number; line: IndexLine; norm: () => string };
 
+/**
+ * 구조만 본다(v2.5: 나눠 쓴 호출마다 먼저 보고 합친다). safety가 먼저다: 걸린 응답이 구조 검사에서 failed가 되면 도움 안내 대신
+ * [다시 쓰기]가 보이고, 같은 위험 대화가 다시 유료 호출로 간다. truncated면 빠진 뒤쪽 필드에 기본값을 넣는다
+ */
+export function parseReport(raw: unknown, truncated: boolean): { kind: "safety" } | { kind: "failed" } | { kind: "report"; report: Report } {
+  const flag = rawSafetyFlag(raw);
+  if (flag !== null && flag !== "none") return { kind: "safety" };
+  const parsed = reportSchema.safeParse(prepare(raw, truncated));
+  return parsed.success ? { kind: "report", report: parsed.data } : { kind: "failed" };
+}
+
 const emptyChecks = (): ValidationChecks => ({ relinked: 0, requoted: 0, unquoted: 0, dropped_by: {} });
 
 export function validateReport(
@@ -321,13 +332,9 @@ export function validateReport(
   opts: { truncated: boolean; tone: Tone; members: string[] },
 ): ValidateResult {
   const none = { paragraphs: 0, evidence: 0, checks: emptyChecks() };
-  // safety가 먼저다: 걸린 응답이 구조 검사에서 failed가 되면 도움 안내 대신 [다시 쓰기]가 보이고,
-  // 같은 위험 대화가 다시 유료 호출로 간다
-  const flag = rawSafetyFlag(raw);
-  if (flag !== null && flag !== "none") return { status: "safety", content: null, dropped: none };
-  const parsed = reportSchema.safeParse(prepare(raw, opts.truncated));
-  if (!parsed.success) return { status: "failed", content: null, dropped: none };
-  const report = parsed.data;
+  const parsed = parseReport(raw, opts.truncated);
+  if (parsed.kind !== "report") return { status: parsed.kind, content: null, dropped: none };
+  const { report } = parsed;
 
   const named = codesToNames(opts.members);
   const parts = new Set<string>(TONES[opts.tone].parts.map((p) => p.key));

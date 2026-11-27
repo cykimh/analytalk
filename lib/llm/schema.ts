@@ -69,7 +69,7 @@ export type DropReason = (typeof DROP_REASONS)[number];
  * - relinked: m번호가 틀려 quote가 든 다른 메시지로 다시 이은 근거 수
  * - requoted(v2.5): 정규화·글자 겹침으로 맞춰 quote를 그 메시지의 원문 글자로 바꾼 근거 수
  * - unquoted(v2.5): 원문과 안 맞아 따옴표 문자만 뗀 글 안 인용 수
- * - calls(v2.5): 나눠 쓴 호출마다 결과(ok 또는 오류 코드: max_tokens·timeout·refused·retryable·fatal·limit·invalid_output·not_started)
+ * - calls(v2.5): 나눠 쓴 호출마다 결과(ok, 자기 몫 섹션이 없으면 empty, 아니면 오류 코드: max_tokens·timeout·refused·retryable·fatal·limit·invalid_output·not_started)
  * - off_stage(v2.5): 다른 호출 몫의 구성이거나 앞 호출과 같은 사람이라 뺀 섹션 수(삭제율에 넣지 않는다)
  */
 export type ValidationChecks = {

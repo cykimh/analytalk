@@ -1,13 +1,11 @@
 // 리포트 한 편을 실행하고 저장한다(runReportJob). 서버 전용. 생성·다시 쓰기 라우트가 after()에서 같은 함수 호출 안에서 부른다.
+// v2.5: 리포트 한 편을 호출 3~4개로 나눠 쓴다(lib/llm/split.ts). 모두 이 함수 호출 안의 Promise로 돌고, 결과는 합쳐서 한 행에 저장한다.
 // 페이로드는 메모리로만 넘긴다. DB·로그에 남기지 않는다.
 import "server-only";
 import { CYCLE_ANCHOR_DAY } from "@/lib/config";
-import { estimateCostUsd } from "@/lib/llm/cost";
-import { salvageReport } from "@/lib/llm/notes";
-import { buildRequest } from "@/lib/llm/prompt";
-import { type RunResult, runReport } from "@/lib/llm/stream";
-import { validateReport } from "@/lib/llm/validate";
-import { type Payload, payloadIndex } from "@/lib/payload/build";
+import { buildRequests } from "@/lib/llm/prompt";
+import { mergeReportCalls, runReportCalls } from "@/lib/llm/split";
+import type { Payload } from "@/lib/payload/build";
 import type { AppRepo } from "./repo";
 import type { HandlerDeps } from "./route";
 
@@ -50,57 +48,11 @@ const failure = (id: string, errorCode: string): Finish => ({
   cost: 0,
 });
 
-function parseJson(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-}
-
-/** 결과 → 저장할 상태·내용·오류 코드. 한도 오류면 먼저 정지 시각을 건다 */
-async function judge(
-  deps: HandlerDeps,
-  payload: Payload,
-  r: RunResult,
-): Promise<{ status: string; content: unknown; errorCode: string | null }> {
-  const validate = (raw: unknown, truncated: boolean) =>
-    validateReport(raw, payloadIndex(payload), payload.stats, { truncated, tone: payload.tone, members: payload.members });
-  /** 끊긴 글에서 완결된 섹션만 살린다. done이어도 partial이다 */
-  const salvage = (raw: string, failedCode: string) => {
-    const v = validate(salvageReport(raw), true);
-    if (v.status === "failed") return { status: "failed", content: null, errorCode: failedCode };
-    return { status: v.status === "done" ? "partial" : v.status, content: v.content, errorCode: null };
-  };
-
-  switch (r.kind) {
-    case "ok": {
-      const v = validate(parseJson(r.raw), false);
-      return { status: v.status, content: v.content, errorCode: v.status === "failed" ? "invalid_output" : null };
-    }
-    case "truncated":
-      return salvage(r.raw, "max_tokens");
-    case "partial":
-      return salvage(r.raw, "timeout");
-    case "refused":
-      // 거절 분류만 남긴다(문구 없는 열거값이라 출력 글·이름이 섞이지 않는다)
-      return { status: "refused", content: null, errorCode: r.stopCategory ? `refusal_${r.stopCategory}` : null };
-    case "error": {
-      let errorCode: string = r.error ?? "fatal";
-      if (r.error === "spend_limit" || r.error === "credit_exhausted") {
-        await deps.repo.setPaused(limitLiftsAt(r.error, new Date(deps.now())));
-        errorCode = "limit";
-      }
-      // 응답이 시작된 뒤 끊겼으면 받은 데까지 살린다(R8)
-      if (r.startedStream && r.raw !== "") return salvage(r.raw, errorCode);
-      return { status: "failed", content: null, errorCode };
-    }
-  }
-}
-
 /**
  * 리포트를 만들어 저장한다. 전제: 리포트는 이미 running이다(startReport·retryReport가 시작했다).
- * 응답 전 일시 오류는 60초 안이면 1번만 다시 한다. 결과는 finishReport 한 번으로 남긴다(usage 한 행 = 유료 실행 한 번).
+ * ①을 먼저 시작하고 ①의 message_start에서 나머지 호출을 동시에 시작한다. 응답 전 일시 오류는 60초 안이면 그 호출만 1번 다시 한다.
+ * 어느 호출이 실패하면 나머지로 partial을 저장한다. 한도 오류(spend_limit·credit_exhausted)면 정지 시각을 건다.
+ * 결과는 finishReport 한 번으로 남긴다(usage는 호출마다 더한 한 행 = 유료 실행 한 번. 다시 쓰기 횟수 규칙이 이 행 수를 센다).
  * deps.fetch(자기 호출)를 쓰지 않는다. 던지지 않는다: 예상 못 한 오류는 failed(internal)로 남긴다
  */
 export async function runReportJob(deps: HandlerDeps, a: { id: string; payload: Payload }): Promise<void> {
@@ -110,31 +62,31 @@ export async function runReportJob(deps: HandlerDeps, a: { id: string; payload: 
       await repo.finishReport(failure(a.id, "not_ready"));
       return;
     }
-    const req = buildRequest(a.payload);
-    const startedAt = deps.now();
+    const calls = buildRequests(a.payload);
     const deadlineAt = deps.deadlineAt();
-
-    const onStreamStart = (model: string) => {
-      if (model !== req.model) console.warn(`[jobs] fallback_on_writer: ${req.model} → ${model}`);
-    };
-    const attempt = () => runReport(client, req, { deadlineAt, onStreamStart, onNotes: (notes) => repo.saveProgress(a.id, notes) });
-
-    let r = await attempt();
-    if (r.kind === "error" && r.error === "retryable" && !r.startedStream && deps.now() - startedAt <= RETRY_WINDOW_MS) {
-      r = await attempt();
-    }
-
-    const verdict = await judge(deps, a.payload, r);
+    const results = await runReportCalls(client, calls, {
+      deadlineAt,
+      now: deps.now,
+      retryWindowMs: RETRY_WINDOW_MS,
+      onNotes: (notes) => repo.saveProgress(a.id, notes),
+      onStreamStart: (part, model, requested) => {
+        if (model !== requested) console.warn(`[jobs] fallback_on_writer(${part}): ${requested} → ${model}`);
+      },
+    });
+    const merged = mergeReportCalls(a.payload, results);
+    if (merged.limit) await repo.setPaused(limitLiftsAt(merged.limit, new Date(deps.now())));
     await repo.finishReport({
       id: a.id,
-      ...verdict,
-      model: r.startedStream ? r.model : null,
-      stopReason: r.stopReason,
-      usage: r.usage,
-      cost: r.usage ? estimateCostUsd(r.usage, r.model) : 0,
+      status: merged.status,
+      content: merged.content,
+      errorCode: merged.errorCode,
+      model: merged.model,
+      stopReason: merged.stopReason,
+      usage: merged.usage,
+      cost: merged.cost,
     });
   } catch (e) {
-    // 오류 문구에 출력 글이 섞일 수 있는 곳(JSON.parse)은 위에서 따로 잡는다. 여기는 DB 오류처럼 문구가 안전한 것들이다
+    // 오류 문구에 출력 글이 섞일 수 있는 곳(JSON.parse)은 split에서 따로 잡는다. 여기는 DB 오류처럼 문구가 안전한 것들이다
     console.error(`[jobs] 리포트 실행 실패: ${e instanceof Error ? e.message : "unknown"}`);
     await repo.finishReport(failure(a.id, "internal")).catch(() => {});
   }
