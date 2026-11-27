@@ -52,6 +52,28 @@ function content(quote: string, statText = false, paragraph?: string, emptyHeadl
   };
 }
 
+/** v2.8 저장 리포트: 케미 온도(인트로)와 민지 사람 섹션(MBTI 추측과 이유) */
+function v28Content() {
+  const base = content("집에서 쉬는 중");
+  return {
+    ...base,
+    chemistry: { score: 78, line: "사흘 내내 저녁 8시에 모인 둘, {{stat:total}}개면 합격이다" },
+    sections: [
+      ...base.sections,
+      {
+        part: "nag_cards",
+        icon: "🙄",
+        title: "민지, 4분 만에 답하는 사람",
+        about: "민지",
+        paragraphs: [{ key: "p1", text: "민지는 늘 4분 뒤에 답한다.", evidence_ids: ["e1"] }],
+        evidence: [{ id: "e1", msg_id: "m1", quote: "집에서 쉬는 중", sender: "민지", at: "2026-10-01T20:04:00+09:00" }],
+        mbti: "INFJ",
+        mbti_reason: "답은 늦지 않게, 말은 아껴서. 속으로 다 계산하는 타입이다.",
+      },
+    ],
+  };
+}
+
 /**
  * 긴 저장 리포트: 섹션 10개 × 문단 5개, 섹션마다 근거 3개(문단 p1·p3·p5가 하나씩 처음 쓴다) = 인용 30개.
  * v2.5 나눠 쓰기를 합친 순서다: ① 인트로(nag_open·nag_room 7개) → ② 개인별(철수·민지) → ③ 마무리(nag_last).
@@ -101,6 +123,8 @@ async function fakeApi(
     notes?: boolean | { range: string; note: string }[];
     tone?: string;
     long?: boolean;
+    /** v2.8: 케미 온도와 사람 섹션(민지, MBTI 추측)을 더한 리포트 */
+    v28?: boolean;
   } = {},
 ) {
   const api = {
@@ -140,7 +164,13 @@ async function fakeApi(
         shared: api.shared,
         report: {
           status: api.status,
-          content: hasContent() ? (o.long ? longContent() : content(o.quote ?? "집에서 쉬는 중", o.statText, o.paragraph, o.emptyHeadline)) : null,
+          content: hasContent()
+            ? o.long
+              ? longContent()
+              : o.v28
+                ? v28Content()
+                : content(o.quote ?? "집에서 쉬는 중", o.statText, o.paragraph, o.emptyHeadline)
+            : null,
           errorCode: errorCode(),
         },
       },
@@ -527,6 +557,38 @@ test.describe("AI 리포트", () => {
     await page.goto(`/c/${ID}/report`);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("둘의 대화 연재");
     expect(await bodyText()).not.toMatch(/\{\{|stat:/);
+  });
+
+  test("v2.8 리포트 화면: 폴라로이드 아래 하이라이트 카드(케미 온도 → 통계), 사람 섹션 제목 아래 MBTI 칩과 이유. 예전 리포트는 통계 카드만", async ({
+    page,
+    context,
+  }) => {
+    await fakeApi(context, "done", { v28: true });
+    await page.goto(`/c/${ID}/report`);
+    const highlights = page.getByRole("region", { name: "한 줄 하이라이트" });
+    // 이름표(dt) 앞의 이모지는 장식이라 글자 끝만 본다
+    await expect(highlights.locator("dt")).toHaveText([/케미 온도$/, /최장 연속 대화$/, /하루 평균$/]);
+    await expect(highlights.locator("dd").first()).toHaveText("78°");
+    // 케미 온도 한 줄의 {{stat:…}}도 채운다
+    await expect(highlights).toContainText("사흘 내내 저녁 8시에 모인 둘, 6개면 합격이다");
+    await expect(highlights).toContainText("3일");
+    // 하이라이트는 #report-capture 안, 폴라로이드 다음·섹션 앞이다
+    await expect(page.locator("#report-capture").getByRole("region", { name: "한 줄 하이라이트" })).toBeVisible();
+    const person = page.locator("section").filter({ has: page.getByRole("heading", { name: "민지, 4분 만에 답하는 사람" }) });
+    await expect(person.getByRole("list", { name: "민지의 유형" }).getByRole("listitem")).toHaveText(["MBTI INFJ"]);
+    await expect(person).toContainText("답은 늦지 않게, 말은 아껴서. 속으로 다 계산하는 타입이다.");
+    // 메시지가 적어(20개 미만) ㅋ 유형은 없다. pair 섹션에는 칩이 없다
+    await expect(page.getByText(/^ㅋ /)).toHaveCount(0);
+    await expect(page.getByRole("list", { name: /의 유형$/ })).toHaveCount(1);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(2);
+    await expect(page.locator(".tape")).toHaveCount(1);
+
+    await fakeApi(context, "done");
+    await page.goto(`/c/${ID}/report`);
+    await expect(page.getByRole("heading", { name: "리포트 헤드라인" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "한 줄 하이라이트" }).locator("dt")).toHaveText([/최장 연속 대화$/, /하루 평균$/]);
+    await expect(page.getByText("케미 온도")).toHaveCount(0);
+    await expect(page.getByText(/^MBTI /)).toHaveCount(0);
   });
 
   test("표지 칩은 말투('잔소리하는 친구')이고, 대화 홈·리포트·미리보기 공유 화면마다 테이프 1개·h1 1개이며, 옛 주소는 404", async ({ page, context }) => {
