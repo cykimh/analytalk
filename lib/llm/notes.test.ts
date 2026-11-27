@@ -13,6 +13,8 @@ const section = (n: number): Report["sections"][number] => ({
     { key: "p2", text: `${n}번째 둘째 문단 {{stat:total}}`, evidence_ids: [] },
   ],
   evidence: [{ id: `e${n}`, msg_id: `m${n}`, quote: `인용${n} \\ 역슬래시` }],
+  mbti: "",
+  mbti_reason: "",
 });
 
 const REPORT: Report = {
@@ -24,6 +26,7 @@ const REPORT: Report = {
   ],
   headline: "저녁 8시의 지도",
   dek: "석 달 동안의 흐름",
+  chemistry: { score: 73, line: "석 달 내내 저녁 8시에 모인 {둘}" },
   sections: [section(1), section(2), section(3), section(4)],
 };
 
@@ -97,6 +100,12 @@ describe("salvageReport", () => {
     expect(r?.sections?.[2].evidence).toEqual([{ id: "e3", msg_id: "m3", quote: "인용3 \\ 역슬래시" }]);
     expect(r?.safety).toEqual({ flag: "none" });
     expect(r?.headline).toBe(REPORT.headline);
+  });
+
+  it("v2.8: 케미 온도는 섹션 앞이라 섹션 가운데서 끊겨도 남는다", () => {
+    const r = salvageReport(full.slice(0, full.indexOf('"title":"섹션2"')));
+    expect(r?.chemistry).toEqual(REPORT.chemistry);
+    expect(r?.sections).toEqual([section(1)]);
   });
 
   it("첫 섹션 근거 중간에서 끊기면 섹션 0개", () => {

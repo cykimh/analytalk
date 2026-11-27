@@ -7,7 +7,7 @@
 //   기다린 뒤가 재시도 창이나 마감을 넘으면 다시 하지 않는다. ①이 끝내 응답을 시작하지 못하면 나머지는 시작하지 않는다(캐시 없이 셋이 쓰면 원가가 세 배).
 // 합치기: 호출마다 구조를 보고(끊긴 것은 완결 섹션만 살려) ①→②→③ 순서로 섹션을 붙이고 한 번 검증한다(인용 몫·마무리 몫·삭제율이 리포트 단위다).
 //   어느 호출이든 safety면 safety. 실패한 호출의 몫은 빠지고 partial이다. 다른 호출 몫의 섹션(다른 자리의 구성, 다른 개인별 호출이 맡은 사람)은 뺀다.
-//   headline·dek·reading_notes는 ①의 것이다. usage는 호출마다 더하고 원가는 호출마다 계산해 더한다(원장 한 행 = 실행 한 번).
+//   headline·dek·reading_notes·chemistry(v2.8 케미 온도)는 ①의 것이다. usage는 호출마다 더하고 원가는 호출마다 계산해 더한다(원장 한 행 = 실행 한 번).
 // 출력 원문·대화 내용은 로그에 남기지 않는다.
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -252,6 +252,8 @@ export function mergeReportCalls(payload: Payload, results: CallResult[]): Merge
     reading_notes: intro?.reading_notes ?? [],
     headline: intro?.headline ?? "",
     dek: intro?.dek ?? "",
+    // v2.8: 케미 온도는 ①이 맡는다(다른 응답이 쓴 것은 버린다). MBTI는 개인별 응답의 사람 섹션에 붙어 온다
+    chemistry: intro?.chemistry ?? null,
     sections,
   };
   const v = validateReport(raw, payloadIndex(payload), payload.stats, {

@@ -38,6 +38,8 @@ const sec = (title: string, paragraphs: Paragraph[], evidence: Section["evidence
   about,
   paragraphs,
   evidence,
+  mbti: "",
+  mbti_reason: "",
 });
 const report = (sections: Section[], extra: Partial<Report> = {}): Report => ({
   safety: { flag: "none" },
@@ -45,6 +47,7 @@ const report = (sections: Section[], extra: Partial<Report> = {}): Report => ({
   reading_notes: [{ range: "10-01~10-03", note: "사흘 동안 저녁마다 이야기했다" }],
   headline: "저녁 8시의 대화",
   dek: "사흘 동안의 흐름",
+  chemistry: null,
   sections,
   ...extra,
 });
@@ -995,6 +998,122 @@ describe("validateReport", () => {
       );
       expect(r.content?.sections[0].paragraphs[0].text).toContain('"집에서 쉬는 중 넷플릭스 보는 중이야"');
       expect(r.content?.checks).toMatchObject({ unquoted: 0 });
+    });
+  });
+
+  // v2.8: 인트로 호출이 매기는 케미 온도(chemistry)와 개인별 호출이 쓰는 사람 섹션의 MBTI 추측. 범위·형식만 보고, 틀린 항목만 버린다
+  describe("v2.8 케미 온도·MBTI", () => {
+    const person = (name: string, mbti: string, mbti_reason = "") => ({
+      ...sec(`${name} 카드`, [para("p1", `${name}는 저녁마다 짧게 답했다`)], [], name, "nag_cards"),
+      mbti,
+      mbti_reason,
+    });
+    const base = (over: Record<string, unknown> = {}, sections: Section[] = [sec("저녁", [para("p1", "저녁마다 이야기가 이어졌다")])]) =>
+      run(report(sections, over as Partial<Report>));
+
+    it("0~100 정수 점수와 한 줄은 그대로 저장한다(한 줄의 {{stat:…}}·판정·점수 말도 된다)", () => {
+      const r = base({ chemistry: { score: 78, line: "케미 온도 78도, 탐정의 감으로는 이미 한 팀이다" } });
+      expect(r.status).toBe("done");
+      expect(r.content?.chemistry).toEqual({ score: 78, line: "케미 온도 78도, 탐정의 감으로는 이미 한 팀이다" });
+      expect(base({ chemistry: { score: 0, line: "" } }).content?.chemistry).toEqual({ score: 0, line: "" });
+      expect(base({ chemistry: { score: 100, line: "{{stat:total}}개 내내 붙어 다녔다" } }).content?.chemistry?.line).toBe("{{stat:total}}개 내내 붙어 다녔다");
+    });
+
+    it("점수가 범위 밖·소수·숫자가 아니거나 모양이 틀리면 케미 온도만 버리고(chemistry_invalid) 리포트는 그대로다", () => {
+      for (const chemistry of [{ score: 101, line: "x" }, { score: -1, line: "x" }, { score: 78.5, line: "x" }, { score: "78", line: "x" }, { line: "x" }, "78", 78]) {
+        const r = base({ chemistry });
+        expect(r.status, JSON.stringify(chemistry)).toBe("done");
+        expect(r.content).not.toHaveProperty("chemistry");
+        expect(r.content?.checks?.dropped_by).toEqual({ chemistry_invalid: 1 });
+      }
+    });
+
+    it("null이거나 없으면(맡지 않은 응답·예전 출력) 케미 온도 없이 저장하고 세지 않는다", () => {
+      for (const over of [{ chemistry: null }, { chemistry: undefined }]) {
+        const r = base(over);
+        expect(r.status).toBe("done");
+        expect(r.content).not.toHaveProperty("chemistry");
+        expect(r.content?.checks?.dropped_by).toEqual({});
+      }
+    });
+
+    it("한 줄이 80자를 넘거나 금지 표현·개인정보·풀리지 않는 자리표시자가 들면 한 줄만 비운다. 원문에 없는 따옴표는 뗀다", () => {
+      const line = (text: string) => base({ chemistry: { score: 64, line: text } }).content?.chemistry;
+      expect(line("가".repeat(81))).toEqual({ score: 64, line: "" });
+      expect(line("가".repeat(80))).toEqual({ score: 64, line: "가".repeat(80) });
+      expect(line("철수는 게이다")).toEqual({ score: 64, line: "" });
+      expect(line("케미 64%")).toEqual({ score: 64, line: "" });
+      expect(line("연락은 010-1234-5678로")).toEqual({ score: 64, line: "" });
+      expect(line("{{stat:nope}} 만큼 붙어 있다")).toEqual({ score: 64, line: "" });
+      expect(line('민지는 "사랑해"라고 했다')).toEqual({ score: 64, line: "민지는 사랑해라고 했다" });
+    });
+
+    it("사람 섹션의 MBTI: 네 글자 E/I·N/S·T/F·J/P만 남긴다. 앞뒤 공백·소문자는 고쳐 읽는다", () => {
+      const r = run(report([person("철수", "ENFP", "영화 제안부터 하는 걸 보니 즉흥형이다"), person("민지", " istj ")]));
+      expect(r.status).toBe("done");
+      const [a, b] = r.content!.sections;
+      expect([a.mbti, a.mbti_reason]).toEqual(["ENFP", "영화 제안부터 하는 걸 보니 즉흥형이다"]);
+      expect(b.mbti).toBe("ISTJ");
+      expect(b).not.toHaveProperty("mbti_reason");
+      expect(r.content?.checks?.dropped_by).toEqual({});
+    });
+
+    it("모양이 틀린 MBTI는 그 사람의 MBTI·이유만 버리고(mbti_invalid) 섹션은 남긴다", () => {
+      for (const mbti of ["ENFX", "ENFPT", "엔프피", "E N F P", "INFJ-A"]) {
+        const r = run(report([person("철수", mbti, "이유 한 줄")]));
+        expect(r.status, mbti).toBe("done");
+        const s = r.content!.sections[0];
+        expect(s.paragraphs).toHaveLength(1);
+        expect(s, mbti).not.toHaveProperty("mbti");
+        expect(s).not.toHaveProperty("mbti_reason");
+        expect(r.content?.checks?.dropped_by).toEqual({ mbti_invalid: 1 });
+      }
+    });
+
+    it("이유가 80자를 넘거나 금지 표현이 들면 이유만 비운다(MBTI는 남는다). 성격 유형·진단명 꼬리표는 남는다", () => {
+      const reason = (text: string) => run(report([person("철수", "INTP", text)])).content!.sections[0];
+      expect(reason("가".repeat(81))).not.toHaveProperty("mbti_reason");
+      expect(reason("가".repeat(81)).mbti).toBe("INTP");
+      expect(reason("철수는 동성애자인 것 같다")).not.toHaveProperty("mbti_reason");
+      expect(reason("답장 늦는 걸 보니 내향형 확정, 회피형 성격이다").mbti_reason).toBe("답장 늦는 걸 보니 내향형 확정, 회피형 성격이다");
+    });
+
+    it("사람이 아닌 섹션(pair·group)과 빈 MBTI에는 MBTI가 없다(세지 않는다)", () => {
+      const r = run(
+        report([{ ...sec("둘", [para("p1", "저녁마다 이야기가 이어졌다")]), mbti: "ENFP", mbti_reason: "둘 다 즉흥형" }, person("민지", "", "이유만 있다")]),
+      );
+      for (const s of r.content!.sections) {
+        expect(s).not.toHaveProperty("mbti");
+        expect(s).not.toHaveProperty("mbti_reason");
+      }
+      expect(r.content?.checks?.dropped_by).toEqual({});
+    });
+
+    it("about에 범례 기호를 쓴 사람 섹션도 그 사람의 MBTI로 남긴다", () => {
+      const code = memberCodes(members)[members.indexOf("철수")];
+      const r = run(report([{ ...person("철수", "ESTP"), about: code }]));
+      expect(r.content?.sections[0]).toMatchObject({ about: "철수", mbti: "ESTP" });
+    });
+
+    it("예전 모양 출력(chemistry·mbti 필드 없음)도 그대로 done이고, 저장한 섹션에 빈 MBTI 키가 없다", () => {
+      const old = {
+        safety: { flag: "none" },
+        declined_topics: [],
+        reading_notes: [],
+        headline: "h",
+        dek: "d",
+        sections: [{ part: "nag_cards", icon: "🙄", title: "철수", about: "철수", paragraphs: [{ key: "p1", text: "철수는 저녁마다 짧게 답했다", evidence_ids: [] }], evidence: [] }],
+      };
+      const r = run(old);
+      expect(r.status).toBe("done");
+      expect(r.content).not.toHaveProperty("chemistry");
+      expect(Object.keys(r.content!.sections[0]).sort()).toEqual(["about", "evidence", "icon", "paragraphs", "part", "title"]);
+    });
+
+    it("mbti가 문자열이 아니면(모양 오류) 그 섹션의 MBTI만 없고 리포트는 failed가 되지 않는다", () => {
+      const r = run(report([{ ...person("철수", ""), mbti: 7 as unknown as string, mbti_reason: null as unknown as string }]));
+      expect(r.status).toBe("done");
+      expect(r.content?.sections[0]).not.toHaveProperty("mbti");
     });
   });
 

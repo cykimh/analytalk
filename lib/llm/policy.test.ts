@@ -189,3 +189,54 @@ describe("표현 정책(v2.5: 넷만 지운다)", () => {
     expect(kept(s)).toBe(false);
   });
 });
+
+// v2.8: 케미 온도(점수 + 한 줄)와 MBTI 추측(성격 유형 + 이유)은 v2.4 Fix 1(호감·케미 점수)·v2.5(성격 유형 꼬리표)로 이미 풀린 판정이다.
+// 같은 금지 넷과 글자로 쓴 %만 그 한 줄을 비운다(점수·MBTI 자체는 남는다)
+describe("표현 정책 v2.8: 케미 온도·MBTI", () => {
+  /** 철수 섹션에 MBTI와 이유, 리포트에 케미 온도를 넣고 검증 뒤에 남은 것 */
+  function judged(line: string, reason: string) {
+    const raw = {
+      safety: { flag: "none" },
+      declined_topics: [],
+      reading_notes: [],
+      headline: "사건",
+      dek: "보고서",
+      chemistry: { score: 92, line },
+      sections: [
+        {
+          part: "case_people",
+          icon: "🔎",
+          title: "철수",
+          about: "철수",
+          paragraphs: [{ key: "p1", text: "철수는 저녁마다 영화를 권한다.", evidence_ids: ["e1"] }],
+          evidence: [{ id: "e1", msg_id: "m0", quote: "오늘 뭐해?" }],
+          mbti: "ENFP",
+          mbti_reason: reason,
+        },
+      ],
+    };
+    const r = validateReport(raw, index, payload.stats, { truncated: false, tone: "detective", members: payload.members });
+    return { chemistry: r.content?.chemistry, person: r.content?.sections[0] };
+  }
+
+  it.each([
+    ["케미 온도 92도. 탐정의 감으로는 이미 사귀는 사이다.", "영화부터 권하는 걸 보니 즉흥형, 사실은 민지를 좋아하는 게 분명하다."],
+    ["호감 순위 1위끼리 붙었다. 만점에 가깝다.", "누가 봐도 ENFP다. 계획은 없고 감만 있다."],
+    ["이 방 케미는 만렙이다.", "회피형 성격이라 답장이 늦다. 탐정의 진단이다."],
+  ])("남는다: %s / %s", (line, reason) => {
+    const { chemistry, person } = judged(line, reason);
+    expect(chemistry).toEqual({ score: 92, line });
+    expect(person).toMatchObject({ mbti: "ENFP", mbti_reason: reason });
+  });
+
+  it.each([
+    ["둘은 케미 92%다.", "답장 비율이 70%라서 외향형이다."],
+    ["철수는 게이라서 케미가 좋다.", "민지는 동성애자인 것 같다."],
+    ["둘은 오늘 밤 뜨거운 밤을 보낼 거다.", "여자라서 계획이 없다."],
+  ])("한 줄만 비운다(점수·MBTI는 남는다): %s / %s", (line, reason) => {
+    const { chemistry, person } = judged(line, reason);
+    expect(chemistry).toEqual({ score: 92, line: "" });
+    expect(person?.mbti).toBe("ENFP");
+    expect(person).not.toHaveProperty("mbti_reason");
+  });
+});

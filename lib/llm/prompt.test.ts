@@ -139,7 +139,7 @@ describe("CONCEPTS·TONES", () => {
 
 describe("buildRequest", () => {
   it("PROMPT_VERSION", () => {
-    expect(PROMPT_VERSION).toBe("2026-11-report-11");
+    expect(PROMPT_VERSION).toBe("2026-11-report-12");
   });
 
   it("기본값(호출마다): Sonnet 5.5, max_tokens 32000, effort medium, adaptive thinking, 서버 측 fallback, 데이터 블록에 cache_control(ephemeral)", () => {
@@ -213,10 +213,10 @@ describe("buildRequest", () => {
     const p = hugePayload("fact");
     const last = (part: CallPart) => ins(p, part).split("\n").at(-1)!;
     expect(last("intro")).toBe(
-      "이번 응답: [1. 인트로 종합 리포트]의 섹션 2개(nag_open, nag_room)만 쓴다. 개인별·마무리 섹션은 쓰지 않는다. 인트로는 방 전체의 장면·습관·흐름을 쓰고, 한 사람을 깊게 다루는 이야기는 개인별 응답에 남긴다. headline·dek와 reading_notes(12개 이하)도 이 응답이 쓴다.",
+      "이번 응답: [1. 인트로 종합 리포트]의 섹션 2개(nag_open, nag_room)만 쓴다. 개인별·마무리 섹션은 쓰지 않는다. 인트로는 방 전체의 장면·습관·흐름을 쓰고, 한 사람을 깊게 다루는 이야기는 개인별 응답에 남긴다. headline·dek와 reading_notes(12개 이하), chemistry(케미 온도)도 이 응답이 쓴다.",
     );
     for (const part of ["people", "people_rest", "outro"] as const) {
-      expect(last(part)).toContain('headline·dek는 빈 글(""), reading_notes는 빈 배열로 둔다.');
+      expect(last(part)).toContain('headline·dek는 빈 글(""), reading_notes는 빈 배열, chemistry는 null로 둔다.');
     }
     expect(last("outro")).toContain("이번 응답: [3. 마무리 리포트]의 섹션 1개(nag_last)만 쓴다. 인트로·개인별 섹션은 쓰지 않는다.");
     // 다른 몫의 구성은 이름만 보이고 구성 줄은 없다
@@ -330,6 +330,42 @@ describe("buildRequest", () => {
     expect(s).toContain("67%");
   });
 
+  it("v2.8: 케미 온도(chemistry)는 0~100 정수 점수 + 한 줄이고 null도 된다. 스키마에 범위·모양 제약은 없다(검증이 본다)", () => {
+    type Obj = { type?: string; properties?: Record<string, Obj>; required?: string[]; anyOf?: Obj[]; $ref?: string; description?: string };
+    const schema = buildRequest(payload()).output_config?.format?.schema as Obj & { $defs?: Record<string, Obj> };
+    const chemistry = schema.properties!.chemistry;
+    expect(chemistry.anyOf).toHaveLength(2);
+    expect(chemistry.anyOf![1]).toEqual({ type: "null" });
+    const ref = chemistry.anyOf![0].$ref ?? "";
+    const def = ref.startsWith("#/$defs/") ? schema.$defs![ref.slice("#/$defs/".length)] : chemistry.anyOf![0];
+    expect(Object.keys(def.properties!)).toEqual(["score", "line"]);
+    expect(def.required).toEqual(["score", "line"]);
+    expect(def.properties!.score.type).toBe("number");
+    expect(def.properties!.line.type).toBe("string");
+    // 범위·모양 제약(SDK가 설명 글로 바꾸는 min/max 포함)은 없다
+    expect(JSON.stringify(def)).not.toMatch(/minimum|maximum|pattern|9007199254740991/);
+    expect(JSON.stringify(schema.properties!.sections)).not.toMatch(/pattern|minimum/);
+  });
+
+  it("v2.8: system이 케미 온도·MBTI를 알리고, 인트로만 chemistry를, 개인별만 사람 섹션의 mbti를 쓴다", () => {
+    const s = systemOf(buildRequest(payload()));
+    expect(s).toContain("- chemistry: 이 방(1:1이면 두 사람)의 케미 온도. score는 컨셉 인물이 0~100 정수로 매긴 점수");
+    expect(s).toContain("지시가 맡긴 응답만 쓰고 맡지 않은 응답은 null");
+    expect(s).toContain("  - mbti·mbti_reason: about이 참여자인 개인별 섹션에만 쓴다.");
+    expect(s).toContain("E/I·N/S·T/F·J/P, 예: ENFP");
+    expect(s).toContain('그 밖의 섹션은 둘 다 빈 글("")');
+    for (const p of [payload(), hugePayload("show"), longPair("detective")]) {
+      const calls = buildRequests(p);
+      for (const c of calls) {
+        const last = instructionOf(c.req).split("\n").at(-1)!;
+        if (c.part === "intro") expect(last).toContain("chemistry(케미 온도)도 이 응답이 쓴다.");
+        else expect(last).toContain("chemistry는 null로 둔다.");
+        if (c.part === "people" || c.part === "people_rest") expect(last).toContain("사람마다 그 섹션의 mbti·mbti_reason에 그 사람의 MBTI 추측과 이유를 쓴다");
+        else expect(last).not.toContain("mbti");
+      }
+    }
+  });
+
   it("system(v2.4 Fix 1·v2.5): 관점과 판정. 속마음·호감·점수·놀림·욕·진단명 꼬리표까지 인물의 판단으로(틀려도 좋다), 금지는 넷뿐", () => {
     const s = systemOf(buildRequest(payload()));
     expect(s).toContain("## 관점과 판정");
@@ -342,11 +378,13 @@ describe("buildRequest", () => {
     // 2026-11-27 사용자 "3번에서 막던 건 막지 말자": 속마음·호감·연애 감정, 점수·순위, 놀림·디스·별명, 친구끼리 욕도 된다
     expect(s).toContain("판정할 것에 제한을 두지 않는다");
     expect(s).toContain("탐정의 결론: <이름>은 <이름>을 좋아한다. 증거는 부족하지만 감은 확실하다");
+    // v2.8: MBTI 추측은 금지 목록이 아니라 출력 항목이다(2026-11-27 사용자 승인). 금지 목록에는 없다
+    expect(s.split("## 금지 (이 넷만 막는다)\n")[1].split("\n이런 표현이")[0]).not.toContain("MBTI");
     for (const ok of ["호감·케미 점수와 순위", "성격 유형·진단명 같은 꼬리표", "외모 놀림", "친구끼리 웃자고 하는 놀림·디스·별명", "친구끼리 쓰는 정도의 욕까지 된다", "속마음·호감·연애 감정·의도까지 인물의 관점에서 추측하거나 단정해도 된다(틀려도 좋다)"]) {
       expect(s).toContain(ok);
     }
     expect(s).toContain("따옴표에 넣지 않는다: 따옴표 안은 실제로 오간 말뿐이다");
-    for (const gone of ["누구의 속마음·의도·감정도 단정하거나 추측하지 않는다", "누구의 속마음 단정·추측", "애정·관심·호감 점수", "외모 평가, 비속어, 모욕", "MBTI"]) {
+    for (const gone of ["누구의 속마음·의도·감정도 단정하거나 추측하지 않는다", "누구의 속마음 단정·추측", "애정·관심·호감 점수", "외모 평가, 비속어, 모욕"]) {
       expect(s).not.toContain(gone);
     }
     // v2.5: 계속 막는 넷(R28): 혐오·차별, 자해·폭력 부추김, 멤버에 대한 성적 묘사, 멤버의 성적 지향 단정
@@ -577,7 +615,7 @@ describe("buildRequest", () => {
     expect(ins(small, "intro")).toContain("이번 응답의 본문(문단 글)은 적어도 500자, 많아야 1,200자다. 근거 인용은 섹션마다 1~2개, 이번 응답 전체 2개 이하.");
     expect(ins(small, "intro")).toContain("- nag_open 「첫 잔소리」: 섹션 하나, about은 group(1:1이면 pair), 문단 2~3개. ");
     expect(allIns(small).join("\n")).not.toContain("- nag_room ");
-    expect(ins(small, "intro")).toContain("reading_notes(6개 이하)도 이 응답이 쓴다");
+    expect(ins(small, "intro")).toContain("reading_notes(6개 이하), chemistry(케미 온도)도 이 응답이 쓴다");
     for (const body of allIns(small)) {
       expect(body).toContain("숫자는 양념: 통계 자리표시자는 섹션마다 0~1개");
       expect(body).toContain("재료: 보낸 대화가 6개로 많지 않다. 구성 설명에 적힌 개수(문단·잔소리·장면·상)는 상한으로 보고 대화에 있는 만큼만 쓴다.");
@@ -834,11 +872,14 @@ describe("buildRequest", () => {
       properties: Record<string, { items?: { properties: Record<string, { items?: { properties: object } }> } }>;
       required: string[];
     };
-    const top = ["safety", "declined_topics", "reading_notes", "headline", "dek", "sections"];
+    // v2.8: 케미 온도는 섹션 앞(끊긴 응답에서도 남게), MBTI는 섹션 끝(문단을 다 쓴 뒤에 추측한다). 모두 required다
+    const top = ["safety", "declined_topics", "reading_notes", "headline", "dek", "chemistry", "sections"];
     expect(Object.keys(schema.properties)).toEqual(top);
     expect(schema.required).toEqual(top);
     const section = schema.properties.sections.items!.properties;
-    expect(Object.keys(section)).toEqual(["part", "icon", "title", "about", "paragraphs", "evidence"]);
+    const sectionKeys = ["part", "icon", "title", "about", "paragraphs", "evidence", "mbti", "mbti_reason"];
+    expect(Object.keys(section)).toEqual(sectionKeys);
+    expect((schema.properties.sections.items as unknown as { required: string[] }).required).toEqual(sectionKeys);
     expect(Object.keys(section.paragraphs.items!.properties)).toEqual(["key", "text", "evidence_ids"]);
     expect(Object.keys(section.evidence.items!.properties)).toEqual(["id", "msg_id", "quote"]);
     expect(Object.keys(schema.properties.reading_notes.items!.properties)).toEqual(["range", "note"]);

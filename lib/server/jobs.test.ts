@@ -467,6 +467,38 @@ describe("runReportJob (v2.5 나눠 쓰기: ① 인트로 → ② 개인별 → 
     expect(c.checks?.off_stage).toBe(1);
   });
 
+  it("v2.8: 케미 온도는 ① 인트로의 것만, MBTI는 ② 개인별의 사람 섹션 것만 저장한다(다른 응답이 쓴 케미 온도·모양이 틀린 MBTI는 버린다)", async () => {
+    const person = (name: string, mbti: string) => ({
+      ...stageJson("people").sections.find((x: { about: string }) => x.about === name)!,
+      mbti,
+      mbti_reason: `${name}는 저녁마다 먼저 움직인다`,
+    });
+    const blank = { reading_notes: [], headline: "", dek: "" };
+    const s = await setup((p) =>
+      staged(p, {
+        intro: whole(JSON.stringify(stageJson("intro", { chemistry: { score: 81, line: "사흘 내내 같은 시간에 모인 둘" } }))),
+        people: whole(JSON.stringify(reportJson({ ...blank, chemistry: { score: 5, line: "개인별이 쓴 점수" }, sections: [person("철수", "estp"), person("민지", "ENFX")] }))),
+        outro: whole(JSON.stringify(stageJson("outro", { chemistry: { score: 99, line: "마무리가 쓴 점수" } }))),
+      }),
+    );
+    await s.run();
+    expect((await s.report()).status).toBe("done");
+    const c = await s.content();
+    expect(c.chemistry).toEqual({ score: 81, line: "사흘 내내 같은 시간에 모인 둘" });
+    const [, chulsoo, minji] = c.sections;
+    expect([chulsoo.about, chulsoo.mbti, chulsoo.mbti_reason]).toEqual(["철수", "ESTP", "철수는 저녁마다 먼저 움직인다"]);
+    expect(minji.about).toBe("민지");
+    expect(minji).not.toHaveProperty("mbti");
+    expect(c.checks?.dropped_by).toEqual({ mbti_invalid: 1 });
+  });
+
+  it("v2.8: 인트로가 케미 온도를 쓰지 않았거나 빠졌으면(실패) 케미 온도 없이 저장한다", async () => {
+    const s = await setup((p) => staged(p, { intro: whole("JSON이 아닌 응답") }));
+    await s.run();
+    expect((await s.report()).status).toBe("partial");
+    expect(await s.content()).not.toHaveProperty("chemistry");
+  });
+
   it("②·③이 message_start에서 캐시를 읽지 못했으면(cache_read 0) 몫 이름만 남겨 알린다(리뷰 minor 1)", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const s = await setup((p) => staged(p, { outro: whole(JSON.stringify(stageJson("outro"))) }));

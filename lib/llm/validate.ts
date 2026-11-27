@@ -24,6 +24,9 @@
 //   글자 그대로 → 정규화 순으로 보고, 맞은 메시지의 번호·보낸 사람·시각·원문으로 바꿔 넣는다(말풍선은 늘 실제 메시지 하나다. relink로 세지 않는다).
 //   모델이 줄 머리를 그대로 옮긴 m<id>+<k>는 m<id>로 읽는다. 접은 미디어·반응 칸은 payloadIndex에 없어 근거가 되지 않는다.
 // 나머지 모델 글(headline·dek·제목)도 같은 검사(금지 표현·개인정보·글자 수)에 걸리면 비운다. icon·about·part는 허용 모양만 남긴다.
+// v2.8: 케미 온도(chemistry: 0~100 정수 점수 + 한 줄)와 사람 섹션의 MBTI 추측(mbti: ^[EI][NS][TF][JP]$, mbti_reason: 한 줄)은 범위·모양만 본다.
+//   틀리면 그 항목만 버리고(chemistry_invalid·mbti_invalid) 리포트·섹션은 그대로 둔다. 한 줄들은 제목과 같은 검사(따옴표·금지 표현·개인정보·글자 수)와
+//   자리표시자 검사에 걸리면 비운다. 점수·성격 유형 판정 자체는 v2.4 Fix 1·v2.5 정책대로 막지 않는다(금지 넷과 글자로 쓴 %만 막는다).
 // 자리표시자 경로 속 범례 기호(A, B…)는 표시 이름으로 바꾼다(모델이 줄의 기호를 그대로 옮겨 쓴 경우).
 import "server-only";
 import { MAX_QUOTES_PER_REPORT, PARTIAL_DROP_RATIO } from "@/lib/config";
@@ -35,7 +38,7 @@ import { resolveStat } from "@/lib/stats/paths";
 import { type Tone, TONES } from "./concepts";
 import { sanitizeNotes } from "./notes";
 import { matchesSpeech, normalizeQuote, OVERLAP_MIN, originalSpan, overlapRatio, type SpeechIndex, speechIndex } from "./quoteMatch";
-import { DECLINED_TOPICS, type DropReason, type Report, reportSchema, type StoredReport, type ValidationChecks } from "./schema";
+import { type Chemistry, DECLINED_TOPICS, type DropReason, type Report, reportSchema, type StoredReport, type ValidationChecks } from "./schema";
 
 type Index = ReturnType<typeof payloadIndex>;
 type IndexLine = Index extends Map<string, infer L> ? L : never;
@@ -61,14 +64,17 @@ const PLACEHOLDER = /\{\{([^{}]*)\}\}/g;
 const STAT = "stat:";
 
 /** 잘린 응답에서 빠졌을 수 있는 뒤쪽 필드의 기본값. safety는 기본값이 없다(없으면 failed) */
-const TRUNCATED_DEFAULTS = { declined_topics: [], reading_notes: [], headline: "", dek: "", sections: [] };
+const TRUNCATED_DEFAULTS = { declined_topics: [], reading_notes: [], headline: "", dek: "", chemistry: null, sections: [] };
+
+/** MBTI 추측(v2.8): E/I·N/S·T/F·J/P 네 글자. 앞뒤 공백·소문자는 고쳐 읽는다 */
+const MBTI = /^[EI][NS][TF][JP]$/;
 
 /** 모델 글의 글자 수 상한(코드 포인트). 넘으면 자르지 않고 비운다(자르면 자리표시자가 반쪽이 될 수 있다). system 프롬프트도 알린다 */
 /**
  * v2.2: 문단이 3~4문장(120~200자)으로 길어져 문단 상한을 800 → 1000자로 올렸다.
  * v2.3: 문단 지시가 4~7문장 250~400자로 길어져 1000 → 1200자(지시 위쪽 끝 400자의 세 배 여유)
  */
-export const MAX_CHARS = { headline: 80, dek: 200, title: 60, paragraph: 1200, icon: 8 } as const;
+export const MAX_CHARS = { headline: 80, dek: 200, title: 60, paragraph: 1200, icon: 8, chemistryLine: 80, mbtiReason: 80 } as const;
 const length = (text: string) => Array.from(text).length;
 
 /** 마지막 구성(마무리) 섹션 몫으로 따로 남겨 두는 근거 수. 그 섹션이 쓰는 만큼만(많아야 이만큼) 남긴다 */
@@ -232,6 +238,11 @@ function clean(text: string, max: number, stats: ChatStats, corpus: Corpus, memb
   checks.unquoted += fixed.unquoted;
   return fixed.text;
 }
+/** 케미 온도 한 줄·MBTI 이유(v2.8): 풀리지 않는 자리표시자가 있으면 비우고, 나머지는 제목처럼(clean) */
+function cleanLine(text: string, max: number, stats: ChatStats, corpus: Corpus, members: string[], checks: ValidationChecks): string {
+  if (placeholderCount(text, stats) === null) return "";
+  return clean(text, max, stats, corpus, members, checks);
+}
 /** 이모지 몇 글자만. 글자·숫자가 들었으면(문장을 넣었으면) 비운다 */
 const cleanIcon = (icon: string) => {
   const t = icon.trim();
@@ -270,10 +281,15 @@ function rawSafetyFlag(raw: unknown): string | null {
   return raw.safety.flag.trim().toLowerCase();
 }
 
+/** 케미 온도의 모양(정수 점수 + 글). 범위(0~100)는 validateReport가 본다 */
+const isChemistryShape = (v: unknown): v is Chemistry =>
+  isRecord(v) && typeof v.score === "number" && Number.isInteger(v.score) && typeof v.line === "string";
+
 /**
  * 구조 검사 전 손질. truncated면 빠진 뒤쪽 필드에 기본값을 넣는다. safety는 정리한 "none"으로 맞춘다.
  * declined_topics는 참고용이고 API가 enum을 강제하지 않으므로, 모르는 값은 버린다.
- * part가 없는 섹션(v1 모양 출력)은 part를 ""로 둔다(구성 키는 뒤에서 어차피 정리한다)
+ * part가 없는 섹션(v1 모양 출력)은 part를 ""로 둔다(구성 키는 뒤에서 어차피 정리한다).
+ * v2.8: 케미 온도·MBTI는 그 항목만 버리면 되므로 모양이 틀리거나 없으면(예전 출력) chemistry는 null, mbti·mbti_reason은 ""로 둔다(리포트가 failed가 되지 않게)
  */
 function prepare(raw: unknown, truncated: boolean): unknown {
   if (!isRecord(raw)) return raw;
@@ -282,8 +298,18 @@ function prepare(raw: unknown, truncated: boolean): unknown {
   if (Array.isArray(obj.declined_topics)) {
     obj.declined_topics = obj.declined_topics.filter((t) => (DECLINED_TOPICS as readonly unknown[]).includes(t));
   }
+  if (!isChemistryShape(obj.chemistry)) obj.chemistry = null;
   if (Array.isArray(obj.sections)) {
-    obj.sections = obj.sections.map((s) => (isRecord(s) && s.part === undefined ? { ...s, part: "" } : s));
+    obj.sections = obj.sections.map((s) =>
+      isRecord(s)
+        ? {
+            ...s,
+            part: s.part === undefined ? "" : s.part,
+            mbti: typeof s.mbti === "string" ? s.mbti : "",
+            mbti_reason: typeof s.mbti_reason === "string" ? s.mbti_reason : "",
+          }
+        : s,
+    );
   }
   return obj;
 }
@@ -472,6 +498,14 @@ export function validateReport(
   );
   let paragraphsOut = 0;
   let evidenceOut = 0;
+  /** 사람 섹션의 MBTI(대문자 네 글자). 빈 글이면 null, 모양이 틀리면 mbti_invalid로 세고 null */
+  const mbtiOf = (raw: string): string | null => {
+    const t = raw.trim().toUpperCase();
+    if (t === "") return null;
+    if (MBTI.test(t)) return t;
+    drop("mbti_invalid");
+    return null;
+  };
   const sections: StoredSection[] = judged.map((j) => {
     const closing = isClosing(j);
     const budget = closing ? quotesLeft : quotesLeft - reserveLeft;
@@ -482,21 +516,38 @@ export function validateReport(
     if (closing) reserveLeft = Math.max(0, reserveLeft - evidence.length);
     paragraphsOut += j.paragraphs.length;
     evidenceOut += evidence.length;
+    // v2.8: MBTI는 사람 섹션에만 남긴다(pair·group 섹션에 쓴 것은 세지 않고 버린다). 이유는 MBTI가 남을 때만
+    const { mbti: rawMbti, mbti_reason: rawReason, ...section } = j.section;
+    const mbti = j.aboutPerson ? mbtiOf(rawMbti) : null;
+    const reason = mbti === null ? "" : cleanLine(named(rawReason), MAX_CHARS.mbtiReason, stats, corpus, opts.members, checks);
     return {
-      ...j.section,
-      part: parts.has(j.section.part) ? j.section.part : "",
-      icon: cleanIcon(j.section.icon),
-      title: clean(named(j.section.title), MAX_CHARS.title, stats, corpus, opts.members, checks),
-      about: ABOUT_FIXED.has(j.section.about) || j.aboutPerson ? j.section.about : "group",
+      ...section,
+      part: parts.has(section.part) ? section.part : "",
+      icon: cleanIcon(section.icon),
+      title: clean(named(section.title), MAX_CHARS.title, stats, corpus, opts.members, checks),
+      about: ABOUT_FIXED.has(section.about) || j.aboutPerson ? section.about : "group",
       paragraphs: j.paragraphs.map((p, i) => ({ ...p, key: `p${i + 1}`, evidence_ids: p.evidence_ids.filter((id) => kept.has(id)) })),
       evidence,
+      ...(mbti === null ? {} : { mbti }),
+      ...(reason === "" ? {} : { mbti_reason: reason }),
     };
   });
+
+  // v2.8 케미 온도: null·없음(맡지 않은 응답·예전 출력)은 세지 않고, 모양(prepare가 null로 바꾼 것)·범위가 틀리면 chemistry_invalid
+  const { chemistry: parsedChemistry, ...rest } = report;
+  const rawChemistry = isRecord(raw) ? raw.chemistry : undefined;
+  let chemistry: Chemistry | null = null;
+  if (rawChemistry !== null && rawChemistry !== undefined) {
+    if (parsedChemistry && parsedChemistry.score >= 0 && parsedChemistry.score <= 100) {
+      chemistry = { score: parsedChemistry.score, line: cleanLine(named(parsedChemistry.line), MAX_CHARS.chemistryLine, stats, corpus, opts.members, checks) };
+    } else drop("chemistry_invalid");
+  }
 
   const dropped = { paragraphs: paragraphsIn - paragraphsOut, evidence: evidenceIn - evidenceOut, checks };
   if (sections.length === 0) return { status: "failed", content: null, dropped };
   const content: StoredReport = {
-    ...report,
+    ...rest,
+    ...(chemistry === null ? {} : { chemistry }),
     checks,
     reading_notes: sanitizeNotes(report.reading_notes.map((n) => ({ ...n, note: named(n.note) }))),
     headline: clean(named(report.headline), MAX_CHARS.headline, stats, corpus, opts.members, checks),
