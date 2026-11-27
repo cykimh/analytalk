@@ -1,6 +1,8 @@
 // /s/[token] 공유 화면 본문: 리포트(표지 → 폴라로이드 → 섹션 → 근거)가 #report-capture 안이고 [나도 해보기]만 그 바깥 아래다.
-// 리포트가 없으면(쓰는 중·실패) 표지 + 안내만 보인다. 훅이 없어 서버 컴포넌트에서 그린다(dev 미리보기도 같은 것을 쓴다)
+// 리포트가 없으면(쓰는 중·실패) 표지 + 안내만 보인다. 훅이 없어 서버 컴포넌트에서 그린다(dev 미리보기·/demo도 같은 것을 쓴다).
+// v2.8: notice가 있으면(/demo의 "가짜 대화로 만든 데모예요") 리포트 위 바깥에 둔다(DESIGN.md: 알림은 위쪽 바깥)
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { Highlight } from "@/components/scrap/Highlight";
 import { Paper } from "@/components/scrap/Paper";
 import { tapeAt } from "@/components/scrap/tilt";
@@ -23,12 +25,13 @@ export interface SharedReportData {
   report: StoredReport | null;
 }
 
-export function SharedReport({ view }: { view: SharedReportData }) {
+export function SharedReport({ view, notice }: { view: SharedReportData; notice?: ReactNode }) {
   const kicker = `${SERIES_TITLE[view.concept]} · ${AI_NOTICE}`;
   const stickers = <CoverStickers tone={view.tone} names={view.displayNames} dailyCounts={view.stats.dailyCounts} />;
   const snapshot = <KpiPolaroids stats={view.stats} />;
   return (
     <PageFrame>
+      {notice}
       <ReportCapture>
         {view.report ? (
           <ReportView

@@ -1,7 +1,8 @@
 // 모든 요청(정적 파일 제외)의 앞단.
 // - 요청마다 nonce를 만들어 CSP(nonce + strict-dynamic)를 응답에 걸고, x-nonce·CSP 요청 헤더로 렌더에 넘긴다.
 //   Next는 요청 CSP 헤더에서 nonce를 읽어 자기 스크립트에 붙인다. 그래서 모든 페이지는 동적 렌더다(app/layout.tsx)
-// - 초대 게이트: 세션 쿠키가 없거나 서명이 틀리면 /new·/c/*를 /로 보낸다.
+// - 초대 게이트: 세션 쿠키가 없거나 서명이 틀리면 /new·/c/*를 /로 보낸다. 그 밖(/·/about·/demo·/s/*)은 쿠키 없이 열린다
+//   (/demo는 v2.8 데모 리포트. 막지 않되 CSP는 똑같이 건다).
 //   여기서는 서명·만료만 본다. 코드 폐기 여부는 API(requireInvite)와 페이지(hasInvite)가 DB로 확인한다
 import { type NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/config";

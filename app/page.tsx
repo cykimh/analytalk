@@ -7,7 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { isKakaoInApp } from "@/lib/client/inapp";
 import { hasInvite } from "@/lib/server/viewer";
 
-// 쿠키가 없으면 초대 코드, 있으면 [대화 올리기]와 이 브라우저에서 만든 연재 목록
+// 쿠키가 없으면 초대 코드, 있으면 [대화 올리기]와 이 브라우저에서 만든 연재 목록. 그 아래에 [데모 리포트 보기](/demo, 누구나)
 export default async function Home() {
   const [invited, ua] = await Promise.all([hasInvite(), headers().then((h) => h.get("user-agent") ?? "")]);
   return (
@@ -33,6 +33,10 @@ export default async function Home() {
           <InviteForm />
         </section>
       )}
+      {/* v2.8: 초대 코드 없이 보는 데모(가짜 대화로 만든 리포트) */}
+      <Link href="/demo" className={buttonVariants({ variant: "outline", size: "lg", className: "border-ink/25 bg-sheet" })}>
+        데모 리포트 보기
+      </Link>
       <Link
         href="/about"
         className="inline-flex min-h-11 items-center justify-self-center text-base text-muted-foreground underline underline-offset-4"

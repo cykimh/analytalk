@@ -14,6 +14,9 @@ export default function AboutPage() {
         <p className="text-muted-foreground">
           카톡 대화 내보내기 파일을 브라우저 안에서 읽어 통계를 보여 주고, 원하면 AI가 리포트 한 편으로 써 주는 지인용 서비스예요.
         </p>
+        <Link href="/demo" className="inline-flex min-h-11 items-center justify-self-start font-medium underline underline-offset-4">
+          데모 리포트 보기
+        </Link>
       </header>
 
       <section aria-labelledby="where-title" className="grid gap-2">

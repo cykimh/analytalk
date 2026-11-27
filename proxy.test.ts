@@ -96,7 +96,7 @@ describe("proxy 초대 게이트", () => {
     expect(getRedirectUrl(proxy(request("/new", validCookie())))).toBe(`${ORIGIN}/`);
   });
 
-  it.each(["/", "/about", "/s/token", "/api/conversations", "/news", "/cx", "/newx"])("쿠키 없이도 %s는 막지 않는다", (path) => {
+  it.each(["/", "/about", "/demo", "/s/token", "/api/conversations", "/news", "/cx", "/newx", "/demo/x"])("쿠키 없이도 %s는 막지 않는다", (path) => {
     const res = proxy(request(path));
     expect(getRedirectUrl(res)).toBeNull();
     expect(nonceOf(res.headers.get("content-security-policy"))).toBeTruthy();
@@ -113,7 +113,7 @@ describe("proxy matcher", () => {
   });
 
   it("페이지와 API는 모두 지난다", () => {
-    for (const path of ["/", "/new", "/c/x", "/c/x/report", "/s/token", "/about", "/api/conversations", "/api/health"]) {
+    for (const path of ["/", "/new", "/c/x", "/c/x/report", "/s/token", "/about", "/demo", "/api/conversations", "/api/health"]) {
       expect(matches(path), path).toBe(true);
     }
   });
