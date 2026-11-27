@@ -185,7 +185,7 @@ describe("validateReport", () => {
     expect(r.dropped).toEqual({ paragraphs: 2, evidence: 1 });
   });
 
-  it("문단 안 큰따옴표 인용(4자 이상)은 보낸 메시지의 부분 문자열이어야 한다: 지어낸 인용이 든 문단은 지운다", () => {
+  it("문단 안 큰따옴표 인용은 보낸 메시지의 부분 문자열이어야 한다: 지어낸 인용이 든 문단은 지운다", () => {
     const r = run(
       report([
         sec(
@@ -211,6 +211,41 @@ describe("validateReport", () => {
     // 제목·headline·dek의 지어낸 인용은 비운다
     expect(r.content?.headline).toBe("");
     expect(r.content?.dek).toBe("\"오늘 뭐해?\"로 시작하는 저녁");
+  });
+
+  it("Fix 2: 작은따옴표+토씨('…'라고)·둥근 작은따옴표·낫표·겹낫표 인용도 원문과 대 본다. 토씨 없는 별명과 '…'이라고 부르는 별명은 남는다", () => {
+    const texts = [
+      "민지는 '나 철수 진짜 싫어'라고 했다.",
+      "민지는 ‘나 철수 진짜 싫어’라고 했다.",
+      "민지는 「나 철수 진짜 싫어」라고 했다.",
+      "민지는 『나 철수 진짜 싫어』라고 했다.",
+      "민지는 '나 철수 진짜 싫어' 하고 웃었다.",
+      "민지는 '싫어'이라며 돌아섰다.",
+      // 원문에 있는 말은 따옴표 모양과 상관없이 남는다
+      "민지는 '집에서 쉬는 중'이라고 답했다.",
+      "민지는 ‘쉬는 중’이라고 답했다.",
+      "민지는 「좋아!」 하고 답했다.",
+      // 토씨 없는 작은따옴표는 별명·상 이름이다
+      "민지의 별명은 '저녁 8시 담당'이고 '심야 라디오상' 수상자다.",
+      "그래서 민지는 '선톡왕'이라고 불린다.",
+    ];
+    const r = run(report([sec("민지", texts.map((t, i) => para(`p${i + 1}`, t, ["e1"])), [ev("e1", "m1", "쉬는 중")], "민지")]));
+    expect(r.status).toBe("partial");
+    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual(texts.slice(6));
+    expect(r.dropped.paragraphs).toBe(6);
+  });
+
+  it("Fix 2: 인용 길이 하한이 없다. 지어낸 짧은 말(\"사랑해\"·\"싫어\")은 지우고 원문에 있는 짧은 말(\"좋아\"·\"ㅋㅋ\")은 남긴다. 빈 따옴표는 건너뛴다", () => {
+    const texts = [
+      "민지는 \"사랑해\"라고 했다.",
+      "민지는 \"싫어\"라고 했다.",
+      "민지는 \"좋아\"라고 했다.",
+      "민지는 \"ㅋㅋ\"로 답했다.",
+      "철수의 빈 말풍선 \" \"도 있었다.",
+    ];
+    const r = run(report([sec("민지", texts.map((t, i) => para(`p${i + 1}`, t, ["e1"])), [ev("e1", "m1", "쉬는 중")], "민지")], { dek: "\"미안해\"가 없는 방" }));
+    expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual(texts.slice(2));
+    expect(r.content?.dek).toBe("");
   });
 
   it("자리표시자만 있는 사람 섹션도 남는다(섹션 어디든 하나)", () => {

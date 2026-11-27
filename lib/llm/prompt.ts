@@ -17,7 +17,7 @@ import { type ModelSettings, modelSettings } from "./settings";
 import { CLOSING_QUOTE_RESERVE, MAX_CHARS } from "./validate";
 
 /** 프롬프트·스키마를 바꾸면 올린다. 중복 요청 판정(페이로드 해시 + 컨셉 + 말투 + 버전)에 들어간다 */
-export const PROMPT_VERSION = "2026-11-report-4";
+export const PROMPT_VERSION = "2026-11-report-5";
 
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 /** 데이터 블록에 cache_control을 다는가. 한 번 호출이라 읽을 요청이 없어 끈다(나눠 쓰기를 넣을 때 켠다) */
@@ -43,9 +43,12 @@ const OUTPUT_FORMAT: BetaJSONOutputFormat = { type, schema };
  *   → 출력에 쓸 수 있는 시간 270 − 30 − 15 = 225초 ≈ 13,500토큰(생각 토큰 포함)
  * - 한글 본문은 글자당 약 1토큰(TOKENS_PER_CHAR와 같은 보수적 어림). JSON 뼈대·인용 30개·메모 12개 ≈ 2,800토큰.
  *   adaptive 생각(effort medium) ≈ 2,000토큰으로 잡았지만 측정하지 않았다. 60만 토큰 입력이면 몇 천 토큰 더 쓸 수 있다
- * - full 목표 본문 6,000자: 6,000 + 2,800 + 2,000 = 10,800토큰 → 출력 180초, 전체 210초. 생각에 2,700토큰(45초)을 더 써도 마감 전
- * - full 상한 본문 8,000자: 12,800토큰 → 출력 213초, 전체 243초. 출력 예산 13,500토큰 안이다
- * 모델은 리포트 전체 글자 수를 잘 지키지 못해서 문단마다 글자 수(PARAGRAPH_CHARS)를 준다: 섹션 8 × 문단 4 × 190자 ≈ 6,000자.
+ * 모델은 리포트 전체 글자 수를 잘 지키지 못해서 문단 수와 문단마다 글자 수(PARAGRAPH_CHARS)로 분량을 정한다(Fix 2).
+ * 지시가 시키는 문단 수의 상한은 구성마다 (섹션 수 × 그 구성의 최대 문단 수)를 더한 것이고, prompt.test가 말투·단계마다 더해서
+ * (문단 상한 × 문단 글자 수 가운데값 170자)가 bodyCharsMax 이하인지 확인한다. 그래서 사람 구성 밖의 구성은 모두 섹션 하나다.
+ * - full 상한: 섹션 10 × 문단 4 = 40문단(warm·show·docu·detective. fact·record는 9 × 4 = 36) × 170자 ≈ 6,800자.
+ *   문단이 190자로 길어져도 7,600자로 8,000자 상한 안이다: 7,600 + 2,800 + 2,000 = 12,400토큰 → 출력 207초, 전체 237초
+ * - full 목표: 섹션 9~10 × 문단 3.5 × 170자 ≈ 5,400~6,000자 → 약 10,800토큰, 출력 180초, 전체 210초. 생각에 2,700토큰(45초)을 더 써도 마감 전
  * 실측에서 생각 토큰이 몫을 크게 먹으면 effort(ANTHROPIC_EFFORT)를 낮추거나 분량을 줄인다.
  * 마감에 끊겨도 완결된 섹션까지는 partial로 남는다. 출력 상한 32,000토큰(DEFAULT_REPORT_MAX_TOKENS)은 이 분량보다 커서 마감이 먼저 온다
  */
@@ -53,7 +56,12 @@ type Volume = {
   sections: string;
   minSections: number;
   maxSections: number;
+  /** 사람 구성 밖의 구성에서 섹션마다 문단 수 */
   paragraphs: string;
+  /** 사람 구성(사람마다 섹션 하나)에서 한 사람 섹션의 문단 수. 단톡은 사람 섹션이 많아 짧게 둔다 */
+  peopleParagraphs: string;
+  /** 1:1의 사람 구성: 두 사람뿐이라 한 사람 섹션을 더 깊게 쓴다 */
+  pairParagraphs: string;
   bodyChars: string;
   bodyCharsMax: string;
   quotesPerSection: string;
@@ -68,7 +76,9 @@ export const VOLUMES = {
     sections: "4~7",
     minSections: 4,
     maxSections: 7,
-    paragraphs: "2~4",
+    paragraphs: "2~3",
+    peopleParagraphs: "2~3",
+    pairParagraphs: "3~4",
     bodyChars: "3,000",
     bodyCharsMax: "4,000",
     quotesPerSection: "1~2",
@@ -81,6 +91,8 @@ export const VOLUMES = {
     minSections: 5,
     maxSections: 8,
     paragraphs: "3~4",
+    peopleParagraphs: "2~3",
+    pairParagraphs: "3~4",
     bodyChars: "4,500",
     bodyCharsMax: "6,000",
     quotesPerSection: "2~3",
@@ -92,7 +104,9 @@ export const VOLUMES = {
     sections: "6~10",
     minSections: 6,
     maxSections: 10,
-    paragraphs: "3~5",
+    paragraphs: "3~4",
+    peopleParagraphs: "3~4",
+    pairParagraphs: "4~5",
     bodyChars: "6,000",
     bodyCharsMax: "8,000",
     quotesPerSection: "2~3",
@@ -123,7 +137,10 @@ const SYSTEM_PROMPT = `너는 '다봄'이다. 카카오톡 대화 내보내기�
 - 리포트는 분석 보고서가 아니다. 데이터 뒤의 지시가 컨셉(말투)을 정하고, 컨셉이 리포트의 형식(구성)과 목소리를 정한다. 그 컨셉의 인물이 처음부터 끝까지 그 목소리와 형식으로 쓴 글이어야 한다. 제3자 시점, 아래 금지·숫자·근거 규칙은 어느 컨셉에서도 같다.
 - 판단 대상은 보이는 행동 패턴(언제, 얼마나, 누가 먼저, 어떻게 답했는지)과 실제로 오간 말이다. 누구의 속마음·의도·감정도 단정하거나 추측하지 않는다. 별명은 보이는 행동으로만 짓는다.
 - 근거의 중심은 대화 원문 인용이다. 사람을 다루는 섹션에는 그 사람이 실제로 한 말을 근거 인용으로 하나 이상 단다(문단마다 달 필요는 없다). 근거 인용도 자리표시자도 없는 사람 섹션은 저장 전에 지워진다. 근거를 달았는데 원문과 맞는 근거가 하나도 없는 문단도 지워진다.
-- 문단 안에서 원문을 옮길 때는 큰따옴표("…")로 짧게, 한 글자도 바꾸거나 줄이지 않고 옮기고 그 메시지를 근거로도 단다. 큰따옴표는 대화 원문에만 쓴다: 별명·캐치프레이즈·상 이름·사건명·자막·지어낸 대사는 작은따옴표('…')로 쓰거나 따옴표 없이 쓴다. 보낸 메시지에 그대로 없는 큰따옴표 인용이 든 문단은 저장 전에 지워진다.
+- 문단 안에서 원문을 옮길 때는 큰따옴표("…")로 짧게, 한 글자도 바꾸거나 줄이지 않고 옮기고 그 메시지를 근거로도 단다.
+- 멤버가 하지 않은 말을 그 사람의 말처럼(따옴표든 ~라고 했다든) 쓰지 않는다. 지어낸 말은 MC·내레이터 자신의 말뿐이다.
+- 작은따옴표('…')는 별명·캐치프레이즈·상 이름·사건명·자막에만 쓰고, 그 바로 뒤에 말을 옮기는 토씨(라고·라며·하고·하며·며)를 붙이지 않는다(나란히 쓸 때는 '와'·'과'를 쓴다). 둥근 작은따옴표(‘…’)·낫표(「…」)·겹낫표(『…』)는 쓰지 않는다. 지시에서 구성 이름을 감싼 낫표는 표시일 뿐이다.
+- 원문에 그대로 없는 인용(큰따옴표·‘…’·「…」·『…』 안의 말, 뒤에 라고·하고 같은 토씨가 붙은 '…')이 든 문단은 저장 전에 지워진다.
 - 숫자는 코드가 이미 셌다. 숫자·비율·횟수·시간은 글자로 쓰지 말고 {{stat:경로}} 자리표시자로만 쓴다. 화면이 통계 값으로 채운다. 숫자는 양념이다: 장면을 받쳐 줄 때만 조금 쓰고, 숫자를 늘어놓지 않는다.
 - 엇갈린 패턴(stats.crossed)은 두 지표가 반대로 움직인 구간을 묘사만 하고 이유는 단정하지 않는다.
 
@@ -170,6 +187,8 @@ const TONE_NUMBERS = "예시처럼 숫자는 {{stat:…}} 자리표시자로만 
 /** 말투와 상관없이 지킬 시점·이용 정책(system의 금지를 말투 줄에서 한 번 더 짚는다) */
 const TONE_COMMON =
   "어느 말투든 방 밖의 관찰자로 실명 3인칭으로 쓰고 보이는 행동만 다룬다: 속마음·의도 단정·추측, 호감·애정 점수, 진단명·성격 유형, 외모 평가·모욕은 쓰지 않는다.";
+/** 사람 구성의 흐름이 문단 수보다 길 때 */
+const MERGE_BEATS = " 문단이 모자라면 이어지는 둘을 합친다.";
 /** 마무리 구성에서만 멤버에게 말을 걸어도 된다(system의 '지시가 따로 정한 구성'). 시점·편들기·속마음 규칙은 그대로 */
 const CLOSING_ADDRESS =
   "이 섹션만 방 밖의 관찰자가 멤버들을 이름으로 불러 모두에게 직접 말을 건네도 된다('우리'로 쓰지 않는다). 한쪽 편을 들지 않고, 누구의 속마음도 대신 말하지 않으며, 질문으로 끝내지 않는다. 앞에서 본 장면 하나를 근거 인용으로 다시 꺼낸다.";
@@ -179,10 +198,13 @@ const CLOSING_ADDRESS =
  * people은 사람마다 섹션 하나를 쓰는 구성, room은 사람 섹션에 못 든 그다음 순위 멤버(많아야 ONE_LINERS_CAP명)를 마지막 문단에서 짧게 다루는 방 전체 구성이다.
  * 예시 문장에는 글자로 쓴 숫자를 넣지 않는다(숫자는 자리표시자로만, 그것도 많아야 하나)
  */
+/** 사람 구성 설명을 채울 문단 수. people은 한 사람 섹션의 문단 수(예: "3~4"), nags는 그중 잔소리 문단 수(마지막 인정 하나를 뺀 것) */
+type PeopleCounts = { people: string; nags: string };
 type ToneGuide<T extends Tone> = {
   persona: string;
   examples: readonly string[];
-  parts: Record<PartOf<T>, string>;
+  /** 사람 구성 밖은 고정 글, 사람 구성은 문단 수를 받는 함수 */
+  parts: Record<PartOf<T>, string | ((n: PeopleCounts) => string)>;
   people: PartOf<T>;
   room: PartOf<T>;
 };
@@ -198,10 +220,10 @@ const TONE_GUIDES: { [T in Tone]: ToneGuide<T> } = {
     parts: {
       nag_open:
         "섹션 하나, about은 group(1:1이면 pair). 친구가 이 방을 한 번 훑고 첫 잔소리를 던진다. 이 방이 늘 되풀이하는 장면 하나(자주 나온 말, 가장 시끄러웠던 날)를 인용으로 들이밀며 시작하고, 이어질 잔소리 카드의 예고처럼 끝낸다.",
-      nag_cards:
-        "사람마다 섹션 하나(about은 그 사람, 제목은 그 사람에게 하는 잔소리 한 줄). 문단 하나에 잔소리 하나씩, 잔소리 3~5개: 문단 첫 문장은 짧은 잔소리 한마디(예: 답장은 하는데 대답은 안 한다), 이어서 그 행동이 보인 장면과 근거 인용. 마지막 문단은 그래도 인정할 점 하나.",
+      nag_cards: ({ people, nags }) =>
+        `사람마다 섹션 하나(about은 그 사람, 제목은 그 사람에게 하는 잔소리 한 줄). 문단 ${people}개: 잔소리 ${nags}개 + 인정 1. 문단 하나에 잔소리 하나씩, 문단 첫 문장은 짧은 잔소리 한마디(예: 답장은 하는데 대답은 안 한다), 이어서 그 행동이 보인 장면과 근거 인용. 마지막 문단은 그래도 인정할 점 하나.`,
       nag_room:
-        "섹션 1~2개, about은 group(1:1이면 pair). 멤버 모두가 함께 되풀이하는 습관(흐지부지되는 약속, 새벽 수다, 읽고 답 안 하기 같은 것)을 방 전체에 하는 잔소리로 쓴다. 장면마다 인용.",
+        "섹션 하나, about은 group(1:1이면 pair). 멤버 모두가 함께 되풀이하는 습관(흐지부지되는 약속, 새벽 수다, 읽고 답 안 하기 같은 것)을 방 전체에 하는 잔소리로 쓴다. 장면마다 인용.",
       nag_last: `섹션 하나, about은 group(1:1이면 pair). 친구가 멤버들 이름을 부르며 건네는 마지막 잔소리 겸 당부. ${CLOSING_ADDRESS}`,
     },
     people: "nag_cards",
@@ -217,8 +239,8 @@ const TONE_GUIDES: { [T in Tone]: ToneGuide<T> } = {
     parts: {
       care_open:
         "섹션 하나, about은 group(1:1이면 pair). 선생님이 이 방의 상담 일지를 처음 펼친 인상: 어떤 사람들이 언제 모여 어떤 이야기를 나누는 방인지, 이 방다운 첫 장면을 인용으로.",
-      care_people:
-        "사람마다 섹션 하나(about은 그 사람, 제목은 그 사람에게 건네는 다정한 한 줄). 문단 3~4개: 자주 보인 행동 → 그 행동이 방에서 하는 몫 → 그 사람다운 장면 인용 → 응원 한마디.",
+      care_people: ({ people }) =>
+        `사람마다 섹션 하나(about은 그 사람, 제목은 그 사람에게 건네는 다정한 한 줄). 문단 ${people}개: 자주 보인 행동 → 그 행동이 방에서 하는 몫 → 그 사람다운 장면 인용 → 응원 한마디.${MERGE_BEATS}`,
       care_habits:
         "섹션 하나, about은 group(1:1이면 pair). 멤버들이 서로에게 해 온 좋은 습관(안부 묻기, 같이 웃기, 축하하기, 챙겨 주기)을 장면과 인용으로.",
       care_advice:
@@ -238,12 +260,12 @@ const TONE_GUIDES: { [T in Tone]: ToneGuide<T> } = {
     parts: {
       show_open:
         "섹션 하나, about은 group(1:1이면 pair). MC의 오프닝 멘트: 오늘 방송할 방을 캐치프레이즈 한 줄로 소개하고, 오늘의 관전 포인트를 짚는다. 예고편처럼 짧은 장면 인용 하나.",
-      show_cast:
-        "사람마다 섹션 하나(about은 그 사람, 제목은 별명과 이름). 문단 3~4개: 별명과 캐치프레이즈(보이는 행동으로 지은 것) → 이 출연자의 시그니처 장면 인용 → 다른 출연자와 주고받는 케미 → 자막 한 줄.",
+      show_cast: ({ people }) =>
+        `사람마다 섹션 하나(about은 그 사람, 제목은 별명과 이름). 문단 ${people}개: 별명과 캐치프레이즈(보이는 행동으로 지은 것) → 이 출연자의 시그니처 장면 인용 → 다른 출연자와 주고받는 케미 → 자막 한 줄.${MERGE_BEATS}`,
       show_vcr:
-        "섹션 1~2개, about은 group(1:1이면 pair). 하이라이트 VCR: 가장 활발했던 날, 웃음이 터진 순간 같은 명장면을 섹션마다 2~3개 중계한다. 장면마다 상황 → 인용 → MC 리액션 → (자막: …).",
+        "섹션 하나, about은 group(1:1이면 pair). 하이라이트 VCR: 가장 활발했던 날, 웃음이 터진 순간 같은 명장면을 문단 하나에 장면 하나씩 중계한다. 장면마다 상황 → 인용 → MC 리액션 → (자막: …).",
       show_corner:
-        "섹션 하나, about은 group(1:1이면 pair). 이 방 랭킹·시상식 코너: 상 이름(예: 선톡상, 심야 라디오상, 사진 기자상)마다 문단 하나, 수상 이유는 장면과 인용으로 댄다. 숫자는 상 하나에 많아야 하나.",
+        "섹션 하나, about은 group(1:1이면 pair). 이 방 랭킹·시상식 코너: 상은 섹션 문단 수만큼, 상 이름(예: 선톡상, 심야 라디오상, 사진 기자상)마다 문단 하나, 수상 이유는 장면과 인용으로 댄다. 숫자는 상 하나에 많아야 하나.",
       show_close: `섹션 하나, about은 group(1:1이면 pair). MC의 클로징 멘트: 오늘 방송을 한 장면으로 정리하고 출연자들에게 인사한다. ${CLOSING_ADDRESS}`,
     },
     people: "show_cast",
@@ -259,10 +281,10 @@ const TONE_GUIDES: { [T in Tone]: ToneGuide<T> } = {
     parts: {
       docu_habitat:
         "섹션 하나, about은 group(1:1이면 pair). 이 무리가 사는 서식지 소개: 언제 모이고, 무엇을 주로 나누며, 어떤 소리(웃음·사진·이모티콘)가 가득한지. 서식지를 보여 주는 첫 장면 인용.",
-      docu_life:
-        "사람마다 섹션 하나(about은 그 사람). 개체별 생태 관찰: 그 사람의 하루 리듬, 무리 안에서 맡은 역할(먼저 소리를 내는 쪽, 답하는 쪽, 새 화제를 물어 오는 쪽), 자주 내는 소리(말버릇)를 인용으로. 문단 3~4개.",
+      docu_life: ({ people }) =>
+        `사람마다 섹션 하나(about은 그 사람). 문단 ${people}개: 개체별 생태 관찰. 그 사람의 하루 리듬, 무리 안에서 맡은 역할(먼저 소리를 내는 쪽, 답하는 쪽, 새 화제를 물어 오는 쪽), 자주 내는 소리(말버릇)를 인용으로.`,
       docu_seasons:
-        "섹션 1~2개, about은 group(1:1이면 pair). 계절의 변화: 시기별(연도·계절) 흐름, 무리가 커지거나 조용해진 때, 화제가 옮겨 간 때. stats.monthly를 바탕으로 하되 숫자는 섹션에 한둘, 시기마다 그때의 장면 인용.",
+        "섹션 하나, about은 group(1:1이면 pair). 계절의 변화: 시기별(연도·계절) 흐름, 무리가 커지거나 조용해진 때, 화제가 옮겨 간 때. stats.monthly를 바탕으로 하되 숫자는 섹션에 한둘, 시기마다 그때의 장면 인용.",
       docu_moment:
         "섹션 하나, about은 group(1:1이면 pair). 결정적 장면: 관찰 기간 중 가장 극적인 순간(가장 활발했던 날, 웃음이 터진 순간)을 느린 내레이션으로 묘사하고 인용으로 보여 준다.",
       docu_outro:
@@ -281,10 +303,10 @@ const TONE_GUIDES: { [T in Tone]: ToneGuide<T> } = {
     parts: {
       case_brief:
         "섹션 하나, about은 group(1:1이면 pair). 사건 개요: 보이는 행동으로 사건명을 짓고(예: 사라진 약속 날짜 사건), 이 방에서 무엇이 되풀이됐는지 적는다. 사건을 알린 첫 장면 인용.",
-      case_people:
-        "사람마다 섹션 하나(about은 그 사람, 제목은 관련자 이름과 행동으로 지은 별칭). 문단 3~4개: 행동 특징(언제 나타나는지, 어떤 말을 자주 하는지. 인상착의·외모는 적지 않는다) → 대표 진술(인용) → 다른 관련자와의 관계(누구와 자주 주고받는지) → 수사 메모.",
+      case_people: ({ people }) =>
+        `사람마다 섹션 하나(about은 그 사람, 제목은 관련자 이름과 행동으로 지은 별칭). 문단 ${people}개: 행동 특징(언제 나타나는지, 어떤 말을 자주 하는지. 인상착의·외모는 적지 않는다) → 대표 진술(인용) → 다른 관련자와의 관계(누구와 자주 주고받는지) → 수사 메모.${MERGE_BEATS}`,
       case_exhibits:
-        "섹션 하나, about은 group(1:1이면 pair). 증거물 목록: 문단마다 증거물 하나, 상황 → 인용 → 그 인용이 보여 주는 사실.",
+        "섹션 하나, about은 group(1:1이면 pair). 증거물 목록: 증거물은 섹션 문단 수만큼, 문단마다 증거물 하나, 상황 → 인용 → 그 인용이 보여 주는 사실.",
       case_timeline:
         "섹션 하나, about은 group(1:1이면 pair). 사건 재구성: 방이 생긴 때부터 지금까지 시간 순서로, 시기마다 무슨 일이 있었는지(연대기). 가장 활발했던 날도 여기서. 숫자는 섹션에 한둘.",
       case_open:
@@ -305,8 +327,8 @@ const TONE_GUIDES: { [T in Tone]: ToneGuide<T> } = {
     parts: {
       rec_class:
         "섹션 하나, about은 group(1:1이면 pair). 학급 개요: 이 학급(방)의 구성과 분위기, 학급의 하루(언제 모이는지), 함께 겪은 일을 기록체로. 학급다운 첫 장면 인용.",
-      rec_students:
-        "사람마다 섹션 하나(about은 그 사람, 제목은 이름과 한 줄 평). 문단 4~5개로 길게: 대화 참여 태도 → 친구 관계(누구와 자주 주고받는지) → 특기할 장면(인용) → 칭찬 → 당부.",
+      rec_students: ({ people }) =>
+        `사람마다 섹션 하나(about은 그 사람, 제목은 이름과 한 줄 평). 문단 ${people}개: 대화 참여 태도와 친구 관계(누구와 자주 주고받는지) → 특기할 장면(인용) → 칭찬 → 당부.${MERGE_BEATS}`,
       rec_attendance:
         "섹션 하나, about은 group(1:1이면 pair). 출결·참여 특기사항: 대화 참여를 출결처럼 기록한다(꾸준히 나온 학생, 답이 늦는 학생, 심야 활동). 지각·조퇴 같은 비유는 행동에만, 숫자는 섹션에 한둘.",
       rec_overall:
@@ -372,7 +394,7 @@ function peopleLine(p: Payload, tier: VolumeTier): string {
   const short = parts.length - 1 + Math.min(speakers, cap) < minSections;
   const fill = short ? ` 섹션이 ${minSections}개보다 적어지면 사람 구성이 아닌 구성 몇 개를 섹션 2개로 나눠 ${minSections}개를 채운다.` : "";
   if (p.kind === "pair" || p.members.length <= 2) {
-    return `사람: 1:1 두 사람이다. 같은 형식에서 두 사람 중심으로 쓴다. ${title(guide.people)}에서는 두 사람 각자 섹션 하나씩(문단 4~5개로 깊게), 나머지 구성은 about을 pair로 두고 두 사람 사이에 오간 것을 쓴다.${fill}`;
+    return `사람: 1:1 두 사람이다. 같은 형식에서 두 사람 중심으로 쓴다. ${title(guide.people)}에서는 두 사람 각자 섹션 하나씩(문단 ${VOLUMES[tier].pairParagraphs}개로 깊게), 나머지 구성은 about을 pair로 두고 두 사람 사이에 오간 것을 쓴다.${fill}`;
   }
   const silent = " <conversation>에 줄이 없는 멤버는 섹션을 만들지 않고 짐작으로 묘사하지 않는다.";
   if (p.members.length <= cap) {
@@ -388,6 +410,15 @@ function peopleLine(p: Payload, tier: VolumeTier): string {
       : "";
   return `사람: 메시지가 많은 상위 ${cap}명(<stats>의 byPerson 순서)만 ${title(guide.people)}에서 한 사람에 섹션 하나씩 길게 쓴다.${oneLiners} 그 밖의 멤버는 이름을 부르지 않고 '나머지 멤버들'처럼 한 문장으로 묶는다. 줄이 없는 멤버를 짐작으로 묘사하지 않는다.`;
 }
+
+/** 사람 구성의 문단 수: 1:1은 깊게(pairParagraphs), 단톡은 peopleParagraphs. 잔소리는 마지막 인정 하나를 뺀 수 */
+function peopleCounts(p: Payload, tier: VolumeTier): PeopleCounts {
+  const vol = VOLUMES[tier];
+  const people = p.kind === "pair" || p.members.length <= 2 ? vol.pairParagraphs : vol.peopleParagraphs;
+  const [lo, hi] = people.split("~").map(Number);
+  return { people, nags: `${Math.max(1, lo - 1)}~${hi - 1}` };
+}
+const partText = (guide: string | ((n: PeopleCounts) => string), n: PeopleCounts) => (typeof guide === "string" ? guide : guide(n));
 
 /** 지시. 첫 줄(말투: 라벨)이 테스트 훅이고 둘째 줄이 그 컨셉의 인물이다. 참여자 이름은 싣지 않는다(데이터 블록의 범례에 있다) */
 function reportInstruction(p: Payload, stats: PromptStats): string {
@@ -415,10 +446,10 @@ function reportInstruction(p: Payload, stats: PromptStats): string {
     peopleLine(p, tier),
     "",
     `리포트 구성(「${label}」의 형식이다. 이 순서로 쓴다. 섹션의 part는 앞의 키다):`,
-    ...parts.map(({ key, title }) => `- ${key} 「${title}」: ${guide.parts[key]}`),
+    ...parts.map(({ key, title }) => `- ${key} 「${title}」: ${partText(guide.parts[key], peopleCounts(p, tier))}`),
     "",
     `목소리: 헤드라인과 첫 섹션 제목부터 마지막 문단까지 ${label}의 목소리와 형식으로 쓴다. 섹션 제목도 그 구성의 말로 짓는다. 통계를 해설하는 분석 보고서 문단이 되면 안 된다: 문단마다 장면과 말이 먼저고, 숫자는 그 장면을 받칠 때만 쓴다.`,
-    `분량: 리포트 전체 섹션 ${vol.sections}개, 섹션마다 문단 ${vol.paragraphs}개. 문단 하나는 ${SENTENCES}문장, ${PARAGRAPH_CHARS}자 안팎이다(문단마다 이 길이를 지킨다). 본문(문단 글)은 리포트 전체 ${vol.bodyChars}자 안팎이고 ${vol.bodyCharsMax}자를 넘기지 않는다. 근거 인용은 섹션마다 ${vol.quotesPerSection}개, 리포트 전체 ${vol.quotes}개 이하이고, 마지막 구성 ${closing} 섹션 몫으로 ${CLOSING_QUOTE_RESERVE}개를 남겨 둔다. reading_notes는 ${vol.readingNotes}개 이하.`,
+    `분량: 리포트 전체 섹션 ${vol.sections}개, 섹션마다 문단 ${vol.paragraphs}개(사람 구성은 구성 설명대로). 문단 하나는 ${SENTENCES}문장, ${PARAGRAPH_CHARS}자 안팎이다(문단마다 이 길이를 지킨다). 본문(문단 글)은 리포트 전체 ${vol.bodyChars}자 안팎이고 ${vol.bodyCharsMax}자를 넘기지 않는다. 근거 인용은 섹션마다 ${vol.quotesPerSection}개, 리포트 전체 ${vol.quotes}개 이하이고, 마지막 구성 ${closing} 섹션 몫으로 ${CLOSING_QUOTE_RESERVE}개를 남겨 둔다. reading_notes는 ${vol.readingNotes}개 이하.`,
     ...material,
     `숫자는 양념: 통계 자리표시자는 섹션마다 ${vol.statsPerSection}개, 장면을 받쳐 줄 때만 쓴다. 숫자를 나열하지 않는다. 안 되는 예: "<이름> {{stat:byPerson.<이름>}}개, <이름> {{stat:byPerson.<이름>}}개, <이름> {{stat:byPerson.<이름>}}개로 셋이 비슷하다"처럼 사람마다 숫자를 줄줄이 대기, 문단마다 통계 하나를 읽고 해설하기. 근거의 중심은 대화 원문 인용이다.`,
   ].join("\n");
