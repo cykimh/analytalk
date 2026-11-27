@@ -18,12 +18,13 @@
 //   다시 잇는다(relink). 보낸 사람·시각은 이은 메시지의 것이라 카드가 거짓이 되지 않는다. 짧은 quote(RELINK_SHORT_CHARS자 미만)는
 //   흔한 말("ㅋㅋ")이 엉뚱한 곳에 붙지 않게 가까운 번호(RELINK_NEAR) 안에서만 찾는다. 사람 섹션이면 그 사람이 보낸 메시지를 먼저 본다.
 // v2.4: 지운 까닭을 센다(checks.dropped_by). 대화 원문·이름 없는 숫자뿐이라 저장한다(운영에서 문단이 왜 줄었는지 확인용).
-// v2.4: 멤버를 대상으로 한 호감 단정(isBannedAbout)도 금지 표현으로 본다.
+// v2.4 Fix 1: 속마음·호감 단정·점수·놀림은 지우지 않는다. 금지 표현은 banned.ts의 넷(속성 비하·성적 묘사, 진단명 단정, 자해·폭력 부추김)과 글자로 쓴 %뿐이고,
+//   지어낸 대사는 위의 문단 안 인용 검사가 맡는다.
 // 나머지 모델 글(headline·dek·제목)도 같은 검사(금지 표현·개인정보·글자 수)에 걸리면 비운다. icon·about·part는 허용 모양만 남긴다.
 // 자리표시자 경로 속 범례 기호(A, B…)는 표시 이름으로 바꾼다(모델이 줄의 기호를 그대로 옮겨 쓴 경우).
 import "server-only";
 import { MAX_QUOTES_PER_REPORT, PARTIAL_DROP_RATIO } from "@/lib/config";
-import { isBanned, isBannedAbout } from "@/lib/payload/banned";
+import { isBanned } from "@/lib/payload/banned";
 import { memberCodes, type payloadIndex } from "@/lib/payload/build";
 import { hasPII } from "@/lib/payload/mask";
 import type { ChatStats } from "@/lib/stats/compute";
@@ -202,15 +203,15 @@ const withoutStats = (text: string, stats: ChatStats) =>
     inner.startsWith(STAT) && resolveStat(inner.slice(STAT.length), stats) !== null ? "" : whole,
   );
 /** 저장할 수 없는 까닭(글자 수·금지 표현·개인정보, PRD 5장 1·6). 저장해도 되면 null */
-function unstorable(text: string, max: number, stats: ChatStats, members: string[]): DropReason | null {
+function unstorable(text: string, max: number, stats: ChatStats): DropReason | null {
   if (length(text) > max) return "too_long";
-  if (isBanned(text) || isBannedAbout(text, members)) return "banned";
+  if (isBanned(text)) return "banned";
   if (hasPII(withoutStats(text, stats))) return "pii";
   return null;
 }
 /** 제목·headline·dek: 저장할 수 없거나 원문에 없는(말한 사람이 다른) 인용이 들었으면 비운다 */
 const clean = (text: string, max: number, stats: ChatStats, corpus: Corpus, members: string[]) =>
-  unstorable(text, max, stats, members) === null && inlineQuotesOk(text, corpus, members) ? text : "";
+  unstorable(text, max, stats) === null && inlineQuotesOk(text, corpus, members) ? text : "";
 /** 이모지 몇 글자만. 글자·숫자가 들었으면(문장을 넣었으면) 비운다 */
 const cleanIcon = (icon: string) => {
   const t = icon.trim();
@@ -366,7 +367,7 @@ export function validateReport(
       const reason = (): DropReason | null => {
         if (text.trim() === "") return "empty";
         if (placeholders === null) return "placeholder";
-        const bad = unstorable(text, MAX_CHARS.paragraph, stats, opts.members);
+        const bad = unstorable(text, MAX_CHARS.paragraph, stats);
         if (bad !== null) return bad;
         if (!inlineQuotesOk(text, corpus, opts.members)) return "inline_quote";
         return p.evidence_ids.length > 0 && ids.length === 0 ? "fake_evidence" : null;

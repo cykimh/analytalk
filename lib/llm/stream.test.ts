@@ -308,7 +308,7 @@ describe("runReport", () => {
     expect(o.onNotes).toHaveBeenCalledTimes(1);
 
     // 금지 표현이 든 메모는 빼고, 61자 메모는 60자로 자른다
-    s.push(delta(`{"range":"10-04","note":"속으로 좋아하는 것 같다"},{"range":"10-05","note":"${"가".repeat(61)}"}]`));
+    s.push(delta(`{"range":"10-04","note":"그냥 죽어 버려라"},{"range":"10-05","note":"${"가".repeat(61)}"}]`));
     await sleep(20);
     await vi.advanceTimersByTimeAsync(NOTES_FLUSH_MS);
     expect(o.onNotes).toHaveBeenCalledTimes(2);

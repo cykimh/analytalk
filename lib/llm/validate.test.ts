@@ -97,7 +97,7 @@ describe("validateReport", () => {
   it("금지 문장이 든 문단은 지운다", () => {
     const r = run(
       report([
-        sec("마음", [para("p1", "저녁에 대화가 몰려요"), para("p2", "철수는 속마음은 분명 민지를 좋아해요"), para("p3", "주말엔 조용해요")]),
+        sec("마음", [para("p1", "저녁에 대화가 몰려요"), para("p2", "철수는 ADHD가 분명해요"), para("p3", "주말엔 조용해요")]),
       ]),
     );
     expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual(["저녁에 대화가 몰려요", "주말엔 조용해요"]);
@@ -107,7 +107,7 @@ describe("validateReport", () => {
 
   it("10개 중 4개가 지워지면 partial", () => {
     const paragraphs = Array.from({ length: 10 }, (_, i) =>
-      para(`p${i + 1}`, i < 4 ? `연락할 확률이 높아요 ${i}` : `저녁 대화가 이어져요 ${i}`),
+      para(`p${i + 1}`, i < 4 ? `그냥 죽어 버려라 ${i}` : `저녁 대화가 이어져요 ${i}`),
     );
     const r = run(report([sec("열 문단", paragraphs)]));
     expect(r.status).toBe("partial");
@@ -117,7 +117,7 @@ describe("validateReport", () => {
 
   it("10개 중 2개만 지워지면 done", () => {
     const paragraphs = Array.from({ length: 10 }, (_, i) =>
-      para(`p${i + 1}`, i < 2 ? `애정 지수가 올랐어요 ${i}` : `저녁 대화가 이어져요 ${i}`),
+      para(`p${i + 1}`, i < 2 ? `여자라서 그래요 ${i}` : `저녁 대화가 이어져요 ${i}`),
     );
     expect(run(report([sec("열 문단", paragraphs)])).status).toBe("done");
   });
@@ -417,7 +417,7 @@ describe("validateReport", () => {
   it("문단이 모두 지워진 섹션은 빠지고 근거 몫을 쓰지 않는다", () => {
     const r = run(
       report([
-        sec("지워짐", [para("p1", "호감도 90")], [ev("e1", "m1", "쉬는 중")]),
+        sec("지워짐", [para("p1", "대화의 90%")], [ev("e1", "m1", "쉬는 중")]),
         sec("남음", [para("p1", "저녁 대화가 이어져요", ["e1"])], [ev("e1", "m1", "집에서")]),
       ]),
     );
@@ -427,11 +427,11 @@ describe("validateReport", () => {
 
   it("headline·dek·섹션 제목·reading_notes의 금지 표현은 비운다", () => {
     const r = run(
-      report([sec("MBTI로 본 둘", [para("p1", "저녁 대화가 이어져요")])], {
-        headline: "애정 지수 리포트",
-        dek: "확률로 보는 마음",
+      report([sec("철수는 ADHD다", [para("p1", "저녁 대화가 이어져요")])], {
+        headline: "우울증이 의심되는 방",
+        dek: "여자라서 그렇다",
         reading_notes: [
-          { range: "10-01", note: "관심이 있는 것 같다" },
+          { range: "10-01", note: "한 대 때려 줘야 한다" },
           { range: "10-02", note: "저녁 대화" },
         ],
       }),
@@ -665,7 +665,7 @@ describe("validateReport", () => {
     expect(run(report([sec("s", [para("p1", "저녁 대화")])], { safety: { flag: 3 as unknown as "none" } })).status).toBe("failed");
     expect(run({ ...report([sec("s", [para("p1", "저녁 대화")])]), safety: null }).status).toBe("failed");
     expect(run(report([])).status).toBe("failed");
-    expect(run(report([sec("s", [para("p1", "확률 99")])])).content).toBeNull();
+    expect(run(report([sec("s", [para("p1", "확률 99%")])])).content).toBeNull();
   });
 
   // v2.4: 긴 입력에서 m번호를 잘못 옮겨도 quote가 글자 그대로 든 메시지가 있으면 가장 가까운 번호로 다시 잇는다
@@ -726,7 +726,7 @@ describe("validateReport", () => {
           "까닭",
           [
             para("p1", "저녁 대화가 이어졌다", ["e1"]),
-            para("p2", "철수는 속마음은 분명 민지를 좋아해요"),
+            para("p2", "철수는 ADHD가 분명해요"),
             para("p3", "민지는 \"나는 철수가 제일 좋아\"라고 했다"),
             para("p4", "대화는 {{stat:nope}}개"),
             para("p5", "이 문단은 근거가 틀렸다", ["e2"]),
@@ -742,8 +742,8 @@ describe("validateReport", () => {
     });
   });
 
-  // v2.4: 행동·역할에 대한 과감한 판정은 남기고, 멤버를 대상으로 한 호감 단정만 지운다
-  it("판정 문장(실세·범인·~임이 틀림없다·~인 것 같다·범인일 확률)은 남고, 멤버를 향한 호감 단정은 지운다", () => {
+  // v2.4 Fix 1: 판정(실세·범인)도 속마음·호감 단정도 남고, 속성 비하·진단명 단정·폭력 부추김만 지운다(표 테스트는 policy.test)
+  it("판정 문장과 멤버를 향한 호감 단정은 남고, 속성 비하·진단명 단정·폭력 부추김은 지운다", () => {
     const keep = [
       "이 방의 실세는 철수다.",
       "약속 증발 사건의 범인은 민지다.",
@@ -751,16 +751,20 @@ describe("validateReport", () => {
       "민지가 이 방의 연결 반장인 것 같다.",
       "철수가 범인일 확률이 매우 높다.",
       "철수는 민지를 놀리는 걸 좋아한다.",
+      "민지는 사실 철수를 좋아한다.",
+      "철수는 민지한테 반했다.",
+      "철수는 민지에게 은근히 관심이 있다.",
     ];
-    const drop = ["민지는 사실 철수를 좋아한다.", "철수는 민지한테 반했다.", "철수는 민지에게 은근히 관심이 있다."];
+    const drop = ["민지는 여자라서 약속을 못 지킨다.", "철수는 ADHD다.", "철수를 한 대 때려 줘야 한다."];
     // 사람 이름이 든 문단이 남으려면 섹션에 원문과 맞는 근거가 하나 있어야 한다(사람 근거 규칙)
     const grounded = para("p0", "저녁마다 쉬는 이야기가 나왔다", ["e1"]);
     const r = run(report([sec("판정", [grounded, ...[...keep, ...drop].map((t, i) => para(`p${i + 1}`, t))], [ev("e1", "m1", "쉬는 중")])]));
     expect(r.content?.sections[0].paragraphs.map((p) => p.text).slice(1)).toEqual(keep);
     expect(r.dropped.checks.dropped_by).toEqual({ banned: drop.length });
     // 제목·헤드라인도 같은 검사
-    const head = run(report([sec("민지는 철수를 좋아한다", [para("p1", "저녁 대화가 이어졌다")])], { headline: "이 방의 실세는 철수다" }));
-    expect(head.content?.sections[0].title).toBe("");
+    const head = run(report([sec("민지는 철수를 좋아한다", [para("p1", "저녁 대화가 이어졌다")])], { headline: "이 방의 실세는 철수다", dek: "철수는 사이코패스다" }));
+    expect(head.content?.sections[0].title).toBe("민지는 철수를 좋아한다");
+    expect(head.content?.dek).toBe("");
     expect(head.content?.headline).toBe("이 방의 실세는 철수다");
   });
 

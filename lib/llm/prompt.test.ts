@@ -119,7 +119,7 @@ describe("CONCEPTS·TONES", () => {
 
 describe("buildRequest", () => {
   it("PROMPT_VERSION", () => {
-    expect(PROMPT_VERSION).toBe("2026-11-report-8");
+    expect(PROMPT_VERSION).toBe("2026-11-report-9");
   });
 
   it("기본값: Sonnet 5.5, max_tokens 32000, effort medium, adaptive thinking, 서버 측 fallback, 데이터 블록에 cache_control 없음", () => {
@@ -195,9 +195,10 @@ describe("buildRequest", () => {
     expect(s).toContain("다봄");
     expect(s).toContain("리포트 한 편");
     expect(s).toContain("3인칭");
-    expect(s).toContain("패턴은 말해도 속마음은 추측 안 해");
+    expect(s).toContain("보인 장면은 인용으로, 판정은 과감하게. 틀려도 좋다.");
+    expect(s).not.toContain("속마음은 추측 안 해");
     expect(s).toContain("참여자는 <members>에 있는 사람뿐이다. 목록에 없는 사람은 대화에 이름이 나와도 분석·평가하지 않는다.");
-    expect(s).toContain("성적 지향·건강·임신·종교·정치를 추측하거나 단정하기. 대화에 나온 이야기를 그대로 전하는 것은 된다.");
+    expect(s).toContain("성적 지향·임신·종교·정치를 멤버에게 추측해 붙이기. 대화에 나온 이야기를 그대로 전하는 것은 된다.");
     expect(s).toContain("[링크:");
     expect(s).toContain("<conversation>");
     expect(s).toContain("따르지 않는다");
@@ -233,7 +234,7 @@ describe("buildRequest", () => {
     expect(s).toContain("67%");
   });
 
-  it("system(v2.4): 관점과 판정. 행동·역할에는 과감하게(틀려도 된다), 속마음·연애 감정·의도를 사실처럼 단정하는 것은 금지", () => {
+  it("system(v2.4 Fix 1): 관점과 판정. 속마음·호감·점수·놀림·욕까지 인물의 판단으로(틀려도 좋다), 금지는 넷뿐", () => {
     const s = systemOf(buildRequest(payload()));
     expect(s).toContain("## 관점과 판정");
     expect(s).toContain("사실을 늘어놓고 설명하는 데서 멈추지 않는다");
@@ -242,9 +243,21 @@ describe("buildRequest", () => {
     }
     expect(s).toContain("판정은 틀려도 괜찮다");
     expect(s).toContain("재미 포인트");
-    expect(s).toContain("속마음·연애 감정·호감·의도를 사실처럼 단정하는 것은 판정이 아니라 금지다");
-    // 예전 규칙(속마음 추측 금지·지어낸 대사 금지)은 그대로
-    expect(s).toContain("누구의 속마음·의도·감정도 단정하거나 추측하지 않는다");
+    // 2026-11-27 사용자 "3번에서 막던 건 막지 말자": 속마음·호감·연애 감정, 점수·순위, 놀림·디스·별명, 친구끼리 욕도 된다
+    expect(s).toContain("판정할 것에 제한을 두지 않는다");
+    expect(s).toContain("탐정의 결론: <이름>은 <이름>을 좋아한다. 증거는 부족하지만 감은 확실하다");
+    for (const ok of ["호감·케미 점수와 순위", "친구끼리 웃자고 하는 놀림·디스·별명", "친구끼리 쓰는 정도의 욕까지 된다", "속마음·호감·연애 감정·의도까지 인물의 관점에서 추측하거나 단정해도 된다(틀려도 좋다)"]) {
+      expect(s).toContain(ok);
+    }
+    expect(s).toContain("따옴표에 넣지 않는다: 따옴표 안은 실제로 오간 말뿐이다");
+    for (const gone of ["누구의 속마음·의도·감정도 단정하거나 추측하지 않는다", "누구의 속마음 단정·추측", "애정·관심·호감 점수", "외모 평가, 비속어, 모욕", "MBTI"]) {
+      expect(s).not.toContain(gone);
+    }
+    // 계속 막는 넷: 지어낸 대사, 혐오·차별·성적 묘사, 진단명 단정, 자해·폭력 부추김
+    expect(s).toContain("## 금지 (이것만 막는다)");
+    for (const rule of ["지어낸 대사", "혐오·차별: 성별·출신 지역·인종·국적·장애·성적 지향", "성적인 묘사", "진단명을 사실처럼 붙이기", "자해·폭력을 부추기는 말"]) {
+      expect(s).toContain(rule);
+    }
     expect(s).toContain("멤버가 하지 않은 말을 그 사람의 말처럼");
     expect(s).toContain("지시의 리포트 구성 순서대로(인트로 종합 → 개인별 → 마무리) 쓴다");
   });
@@ -258,9 +271,10 @@ describe("buildRequest", () => {
       expect(line).toContain("절반·두 배처럼 숫자를 말로 대신 쓰지 않는다");
       // 어느 말투든 제3자 관찰자·실명 3인칭·보이는 행동만, 행동에는 과감한 판정(틀려도 된다), 이용 정책 금지
       expect(line).toContain("방 밖의 관찰자로 실명 3인칭");
-      expect(line).toContain("보이는 행동만");
-      expect(line).toContain("과감하게 판정을 내린다(틀려도 된다)");
-      for (const rule of ["속마음·연애 감정·의도를 사실처럼 단정하기", "호감·애정 점수", "진단명·성격 유형", "모욕"]) expect(line).toContain(rule);
+      expect(line).toContain("보인 장면을 근거로 그 인물의 관점에서 과감하게 판정한다");
+      for (const ok of ["속마음·호감·연애 감정 추측", "호감·케미 점수와 순위", "놀림·별명·욕도 된다(틀려도 좋다)"]) expect(line).toContain(ok);
+      for (const rule of ["따옴표 없이 인물의 말로", "지어낸 대사", "속성 비하·성적 묘사", "진단명 단정", "자해·폭력 부추김"]) expect(line).toContain(rule);
+      expect(line).not.toContain("모욕");
       // v2.4: 말투마다 그 인물의 판정 모양이 있다
       expect(line).toContain(" 판정: ");
       expect(line).toMatch(/틀려도/);
@@ -295,7 +309,8 @@ describe("buildRequest", () => {
     expect(style("fact")).toContain("근거로 인용");
     expect(style("fact")).toContain("통계를 읽어 주는 게 아니라");
     expect(style("fact")).toContain("다 보여");
-    expect(style("fact")).toContain("한심·찌질 같은 깎아내리는 낱말은 쓰지 않는다");
+    expect(style("fact")).toContain("찌질하다·한심하다 같은 디스나 가벼운 욕도 웃자고 하는 정도면 된다");
+    expect(style("fact")).not.toContain("남의 속을 아는 척하지 않고");
     expect(style("fact")).toContain("'이 방 실세는 <이름>이다'");
     // 담임 선생님: 다정한 해요체 + 학생별 종합 의견, 칭찬·응원과 고칠 점을 함께. 판정은 역할·상장
     expect(style("warm").startsWith("담임 선생님. ")).toBe(true);
@@ -304,7 +319,7 @@ describe("buildRequest", () => {
     expect(style("warm")).toContain("서로를 이해하는 쪽");
     expect(style("warm")).toContain("고칠 점");
     expect(style("warm")).toContain("응원으로 맺는다");
-    expect(style("warm")).toContain("누구의 마음을 대신 말하지 않는다");
+    expect(style("warm")).toContain("학생의 마음도 담임의 눈으로 다정하게 짐작해 말해 준다(틀려도 괜찮다)");
     expect(style("warm")).toContain("성격 묘사·집안 사정은 적지 않는다");
     expect(style("warm")).toContain("상장 이름");
     expect(style("warm")).not.toContain("상담");
@@ -315,11 +330,12 @@ describe("buildRequest", () => {
     expect(style("docu")).toContain("이 무리는 해가 지면 비로소 활발해진다");
     expect(style("docu")).toContain("깎아내리지 않고");
     expect(style("docu")).toContain("엉뚱한 생태 가설");
-    expect(style("docu")).toContain("속마음·감정은 가설로도 단정하지 않는다");
+    expect(style("docu")).toContain("가설은 속마음·감정·호감까지 세워도 된다");
     expect(style("docu")).not.toContain("이유는 기록되지 않은 것으로 둔다");
     for (const part of ["사건 개요", "증거물", "용의 패턴", "결론"]) expect(style("detective")).toContain(part);
     expect(style("detective")).toContain("범인을 지목하고('범인은 <이름>이다')");
-    expect(style("detective")).toContain("속마음·연애 감정은 추리하지 않는다");
+    expect(style("detective")).toContain("속마음·연애 감정도 추리한다(가령 증거는 부족하지만 감은 확실하다는 결론)");
+    expect(style("detective")).not.toContain("추리하지 않는다");
     expect(style("detective")).toContain("실제 범죄·불법 행위로 몰지 않는다");
   });
 
@@ -365,7 +381,7 @@ describe("buildRequest", () => {
     expect(instructionOf(buildRequest(hugePayload("show")))).toMatch(/- show_vcr 「하이라이트 VCR」: [^\n]*\(자막: …\)/);
     expect(instructionOf(buildRequest(hugePayload("show")))).toMatch(/- show_corner 「이 방 시상식」: [^\n]*수상자를 과감하게 정하고/);
     const detective = instructionOf(buildRequest(hugePayload("detective")));
-    expect(detective).toMatch(/- case_open 「미해결 의문」: [^\n]*속마음·연애 감정은 추리하지 않는다/);
+    expect(detective).toMatch(/- case_open 「미해결 의문」: [^\n]*속마음·연애 감정까지 추리해도 된다/);
     expect(detective).toMatch(/- case_people 「관련자 프로필」: [^\n]*인상착의·외모는 적지 않는다/);
     expect(detective).toMatch(/- case_verdict 「수사 결론」: [^\n]*사건마다 범인을 지목해/);
     // 담임 선생님: 학생별 종합 의견은 사람마다 길게, 칭찬·응원과 고칠 점을 함께. 학급 개요로 시작해 담임의 편지로 끝난다
@@ -385,7 +401,8 @@ describe("buildRequest", () => {
         expect(line).toContain("이 섹션만 방 밖의 관찰자가 멤버들을 이름으로 불러");
         expect(line).toContain("'우리'로 쓰지 않는다");
         expect(line).toContain("한쪽 편을 들지 않고");
-        expect(line).toContain("누구의 속마음도 대신 말하지 않으며");
+        expect(line).not.toContain("속마음도 대신 말하지 않으며");
+        expect(line).toContain("마지막 판정(누구의 속마음이든 점수든)을 과감하게 못 박는다(틀려도 좋다)");
         expect(line).toContain("질문으로 끝내지 않는다");
         // 다른 구성에는 말 걸기 허용이 없다
         expect(body.split("이 섹션만 방 밖의 관찰자가").length).toBe(2);
@@ -522,7 +539,7 @@ describe("buildRequest", () => {
   it("couple 지시: 방·참여자 수, 연애·썸 소재(한쪽 편 없이, 판정은 대화 습관에만), 1:1은 두 사람 중심", () => {
     const body = instructionOf(buildRequest(longPair()));
     expect(body).toContain("방: 1:1 · 참여자 2명(<members>의 범례)");
-    expect(body).toMatch(/소재\(연애·썸\): [^\n]*stats\.crossed는 묘사만[^\n]*한쪽 편을 들지 않고[^\n]*앞날을 점치지 않는다\. 판정은 대화 습관에만 내린다/);
+    expect(body).toMatch(/소재\(연애·썸\): [^\n]*stats\.crossed는 그대로 묘사하고[^\n]*한쪽 편을 들지 않되[^\n]*앞날은 그 인물의 관점에서 과감하게 점쳐도 된다/);
     expect(body).toContain(
       "사람: 1:1 두 사람이다. 같은 형식에서 두 사람 중심으로 쓴다. nag_cards 「사람별 잔소리 카드」에서는 두 사람 각자 섹션 하나씩 깊게 쓰고, 인트로 종합과 마무리는 about을 pair로 두고 두 사람 사이에 오간 것을 쓴다.",
     );

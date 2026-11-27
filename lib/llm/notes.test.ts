@@ -53,7 +53,7 @@ describe("sanitizeNotes", () => {
   it("메모를 60자로 자르고 금지 표현이 든 메모는 뺀다", () => {
     const long = "가".repeat(61);
     expect(sanitizeNotes([{ range: "08-02~08-31", note: long }])).toEqual([{ range: "08-02~08-31", note: "가".repeat(60) }]);
-    expect(sanitizeNotes([{ range: "08-02~08-31", note: "속으로 좋아하는 것 같다" }])).toEqual([]);
+    expect(sanitizeNotes([{ range: "08-02~08-31", note: "그냥 죽어 버려라" }])).toEqual([]);
   });
 
   it("코드 포인트로 센다(이모지 60개는 그대로)", () => {
