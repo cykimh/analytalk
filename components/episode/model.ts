@@ -118,7 +118,7 @@ export function formatAt(iso: string): string {
   return `${kstDate(ts)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
 }
 
-/** 읽은 범위 "전체 기간에서 N개". 대화가 길면 처음부터 끝까지 고르게 골라 보낸다(lib/payload/build). N은 보낸 메시지 수 */
+/** 읽은 범위 "전체 기간에서 N개". 대화가 길면 처음부터 끝까지 고르게 골라 보낸다(lib/payload/build). N은 보낸 원본 메시지 수(v2.7: 묶음 줄이 덮는 메시지 모두, 뺀 반응·미디어는 빼고) */
 export const readRange = (msgSent: number) => `전체 기간에서 ${formatCount(msgSent)}개`;
 
 /**

@@ -4,8 +4,9 @@ import { DEFAULT_EST_COST_USD, DEFAULT_MODEL, inputTokenBudgetFor, PROMPT_RESERV
 import { modelSettings } from "@/lib/llm/settings";
 import { buildPayload, payloadTokens } from "@/lib/payload/build";
 import type { ChatMessage } from "@/lib/parse/parse";
-import { syntheticGroupChat } from "@/test/syntheticChat";
+import { syntheticBurstyChat, syntheticGroupChat } from "@/test/syntheticChat";
 import {
+  compareLineStyles,
   displayNames,
   namedMessages,
   judge,
@@ -111,6 +112,24 @@ describe("measurePayload", () => {
 
   it("couple 컨셉은 kind pair", () => {
     expect(measurePayload(messages, "couple", "fact", modelSettings({}))).toMatchObject({ concept: "couple", kind: "pair" });
+  });
+});
+
+describe("compareLineStyles(v2.7)", () => {
+  it("같은 입력 예산에서 한 줄에 하나씩(예전 모양)과 묶고 접은 모양의 보낸 원본 메시지 수를 견준다(무료, API 없음)", () => {
+    const messages = syntheticBurstyChat({ people: 6, days: 150 });
+    const s = { ...modelSettings({}), inputBudget: 80_000 };
+    const r = compareLineStyles(messages, "group", "fact", s);
+    expect(r.compact).toBe(measurePayload(messages, "group", "fact", s).msgSent);
+    expect(r.plain).toBe(measurePayload(messages, "group", "fact", s, false).msgSent);
+    expect(r.compact).toBeGreaterThan(r.plain * 1.2);
+    expect(r.gainPct).toBeCloseTo(((r.compact - r.plain) / r.plain) * 100, 1);
+  });
+
+  it("대화 전체가 들어가면 둘 다 전부다(늘어난 몫 0%)", () => {
+    const messages = syntheticBurstyChat({ people: 3, days: 5 });
+    const r = compareLineStyles(messages, "group", "fact", modelSettings({}));
+    expect(r).toMatchObject({ plain: r.compact, gainPct: 0 });
   });
 });
 

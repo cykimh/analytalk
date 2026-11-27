@@ -19,6 +19,7 @@ import {
   REACTION_MAX_CHARS,
   readBlock,
 } from "./build";
+import { maskPII } from "./mask";
 import { applyDisplayNames, type NameMap } from "./names";
 import { validatePayload } from "./validate";
 
@@ -753,5 +754,46 @@ describe("buildPayload v2.7: 몰아 보내는 큰 단톡방(전체 기간에서 
     const b = group(57_000);
     expect(payloadTokens(b, 1).text).toBeLessThan(payloadTokens(a, 1).text);
     expect(b.msgSent).toBeLessThanOrEqual(a.msgSent);
+  });
+});
+
+describe("buildPayload v2.7: 까다로운 본문 섞어 보기", () => {
+  // 구분자·×숫자·미디어 표시처럼 보이는 글, 링크·전화번호, 줄바꿈, 그림 문자, 긴 글, 시스템 알림(번호 건너뜀)
+  const BODIES = ["a ¦ b", "ㅋㅋ×5", "[사진×2]", "[사진]", "ㅋㅋ ¦ ㅋㅋ", "봐 https://youtu.be/x 010-1234-5678", "첫 줄\n둘째 줄", "😂😂", "ㅋㅋ", "ㅇㅇ", "?", "응 그래", "가".repeat(400), "ㅋ×ㅋ×3", "이거 ×2 해"];
+  const KINDS: ChatMessage["kind"][] = ["photo", "emoticon", "video", "deleted", "file"];
+
+  it("시드마다 아무렇게나 섞은 대화도 예산마다 validatePayload를 통과하고, payloadIndex 번호의 보낸 사람·본문이 원본과 맞는다", () => {
+    for (let seed = 1; seed <= 40; seed++) {
+      let x = seed;
+      const rnd = (k: number) => ((x = (x * 1103515245 + 12345) & 0x7fffffff) % k);
+      const rows: Raw[] = [];
+      let ts = kst(2026, 10, 1, 9);
+      for (let i = 0; i < 120; i++) {
+        ts += [0, 0, 0, 60_000, 300_000, 8 * HOUR][rnd(6)];
+        const r = rnd(10);
+        if (r === 0) rows.push([null, ts, "P3님이 들어왔습니다."]);
+        else if (r < 3) rows.push([`P${1 + rnd(3)}`, ts, "", KINDS[rnd(KINDS.length)]]);
+        else rows.push([`P${1 + rnd(3)}`, ts, BODIES[rnd(BODIES.length)]]);
+      }
+      const messages = chat(rows);
+      const byId = new Map(messages.map((m) => [m.id, m]));
+      const full = payloadTokens(buildPayload({ messages, tone: "fact", concept: "group", kind: "group", tokenBudget: 1e9, tokensPerChar: 1 }), 1).text;
+      for (const share of [0.97, 0.85, 0.6, 0.3]) {
+        const budget = Math.floor(full * share);
+        const p = buildPayload({ messages, tone: "fact", concept: "group", kind: "group", tokenBudget: budget, tokensPerChar: 1 });
+        const r = validatePayload(p);
+        expect([seed, share, r.ok ? "ok" : r.error]).toEqual([seed, share, "ok"]);
+        expect([seed, share, payloadTokens(p, 1).text <= budget]).toEqual([seed, share, true]);
+        for (const [ref, line] of payloadIndex(p)) {
+          const m = byId.get(Number(ref.slice(1)))!;
+          expect([seed, ref, line.sender]).toEqual([seed, ref, m.sender]);
+          // 한 메시지 줄의 미디어는 표시 그대로다. 묶음 안 글은 구분자 글자만 전각으로, ×숫자 꼬리만 x로 바뀐다
+          const marks: Partial<Record<ChatMessage["kind"], string>> = { photo: "[사진]", emoticon: "[이모티콘]", video: "[동영상]", deleted: "[삭제된 메시지]", file: "[파일]" };
+          const body = m.kind === "text" ? maskPII(m.text.replace(/\n/g, " ⏎ ")).text : marks[m.kind]!;
+          const ok = line.text === body || line.text === body.replaceAll("¦", "￤") || line.text === body.replaceAll("¦", "￤").replace(/×(?=\d+\]?$)/, "x");
+          expect([seed, ref, ok]).toEqual([seed, ref, true]);
+        }
+      }
+    }
   });
 });

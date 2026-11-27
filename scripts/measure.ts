@@ -4,7 +4,8 @@
 //                       [--count-only | --check-limits] [--dry-run] [--prod] [--yes]
 //
 // 파싱 → 표시 이름(카톡 이름) → buildPayloadForBudget → (실행 모드에 따라)
-//   --dry-run      추정 토큰만 찍고 멈춘다(API·DB 호출, 파일 쓰기 없음, 키 불필요)
+//   --dry-run      추정 토큰과 줄 모양 비교(v2.7: 같은 예산에서 한 줄에 하나씩 vs 묶고 접은 모양의 보낸 원본 메시지 수)만 찍고 멈춘다
+//                  (API·DB 호출, 파일 쓰기 없음, 키 불필요)
 //   --count-only   countTokens만(무료): 글자당 토큰, 고정 몫(system·통계·지시)
 //   --check-limits 첫 호출(buildRequests[0])과 같은 모양의 아주 작은 요청을 보내 rate limit 헤더를 찍는다(유료, 소액)
 //   (기본)         countTokens + 리포트 --runs회 실행(유료). 실행마다 원장(record_script_usage)에 바로 기록
@@ -120,8 +121,11 @@ export function namedMessages(p: { participants: string[]; messages: ChatMessage
   return dropSafetyFlagged(named.messages).messages;
 }
 
-/** 입력 예산(s.inputBudget)에서 통계 요약·프롬프트 몫(PROMPT_RESERVE_TOKENS)을 빼고 맞춘 페이로드 */
-export function measurePayload(messages: ChatMessage[], concept: Args["concept"], tone: PickableTone, s: ModelSettings): Payload {
+/**
+ * 입력 예산(s.inputBudget)에서 통계 요약·프롬프트 몫(PROMPT_RESERVE_TOKENS)을 빼고 맞춘 페이로드.
+ * compact가 false면 v2.6까지의 줄 모양(한 줄에 하나씩)으로 만든다(compareLineStyles용)
+ */
+export function measurePayload(messages: ChatMessage[], concept: Args["concept"], tone: PickableTone, s: ModelSettings, compact = true): Payload {
   return buildPayloadForBudget({
     messages,
     concept,
@@ -129,7 +133,18 @@ export function measurePayload(messages: ChatMessage[], concept: Args["concept"]
     kind: concept === "couple" ? "pair" : "group",
     inputBudget: s.inputBudget,
     tokensPerChar: TOKENS_PER_CHAR,
+    compact,
   });
+}
+
+/**
+ * v2.7 효과: 같은 입력 예산에서 transcript에 들어가는 원본 메시지 수(msgSent)를 한 줄에 하나씩(plain)과 묶고 접은 모양(compact)으로 견준다.
+ * gainPct = (compact − plain) / plain × 100. API를 부르지 않는다(--dry-run에서도 찍는다)
+ */
+export function compareLineStyles(messages: ChatMessage[], concept: Args["concept"], tone: PickableTone, s: ModelSettings) {
+  const plain = measurePayload(messages, concept, tone, s, false).msgSent;
+  const compact = measurePayload(messages, concept, tone, s).msgSent;
+  return { plain, compact, gainPct: round(((compact - plain) / plain) * 100, 1) };
 }
 
 /** 인자의 --model·--budget을 앱 설정(env)에 덮어쓴다. --model만 주면 입력 예산도 그 모델 기준(INPUT_TOKEN_BUDGET env는 무시) */
@@ -367,11 +382,14 @@ async function main(): Promise<void> {
   const s = settingsFor(args);
   const parsed = parseExport(await readUploads([new File([readFileSync(args.file)], basename(args.file))]));
   if (parsed.formatId === null) throw new Error("형식을 알아보지 못했다");
-  const payload = measurePayload(namedMessages(parsed), args.concept, args.tone, s);
+  const messages = namedMessages(parsed);
+  const payload = measurePayload(messages, args.concept, args.tone, s);
   const est = payloadTokens(payload, TOKENS_PER_CHAR);
   console.log(`모델 ${s.model}, 예산 ${s.inputBudget}, 말투 ${args.tone}`);
   const { msgTotal, msgSent } = payload;
   console.log(`메시지 ${msgTotal}건, 보낸 ${msgSent}건, 추정 토큰 ${est.total}(본문 ${est.text})`);
+  const styles = compareLineStyles(messages, args.concept, args.tone, s);
+  console.log(`줄 모양(v2.7): 한 줄에 하나씩이면 ${styles.plain}건, 묶고 접으면 ${styles.compact}건(${styles.gainPct >= 0 ? "+" : ""}${styles.gainPct}%)`);
   if (args.dryRun) return;
 
   const env = args.prod ? parseEnv(readFileSync(".env.production.local", "utf8")) : process.env;

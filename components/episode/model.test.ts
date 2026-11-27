@@ -12,6 +12,8 @@ import {
   reportPhase,
   retryKept,
 } from "./model";
+import { buildPayload, readBlock } from "@/lib/payload/build";
+import { syntheticBurstyChat } from "@/test/syntheticChat";
 
 describe("isActive (폴링을 계속할지)", () => {
   it.each([
@@ -98,6 +100,15 @@ describe("reportAction (카드의 버튼)", () => {
 describe("날짜·시각 (KST)", () => {
   it("readRange: 전체 기간에서 보낸 메시지 수", () => {
     expect(readRange(6240)).toBe("전체 기간에서 6,240개");
+  });
+
+  it("readRange(v2.7): 묶음 줄이 덮는 원본 메시지 수로 센다(줄 수가 아니다)", () => {
+    const messages = syntheticBurstyChat({ people: 6, days: 60 });
+    const p = buildPayload({ messages, tone: "fact", concept: "group", kind: "group", tokenBudget: 20_000, tokensPerChar: 1 });
+    const lines = readBlock(p.transcript).filter((l) => l.type === "message");
+    const originals = lines.reduce((n, l) => n + (l.type === "message" ? l.more + 1 : 0), 0);
+    expect(originals).toBeGreaterThan(lines.length);
+    expect(readRange(p.msgSent)).toBe(`전체 기간에서 ${originals.toLocaleString("en-US")}개`);
   });
 
   it("kstDay·formatAt", () => {
