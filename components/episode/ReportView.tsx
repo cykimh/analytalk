@@ -1,10 +1,10 @@
-// 리포트 한 편: 표지 카드(킥커·헤드라인·dek·스티커) → (있으면) 폴라로이드 → 섹션 카드(아이콘 스티커·제목·문단 → 근거 메모지).
+// 리포트 한 편: 표지 카드(킥커·헤드라인·dek·스티커) → (있으면) 폴라로이드 → 섹션 카드(아이콘 스티커·제목·문단마다 그 문단이 처음 쓴 근거 메모지).
 // 킥커에 'AI 생성, 재미·참고용'을 단다. 모든 글은 React 텍스트 노드로만 그린다. 모델이 쓴 글은 모두 StatText로 그려
 // {{stat:경로}}를 통계 값으로 채운다. 채운 뒤 빈 헤드라인은 fallbackTitle로, 빈 dek는 그리지 않는다.
 // 문단 [틀렸어요]는 여기 없다: 리포트 화면이 #report-capture 바깥 아래에 ParagraphFeedback으로 둔다.
 // 띄어 쓰지 않은 긴 글(ㅋ 줄, 붙여 쓴 문장)은 keep-all에서 끊을 곳이 없는 한 단어다. 글이 든 grid는 grid-cols-1(minmax(0,1fr))로
 // 칸이 그 단어 폭만큼 넓어지지 않게 하고, 모델이 쓴 글은 wrap-anywhere로 카드 폭에서 줄을 바꾼다(DESIGN.md 레이아웃)
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { Highlight } from "@/components/scrap/Highlight";
 import { Paper } from "@/components/scrap/Paper";
 import { Sticker } from "@/components/scrap/Sticker";
@@ -13,6 +13,7 @@ import { hasStatText } from "@/lib/episode/statText";
 import type { StoredReport } from "@/lib/llm/schema";
 import type { ChatStats } from "@/lib/stats/compute";
 import { Evidence } from "./Evidence";
+import { placeEvidence } from "./model";
 import { StatText } from "./StatText";
 
 export function ReportView({
@@ -71,18 +72,22 @@ export function ReportView({
               </Highlight>
             </span>
           </h2>
-          {section.paragraphs.map((p, pi) => (
-            <p key={`${pi}-${p.key}`} className="text-[1.0625rem] leading-[1.8] wrap-anywhere">
-              <StatText text={p.text} stats={stats} />
-            </p>
+          {placeEvidence(section).map(({ paragraph: p, evidence }, pi) => (
+            <Fragment key={`${pi}-${p?.key ?? "rest"}`}>
+              {p && (
+                <p className="text-[1.0625rem] leading-[1.8] wrap-anywhere">
+                  <StatText text={p.text} stats={stats} />
+                </p>
+              )}
+              {evidence.length > 0 && (
+                <div className="grid grid-cols-1 gap-3">
+                  {evidence.map(({ e, index }) => (
+                    <Evidence key={e.id} index={index} sender={e.sender} at={e.at} quote={e.quote} />
+                  ))}
+                </div>
+              )}
+            </Fragment>
           ))}
-          {section.evidence.length > 0 && (
-            <div className="grid grid-cols-1 gap-3 pt-1">
-              {section.evidence.map((e, ei) => (
-                <Evidence key={e.id} index={ei} sender={e.sender} at={e.at} quote={e.quote} />
-              ))}
-            </div>
-          )}
         </Paper>
       ))}
     </article>

@@ -5,6 +5,7 @@ import {
   isSettled,
   kstDay,
   mergeNotes,
+  placeEvidence,
   readRange,
   reportAction,
   reportPhase,
@@ -112,5 +113,35 @@ describe("retryKept (다시 쓰기가 실패해 앞의 글을 남겼다)", () =>
     expect(retryKept("partial", "retryable")).toBe(true);
     expect(retryKept("partial", null)).toBe(false);
     expect(retryKept("failed", "retryable")).toBe(false);
+  });
+});
+
+describe("placeEvidence", () => {
+  const e = (id: string) => ({ id, msg_id: "m1", quote: id, sender: "민지", at: "2026-10-01T20:04:00+09:00" });
+  const p = (key: string, evidence_ids: string[]) => ({ key, text: key, evidence_ids });
+  const section = (paragraphs: ReturnType<typeof p>[], evidence: ReturnType<typeof e>[]) => ({
+    part: "nag_cards",
+    icon: "🙄",
+    title: "t",
+    about: "민지",
+    paragraphs,
+    evidence,
+  });
+  const shape = (rows: ReturnType<typeof placeEvidence>) => rows.map((r) => [r.paragraph?.key ?? null, r.evidence.map((x) => [x.e.id, x.index])]);
+
+  it("근거 메모지는 그 근거를 처음 쓴 문단 바로 아래에 한 번만, 섹션 안 순서(index)는 그대로", () => {
+    const rows = placeEvidence(section([p("p1", ["e2"]), p("p2", []), p("p3", ["e2", "e1", "e9"])], [e("e1"), e("e2")]));
+    expect(shape(rows)).toEqual([
+      ["p1", [["e2", 1]]],
+      ["p2", []],
+      ["p3", [["e1", 0]]],
+    ]);
+  });
+
+  it("어느 문단도 쓰지 않는 근거(예전 리포트)는 섹션 끝에 모아 둔다", () => {
+    expect(shape(placeEvidence(section([p("p1", [])], [e("e1"), e("e2")])))).toEqual([
+      ["p1", []],
+      [null, [["e1", 0], ["e2", 1]]],
+    ]);
   });
 });

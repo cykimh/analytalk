@@ -52,6 +52,33 @@ function content(quote: string, statText = false, paragraph?: string, emptyHeadl
   };
 }
 
+/** v2.2 분량의 긴 저장 리포트: 섹션 10개 × 문단 5개, 섹션마다 근거 3개(문단 p1·p3·p5가 하나씩 처음 쓴다) = 인용 30개 */
+function longContent() {
+  const body = "저녁이 되면 이 방은 다시 살아난다. 한 사람이 운을 떼면 다른 사람이 곧 받아 이어 간다. 이야기는 짧은 말로 시작해 영화 이야기로 번진다. 다 보여.";
+  return {
+    ...content("집에서 쉬는 중"),
+    headline: "또 저녁 8시에 모인 두 사람에게 하는 잔소리",
+    sections: Array.from({ length: 10 }, (_, si) => ({
+      part: si === 0 ? "nag_open" : si < 3 ? "nag_cards" : si < 9 ? "nag_room" : "nag_last",
+      icon: "🙄",
+      title: `긴 잔소리 ${si + 1}`,
+      about: si === 1 ? "철수" : si === 2 ? "민지" : "pair",
+      paragraphs: Array.from({ length: 5 }, (_, pi) => ({
+        key: `p${pi + 1}`,
+        text: `섹션 ${si + 1}의 문단 ${pi + 1}. ${body}`,
+        evidence_ids: pi % 2 === 0 ? [`e${pi / 2 + 1}`] : [],
+      })),
+      evidence: Array.from({ length: 3 }, (_, ei) => ({
+        id: `e${ei + 1}`,
+        msg_id: `m${ei}`,
+        quote: `섹션 ${si + 1} 인용 ${ei + 1}`,
+        sender: ei % 2 === 0 ? "철수" : "민지",
+        at: "2026-10-01T20:04:00+09:00",
+      })),
+    })),
+  };
+}
+
 /** 공유 API가 처음 만들 때 돌려주는 링크 */
 const SHARE_URL = "http://localhost:3100/s/AAAAAAAAAAAAAAAAAAAAAA";
 
@@ -68,6 +95,7 @@ async function fakeApi(
     emptyHeadline?: boolean;
     notes?: boolean | { range: string; note: string }[];
     tone?: string;
+    long?: boolean;
   } = {},
 ) {
   const api = {
@@ -108,7 +136,7 @@ async function fakeApi(
         shared: api.shared,
         report: {
           status: api.status,
-          content: hasContent() ? content(o.quote ?? "집에서 쉬는 중", o.statText, o.paragraph, o.emptyHeadline) : null,
+          content: hasContent() ? (o.long ? longContent() : content(o.quote ?? "집에서 쉬는 중", o.statText, o.paragraph, o.emptyHeadline)) : null,
           errorCode: errorCode(),
         },
       },
@@ -665,6 +693,21 @@ test.describe("AI 리포트", () => {
       await expectNoHorizontalScroll(page);
       await page.goto(`/c/${ID}/report`);
       await expect(page.getByRole("heading", { name: "리포트 헤드라인" })).toBeVisible();
+      await expectNoHorizontalScroll(page);
+    });
+
+    test("긴 리포트(섹션 10 × 문단 5, 인용 30): 섹션이 모두 보이고, 인용은 그 인용을 처음 쓴 문단 바로 아래에 있으며, 가로 스크롤이 없다", async ({ page, context }) => {
+      await fakeApi(context, "done", { long: true });
+      await page.goto(`/c/${ID}/report`);
+      await expect(page.getByRole("heading", { name: "또 저녁 8시에 모인 두 사람에게 하는 잔소리" })).toBeVisible();
+      await expect(page.getByRole("heading", { level: 2, name: /^긴 잔소리 \d+$/ })).toHaveCount(10);
+      await expect(page.getByRole("figure")).toHaveCount(30);
+      // 섹션 하나 안의 읽는 순서: 문단 1 → 인용 1 → 문단 2 → 문단 3 → 인용 2 → 문단 4 → 문단 5 → 인용 3
+      const card = page.locator("section").filter({ has: page.getByRole("heading", { name: "긴 잔소리 4", exact: true }) });
+      const text = (await card.innerText()).replace(/\s+/g, " ");
+      const order = ["문단 1.", "섹션 4 인용 1", "문단 2.", "문단 3.", "섹션 4 인용 2", "문단 4.", "문단 5.", "섹션 4 인용 3"].map((x) => text.indexOf(x));
+      expect(order.every((i) => i >= 0)).toBe(true);
+      expect([...order].sort((a, b) => a - b)).toEqual(order);
       await expectNoHorizontalScroll(page);
     });
 
