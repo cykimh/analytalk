@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatAt,
+  groupStages,
   isActive,
   isSettled,
   kstDay,
@@ -142,6 +143,47 @@ describe("placeEvidence", () => {
     expect(shape(placeEvidence(section([p("p1", [])], [e("e1"), e("e2")])))).toEqual([
       ["p1", []],
       [null, [["e1", 0], ["e2", 1]]],
+    ]);
+  });
+});
+
+describe("groupStages (v2.4: 종합 → 멤버별 → 마무리)", () => {
+  const s = (part: string, about = "group") => ({ part, about });
+  const shape = (sections: { part: string; about: string }[]) =>
+    groupStages(sections).map((g) => [g.stage, g.sections.map((x) => x.index)]);
+
+  it("첫 사람 섹션 앞은 종합, 사람 섹션들은 멤버별(그 밖의 멤버 섹션 포함), 그 뒤는 마무리", () => {
+    const sections = [
+      s("case_brief"),
+      s("case_timeline"),
+      s("case_people", "민수"),
+      s("case_people", "으리"),
+      s("case_others"),
+      s("case_open"),
+      s("case_verdict"),
+    ];
+    expect(shape(sections)).toEqual([
+      ["intro", [0, 1]],
+      ["people", [2, 3, 4]],
+      ["outro", [5, 6]],
+    ]);
+  });
+
+  it("예전 구성(v2.3: 사람 카드 뒤에 방 전체 구성)·구성 키가 빈 행도 자리로 나눈다", () => {
+    expect(shape([s("nag_open"), s("nag_cards", "철수"), s("", "민지"), s("nag_room"), s("nag_last")])).toEqual([
+      ["intro", [0]],
+      ["people", [1, 2]],
+      ["outro", [3, 4]],
+    ]);
+  });
+
+  it("사람 섹션이 없으면 한 부분(종합)뿐이고, 빈 리포트는 부분이 없다", () => {
+    expect(shape([s("map", "pair"), s("nag_room")])).toEqual([["intro", [0, 1]]]);
+    expect(shape([])).toEqual([]);
+    // 사람 섹션으로 시작하면 종합이 없다
+    expect(shape([s("show_cast", "민지"), s("show_close")])).toEqual([
+      ["people", [0]],
+      ["outro", [1]],
     ]);
   });
 });

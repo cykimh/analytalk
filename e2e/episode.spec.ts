@@ -5,12 +5,12 @@ import type { ChatMessage } from "@/lib/parse/parse";
 import { computeStats } from "@/lib/stats/compute";
 import { androidChat, excludeMember, expectNoHorizontalScroll, fakeTurnstile, login, textUpload } from "./helpers";
 
-// 대화·상태·다시 쓰기·피드백 API는 page.route로 흉내 낸다(테스트 모드 서버에는 Claude가 없다).
+// 대화·상태·다시 쓰기·공유 API는 page.route로 흉내 낸다(테스트 모드 서버에는 Claude가 없다).
 // 페이지(서버 컴포넌트)의 초대 코드 확인만 진짜 세션을 쓴다.
 
 const ID = "0b6c3f1e-2a4d-4c5b-9e8f-7a6b5c4d3e2f";
-/** 413 응답의 maxTokens. 입력 예산 − 프롬프트 몫 − 통계·범례 몫이 1,000 이상 남는 값이다 */
-const MAX_TOKENS_413 = 12_000;
+/** 413 응답의 maxTokens. 입력 예산 − 프롬프트 몫 − 통계·범례 몫이 1,000 이상 남는 값이다(v2.4: 프롬프트 몫 9,000이라 12,000 → 13,000) */
+const MAX_TOKENS_413 = 13_000;
 /** 413 테스트용 긴 대화: 첫 페이로드가 재시도 예산(maxTokens × 0.95)을 넘도록 철수가 긴 메시지를 더 보낸다 */
 const LONG_BODIES = Array.from({ length: 12 }, (_, i) => `${i + 1}번째 긴 이야기 ${"오늘 저녁에 뭐 먹을지 한참 고민하다가 결국 집 앞 국밥집에 갔어요 ".repeat(12)}`);
 const XSS = "<img src=x onerror=alert(1)>";
@@ -82,7 +82,7 @@ function longContent() {
 /** 공유 API가 처음 만들 때 돌려주는 링크 */
 const SHARE_URL = "http://localhost:3100/s/AAAAAAAAAAAAAAAAAAAAAA";
 
-/** 리포트 상태(status)를 바꿔 가며 대화·상태·공유 API를 흉내 낸다(Task 6 계약). 다시 쓰기·피드백·공유 요청 본문을 모은다 */
+/** 리포트 상태(status)를 바꿔 가며 대화·상태·공유 API를 흉내 낸다(Task 6 계약). 다시 쓰기·공유 요청 본문을 모은다 */
 async function fakeApi(
   context: BrowserContext,
   status: string,
@@ -108,7 +108,6 @@ async function fakeApi(
         : o.notes) as { range: string; note: string }[] | null,
     paused: o.paused ?? false,
     retries: [] as unknown[],
-    feedback: [] as unknown[],
     deleted: 0,
     shared: o.shared ?? false,
     sharePosts: [] as unknown[],
@@ -154,10 +153,6 @@ async function fakeApi(
     api.retries.push(route.request().postDataJSON());
     api.status = "running";
     return route.fulfill({ status: 202 });
-  });
-  await context.route("**/api/feedback", (route) => {
-    api.feedback.push(route.request().postDataJSON());
-    return route.fulfill({ status: 204 });
   });
   // shares.ts와 같다: 처음 만들면 {url}, 이미 공유 중이면 {url: null}, DELETE는 204
   await context.route("**/api/shares", (route) => {
@@ -397,7 +392,7 @@ test.describe("AI 리포트", () => {
     await expect(reportCard(again).getByRole("link", { name: "리포트 읽기" })).toBeVisible({ timeout: 10_000 });
 
     // [지금 삭제]는 한 번 더 묻고 지운 뒤 처음 화면으로 간다
-    await expect(again.getByText("리포트와 통계, 이 대화로 남긴 피드백이 모두 지워지고 되돌릴 수 없어요.")).toBeVisible();
+    await expect(again.getByText("리포트와 통계가 모두 지워지고 되돌릴 수 없어요.")).toBeVisible();
     await again.getByRole("button", { name: "지금 삭제" }).click();
     expect(api.deleted).toBe(0);
     await again.getByRole("button", { name: "정말 지우기" }).click();
@@ -459,13 +454,13 @@ test.describe("AI 리포트", () => {
     await expect(reportCard(page)).toContainText("109");
   });
 
-  test("리포트 화면: quote의 HTML은 글자로만 보이고 dialog가 뜨지 않으며, 문단 [틀렸어요]가 피드백을 보낸다", async ({ page, context }) => {
+  test("리포트 화면: quote의 HTML은 글자로만 보이고 dialog가 뜨지 않으며, 문단 [틀렸어요]는 없다", async ({ page, context }) => {
     const dialogs: string[] = [];
     page.on("dialog", (d) => {
       dialogs.push(d.message());
       void d.dismiss();
     });
-    const api = await fakeApi(context, "done", { quote: XSS });
+    await fakeApi(context, "done", { quote: XSS });
     await page.goto(`/c/${ID}/report`);
     await expect(page.getByText(XSS)).toBeVisible();
     await expect(page.locator('img[src="x"]')).toHaveCount(0);
@@ -484,10 +479,9 @@ test.describe("AI 리포트", () => {
     await expect(bubble).toContainText(/민지[\s\S]*2026-10-01\s*20:04/);
     await expect(page.getByRole("link", { name: "← 대화 홈" })).toHaveAttribute("href", `/c/${ID}`);
 
-    await page.getByRole("button", { name: "틀렸어요" }).click();
-    await page.getByRole("button", { name: "사실과 달라요" }).click();
-    await expect(page.getByText("알려 줘서 고마워요")).toBeVisible();
-    expect(api.feedback).toEqual([{ id: ID, paragraphKey: "s1.p1", reason: "wrong_fact" }]);
+    // v2.4: 문단 피드백 모음([틀렸어요])을 뺐다
+    await expect(page.getByRole("button", { name: "틀렸어요" })).toHaveCount(0);
+    await expect(page.getByText("틀린 문단이 있으면 알려 주세요")).toHaveCount(0);
     expect(dialogs).toEqual([]);
   });
 
@@ -714,6 +708,11 @@ test.describe("AI 리포트", () => {
       const order = ["문단 1.", "섹션 4 인용 1", "문단 2.", "문단 3.", "섹션 4 인용 2", "문단 4.", "문단 5.", "섹션 4 인용 3"].map((x) => text.indexOf(x));
       expect(order.every((i) => i >= 0)).toBe(true);
       expect([...order].sort((a, b) => a - b)).toEqual(order);
+      // v2.4: 세 부분 머리말(종합 → 멤버별 → 마무리). 사람 카드(섹션 2·3)가 멤버별 묶음 안에 있다
+      const groups = page.getByRole("group");
+      await expect(groups).toHaveCount(3);
+      for (const [i, name] of ["종합", "멤버별", "마무리"].entries()) await expect(groups.nth(i)).toHaveAccessibleName(name);
+      await expect(page.getByRole("group", { name: "멤버별" }).getByRole("heading", { level: 2 })).toHaveText([/긴 잔소리 2$/, /긴 잔소리 3$/]);
       await expectNoHorizontalScroll(page);
     });
 

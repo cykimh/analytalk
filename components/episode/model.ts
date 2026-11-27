@@ -1,6 +1,6 @@
 // 대화 홈·리포트 화면의 순수 로직(API 응답 → 화면 상태·문구). DOM 없이 테스트한다.
 import { formatCount, kstDate } from "@/components/stats/format";
-import type { Tone } from "@/lib/llm/concepts";
+import { PEOPLE_PART_KEYS, type Tone } from "@/lib/llm/concepts";
 import type { StoredReport } from "@/lib/llm/schema";
 import type { ChatStats } from "@/lib/stats/compute";
 
@@ -151,4 +151,32 @@ export function placeEvidence(section: Section): { paragraph: Section["paragraph
   const rows = section.paragraphs.map((paragraph) => ({ paragraph, evidence: take(paragraph.evidence_ids) }));
   const rest = take(section.evidence.map((e) => e.id));
   return rest.length > 0 ? [...rows, { paragraph: null, evidence: rest }] : rows;
+}
+
+/** 리포트의 세 부분(v2.4): 인트로 종합 → 멤버별(개인별 특징) → 마무리 */
+export type ReportStage = "intro" | "people" | "outro";
+export const STAGE_LABEL: Record<ReportStage, string> = { intro: "종합", people: "멤버별", outro: "마무리" };
+
+/** 사람을 다루는 섹션: 개인별 구성 키(people·others)이거나 about이 참여자 이름 */
+const isPeopleSection = (s: Pick<Section, "part" | "about">) =>
+  PEOPLE_PART_KEYS.has(s.part) || (s.about !== "group" && s.about !== "pair" && s.about !== "");
+
+/**
+ * 저장된 섹션을 세 부분으로 나눈다(v2.4). 저장 순서를 바꾸지 않고 자리로 정한다: 첫 사람 섹션 앞은 종합, 첫 사람 섹션부터
+ * 마지막 사람 섹션까지는 멤버별, 그 뒤는 마무리. 구성 키가 없거나("") 예전 구성(v2.3까지)인 행도 같은 규칙으로 나뉜다.
+ * 사람 섹션이 없으면 한 부분(종합)뿐이다(화면은 머리말을 그리지 않는다). index는 리포트 전체에서 섹션 순서다
+ */
+export function groupStages<S extends Pick<Section, "part" | "about">>(
+  sections: readonly S[],
+): { stage: ReportStage; sections: { section: S; index: number }[] }[] {
+  const rows = sections.map((section, index) => ({ section, index }));
+  const first = sections.findIndex(isPeopleSection);
+  if (first < 0) return rows.length === 0 ? [] : [{ stage: "intro", sections: rows }];
+  const last = sections.findLastIndex(isPeopleSection);
+  const groups: { stage: ReportStage; sections: { section: S; index: number }[] }[] = [
+    { stage: "intro", sections: rows.slice(0, first) },
+    { stage: "people", sections: rows.slice(first, last + 1) },
+    { stage: "outro", sections: rows.slice(last + 1) },
+  ];
+  return groups.filter((g) => g.sections.length > 0);
 }

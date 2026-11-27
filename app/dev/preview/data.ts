@@ -20,7 +20,7 @@ const evidence = (id: string, sender: string, at: string, quote: string) => ({ i
 /** 문단 하나(근거 id) */
 const para = (key: string, text: string, evidence_ids: string[] = []) => ({ key, text, evidence_ids });
 
-/** v2.2 모양: 잔소리하는 친구 구성(오프닝 → 멤버별 잔소리 카드 → 방 전체 → 마지막 한마디), 섹션마다 문단 3~5개 */
+/** v2.4 모양: 잔소리하는 친구 구성(종합: 첫 잔소리·방 전체 → 멤버별: 사람별 잔소리 카드 → 마무리: 마지막 한마디), 섹션마다 문단 3~5개 */
 export const previewReport: StoredReport = {
   safety: { flag: "none" },
   declined_topics: [],
@@ -44,31 +44,6 @@ export const previewReport: StoredReport = {
       evidence: [evidence("e1", top, "2025-01-03T19:12:00+09:00", "오늘 저녁 뭐 먹을까?")],
     },
     {
-      part: "nag_cards",
-      icon: "📣",
-      title: `${top}, 질문만 하고 답은 안 듣는다`,
-      about: top,
-      paragraphs: [
-        para("p1", `질문은 제일 많이 던진다. 대답이 오기도 전에 다음 질문이 나간다. ${top}의 지분이 {{stat:share.${top}}}인 이유가 다 있다.`, ["e1"]),
-        para("p2", `약속을 처음 꺼내는 것도 ${top}이다. 날짜를 정하는 건 끝까지 남한테 넘긴다. 또 그런다.`),
-        para("p3", "새벽에도 사진이 올라온다. 잘 시간에 왜 맛집 사진이냐고. 다음 날 아침엔 아무 일 없었다는 듯 다시 인사한다."),
-        para("p4", `그래도 ${top}이 조용한 날엔 방 전체가 조용하다. 불을 켜는 건 늘 ${top}이다. 그건 인정.`),
-      ],
-      evidence: [evidence("e1", top, "2025-01-03T19:12:00+09:00", "오늘 저녁 뭐 먹을까?")],
-    },
-    {
-      part: "nag_cards",
-      icon: "📸",
-      title: `${second}, 대답 대신 사진`,
-      about: second,
-      paragraphs: [
-        para("p1", `말수는 적은데 먼저 말을 거는 건 ${second}이다. 조용하던 방에 첫마디를 던지고는 정작 대화가 붙으면 사라진다.`, ["e1"]),
-        para("p2", "주말 약속은 꼭 꺼낸다. 다 같이 보자고. 그 다음 날짜 이야기에는 웃음 한 줄로 답한다. 날짜는 끝까지 안 나왔다. 다 보여."),
-        para("p3", `그래도 ${second}의 첫마디가 없었으면 이 방의 주말은 없었다. 판은 늘 ${second}이 깐다.`),
-      ],
-      evidence: [evidence("e1", second, "2025-02-11T21:40:00+09:00", "주말에 다 같이 보자ㅎㅎ")],
-    },
-    {
       part: "nag_room",
       icon: "🌙",
       title: "새벽까지 왜들 안 자는 건지{{stat:nope}}",
@@ -89,6 +64,31 @@ export const previewReport: StoredReport = {
           "아 그거 나도 들었어 대박이다 진짜로 어떻게 그런 일이 있지\n내일 자세히 얘기해 줘",
         ),
       ],
+    },
+    {
+      part: "nag_cards",
+      icon: "📣",
+      title: `${top}, 질문만 하고 답은 안 듣는다`,
+      about: top,
+      paragraphs: [
+        para("p1", `질문은 제일 많이 던진다. 대답이 오기도 전에 다음 질문이 나간다. ${top}의 지분이 {{stat:share.${top}}}인 이유가 다 있다.`, ["e1"]),
+        para("p2", `약속을 처음 꺼내는 것도 ${top}이다. 날짜를 정하는 건 끝까지 남한테 넘긴다. 또 그런다.`),
+        para("p3", "새벽에도 사진이 올라온다. 잘 시간에 왜 맛집 사진이냐고. 다음 날 아침엔 아무 일 없었다는 듯 다시 인사한다."),
+        para("p4", `판정 나왔다. 이 방 실세는 ${top}이다. ${top}이 조용한 날엔 방 전체가 조용하고, 불을 켜는 건 늘 ${top}이다. 그건 인정.`),
+      ],
+      evidence: [evidence("e1", top, "2025-01-03T19:12:00+09:00", "오늘 저녁 뭐 먹을까?")],
+    },
+    {
+      part: "nag_cards",
+      icon: "📸",
+      title: `${second}, 대답 대신 사진`,
+      about: second,
+      paragraphs: [
+        para("p1", `말수는 적은데 먼저 말을 거는 건 ${second}이다. 조용하던 방에 첫마디를 던지고는 정작 대화가 붙으면 사라진다.`, ["e1"]),
+        para("p2", "주말 약속은 꼭 꺼낸다. 다 같이 보자고. 그 다음 날짜 이야기에는 웃음 한 줄로 답한다. 날짜는 끝까지 안 나왔다. 다 보여."),
+        para("p3", `그래도 ${second}의 첫마디가 없었으면 이 방의 주말은 없었다. 판은 늘 ${second}이 깐다. 이 방 공식 약속 발의 담당이다.`),
+      ],
+      evidence: [evidence("e1", second, "2025-02-11T21:40:00+09:00", "주말에 다 같이 보자ㅎㅎ")],
     },
     {
       part: "nag_last",

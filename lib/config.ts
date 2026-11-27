@@ -24,7 +24,7 @@ export function inputTokenBudgetFor(model: string): number {
   const hit = INPUT_TOKEN_BUDGET_BY_MODEL.find(([id]) => model === id || model.startsWith(`${id}-`));
   return hit ? hit[1] : FALLBACK_INPUT_TOKEN_BUDGET;
 }
-export const PROMPT_RESERVE_TOKENS = 8000; // system 프롬프트·리포트 지시 몫(토큰 어림, v2.2 말투별 구성으로 6000 → 7000, v2.3 문단 길이 예시로 7000 → 8000). 정확한 값은 countTokens로 확인한다
+export const PROMPT_RESERVE_TOKENS = 9000; // system 프롬프트·리포트 지시 몫(토큰 어림, v2.2 말투별 구성으로 6000 → 7000, v2.3 문단 길이 예시로 7000 → 8000, v2.4 판정 지시·세 부분 구성으로 8000 → 9000). 정확한 값은 countTokens로 확인한다
 
 // 모델에게 보여 주는 통계 요약(statsForPrompt). 서버의 자리표시자 해석은 전체 stats를 쓴다
 export const PROMPT_STATS_MAX_PEOPLE = 12;
