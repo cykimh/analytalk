@@ -65,7 +65,7 @@ export default function AboutPage() {
         <ul className="grid list-disc gap-1.5 pl-5">
           <li>analytalk는 카카오와 무관한 개인 프로젝트예요.</li>
           <li>
-            리포트와 해석은 AI가 쓴 글이에요({AI_NOTICE}). 숫자는 코드가 세고, 속마음·호감 같은 해석은 말투 인물이 재미로 내린 판정이라 틀릴 수 있어요.
+            리포트와 해석은 AI가 쓴 글이에요({AI_NOTICE}). 숫자는 코드가 세고, 속마음·호감·성격 같은 해석과 별명·놀림은 말투 인물이 재미로 내린 판정이라 틀릴 수 있어요.
           </li>
         </ul>
       </section>

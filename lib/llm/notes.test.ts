@@ -17,7 +17,7 @@ const section = (n: number): Report["sections"][number] => ({
 
 const REPORT: Report = {
   safety: { flag: "none" },
-  declined_topics: ["inner_feelings"],
+  declined_topics: ["hate"],
   reading_notes: [
     { range: "08-02~08-31", note: "저녁마다 짧게 주고받았다" },
     { range: "09-01~09-30", note: "주말 대화가 길어졌다" },

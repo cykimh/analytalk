@@ -134,7 +134,7 @@ const body = (headline = "머리") =>
         about: "group",
         paragraphs: [
           { key: "a", text: "함께 이야기했다", evidence_ids: ["e1"] },
-          { key: "b", text: "그는 ADHD가 분명하다", evidence_ids: [] },
+          { key: "b", text: "그는 게이가 분명하다", evidence_ids: [] },
         ],
         evidence: [
           { id: "e1", msg_id: firstId, quote: "안녕" },
@@ -173,7 +173,7 @@ describe("scoreReport", () => {
     expect(score.dropRate).toBeCloseTo(1 / 3, 10);
   });
   it("제목·소제·섹션 제목의 금지 표현도 센다", () => {
-    expect(scoreReport(body("그는 ADHD가 분명하다"), "ok", idx, stats, payload).score.bannedHits).toBe(2);
+    expect(scoreReport(body("그는 게이가 분명하다"), "ok", idx, stats, payload).score.bannedHits).toBe(2);
   });
   it("JSON이 아니면 failed, 센 것은 0", () => {
     const { score, content } = scoreReport("not json", "ok", idx, stats, payload);

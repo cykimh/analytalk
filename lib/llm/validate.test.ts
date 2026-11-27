@@ -97,7 +97,7 @@ describe("validateReport", () => {
   it("금지 문장이 든 문단은 지운다", () => {
     const r = run(
       report([
-        sec("마음", [para("p1", "저녁에 대화가 몰려요"), para("p2", "철수는 ADHD가 분명해요"), para("p3", "주말엔 조용해요")]),
+        sec("마음", [para("p1", "저녁에 대화가 몰려요"), para("p2", "철수는 게이가 분명해요"), para("p3", "주말엔 조용해요")]),
       ]),
     );
     expect(r.content?.sections[0].paragraphs.map((p) => p.text)).toEqual(["저녁에 대화가 몰려요", "주말엔 조용해요"]);
@@ -457,8 +457,8 @@ describe("validateReport", () => {
 
   it("headline·dek·섹션 제목·reading_notes의 금지 표현은 비운다", () => {
     const r = run(
-      report([sec("철수는 ADHD다", [para("p1", "저녁 대화가 이어져요")])], {
-        headline: "우울증이 의심되는 방",
+      report([sec("철수는 게이다", [para("p1", "저녁 대화가 이어져요")])], {
+        headline: "민지가 동성애자인 것 같은 방",
         dek: "여자라서 그렇다",
         reading_notes: [
           { range: "10-01", note: "한 대 때려 줘야 한다" },
@@ -655,10 +655,10 @@ describe("validateReport", () => {
   });
 
   it("모르는 declined_topics 값은 버리고 편은 살린다(SDK 스키마 변환이 enum을 강제하지 않는다)", () => {
-    const raw = { ...report([sec("s", [para("p1", "저녁 대화가 이어져요")])]), declined_topics: ["health", "money", 3] };
+    const raw = { ...report([sec("s", [para("p1", "저녁 대화가 이어져요")])]), declined_topics: ["hate", "health", 3] };
     const r = run(raw);
     expect(r.status).toBe("done");
-    expect(r.content?.declined_topics).toEqual(["health"]);
+    expect(r.content?.declined_topics).toEqual(["hate"]);
   });
 
   it("safety.flag가 none이 아니면 safety", () => {
@@ -759,7 +759,7 @@ describe("validateReport", () => {
           "까닭",
           [
             para("p1", "저녁 대화가 이어졌다", ["e1"]),
-            para("p2", "철수는 ADHD가 분명해요"),
+            para("p2", "철수는 게이가 분명해요"),
             para("p3", "민지는 \"나는 철수가 제일 좋아\"라고 했다"),
             para("p4", "대화는 {{stat:nope}}개"),
             para("p5", "이 문단은 근거가 틀렸다", ["e2"]),
@@ -777,8 +777,8 @@ describe("validateReport", () => {
     });
   });
 
-  // v2.4 Fix 1: 판정(실세·범인)도 속마음·호감 단정도 남고, 속성 비하·진단명 단정·폭력 부추김만 지운다(표 테스트는 policy.test)
-  it("판정 문장과 멤버를 향한 호감 단정은 남고, 속성 비하·진단명 단정·폭력 부추김은 지운다", () => {
+  // v2.5: 판정(실세·범인)도 속마음·호감 단정도 진단명도 남고, 속성 비하·성적 지향 단정·폭력 부추김만 지운다(표 테스트는 policy.test)
+  it("판정 문장·호감 단정·진단명 붙이기는 남고, 속성 비하·성적 지향 단정·폭력 부추김은 지운다", () => {
     const keep = [
       "이 방의 실세는 철수다.",
       "약속 증발 사건의 범인은 민지다.",
@@ -789,15 +789,15 @@ describe("validateReport", () => {
       "민지는 사실 철수를 좋아한다.",
       "철수는 민지한테 반했다.",
       "철수는 민지에게 은근히 관심이 있다.",
+      "철수는 ADHD다.",
     ];
-    const drop = ["민지는 여자라서 약속을 못 지킨다.", "철수는 ADHD다.", "철수를 한 대 때려 줘야 한다."];
-    // 사람 이름이 든 문단이 남으려면 섹션에 원문과 맞는 근거가 하나 있어야 한다(사람 근거 규칙)
+    const drop = ["민지는 여자라서 약속을 못 지킨다.", "철수는 게이다.", "철수를 한 대 때려 줘야 한다."];
     const grounded = para("p0", "저녁마다 쉬는 이야기가 나왔다", ["e1"]);
     const r = run(report([sec("판정", [grounded, ...[...keep, ...drop].map((t, i) => para(`p${i + 1}`, t))], [ev("e1", "m1", "쉬는 중")])]));
     expect(r.content?.sections[0].paragraphs.map((p) => p.text).slice(1)).toEqual(keep);
     expect(r.dropped.checks.dropped_by).toEqual({ banned: drop.length });
     // 제목·헤드라인도 같은 검사
-    const head = run(report([sec("민지는 철수를 좋아한다", [para("p1", "저녁 대화가 이어졌다")])], { headline: "이 방의 실세는 철수다", dek: "철수는 사이코패스다" }));
+    const head = run(report([sec("민지는 철수를 좋아한다", [para("p1", "저녁 대화가 이어졌다")])], { headline: "이 방의 실세는 철수다", dek: "철수는 레즈비언이다" }));
     expect(head.content?.sections[0].title).toBe("민지는 철수를 좋아한다");
     expect(head.content?.dek).toBe("");
     expect(head.content?.headline).toBe("이 방의 실세는 철수다");

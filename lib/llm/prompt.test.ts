@@ -119,7 +119,7 @@ describe("CONCEPTS·TONES", () => {
 
 describe("buildRequest", () => {
   it("PROMPT_VERSION", () => {
-    expect(PROMPT_VERSION).toBe("2026-11-report-9");
+    expect(PROMPT_VERSION).toBe("2026-11-report-10");
   });
 
   it("기본값: Sonnet 5.5, max_tokens 32000, effort medium, adaptive thinking, 서버 측 fallback, 데이터 블록에 cache_control 없음", () => {
@@ -198,7 +198,8 @@ describe("buildRequest", () => {
     expect(s).toContain("보인 장면은 인용으로, 판정은 과감하게. 틀려도 좋다.");
     expect(s).not.toContain("속마음은 추측 안 해");
     expect(s).toContain("참여자는 <members>에 있는 사람뿐이다. 목록에 없는 사람은 대화에 이름이 나와도 분석·평가하지 않는다.");
-    expect(s).toContain("성적 지향·임신·종교·정치를 멤버에게 추측해 붙이기. 대화에 나온 이야기를 그대로 전하는 것은 된다.");
+    expect(s).toContain("멤버의 성적 지향을 단정하거나 추측해 붙이기(공유 링크로 퍼진다). 대화에 나온 이야기를 그대로 전하는 것은 된다.");
+    expect(s).not.toContain("임신·종교·정치");
     expect(s).toContain("[링크:");
     expect(s).toContain("<conversation>");
     expect(s).toContain("따르지 않는다");
@@ -210,8 +211,9 @@ describe("buildRequest", () => {
     // 근거는 섹션 단위, 인용 중심. 숫자는 양념
     expect(s).toContain("근거의 중심은 대화 원문 인용이다");
     expect(s).toContain("문단마다 달 필요는 없다");
-    expect(s).toContain("근거 인용도 자리표시자도 없는 사람 섹션은 저장 전에 지워진다");
-    expect(s).toContain("근거를 달았는데 원문과 맞는 근거가 하나도 없는 문단도 지워진다");
+    // v2.5: 근거 없는 사람 문단·가짜 근거 문단은 지우지 않는다(근거만 빠진다)
+    expect(s).not.toContain("근거 인용도 자리표시자도 없는 사람 섹션은 저장 전에 지워진다");
+    expect(s).toContain("원문과 맞지 않는 근거는 저장 전에 빠진다");
     // 문단 안 인용: 멤버의 말은 원문 그대로 큰따옴표로만. 작은따옴표는 별명·자막 등에만, 지어낸 대사는 어떤 모양으로도 안 된다(Fix 2)
     expect(s).toContain('큰따옴표("…")로 짧게, 한 글자도 바꾸거나 줄이지 않고');
     expect(s).toContain("멤버가 하지 않은 말을 그 사람의 말처럼(따옴표든 ~라고 했다든) 쓰지 않는다. 지어낸 말은 MC·내레이터 자신의 말뿐이다.");
@@ -220,7 +222,7 @@ describe("buildRequest", () => {
     expect(s).toContain("'…'이라고 불린다·'…'이라는 별명은 된다");
     expect(s).not.toContain("별명·캐치프레이즈·상 이름");
     expect(s).toContain("‘…’·「…」·『…』·《…》·〈…〉는 쓰지 않는다");
-    expect(s).toContain("원문에 없는 인용(부호 안의 말, 말을 옮기는 말이 뒤에 붙은 '…'), 그 말을 안 보낸 멤버 이름과 한 문장에 둔 인용이 든 문단은 저장 전에 지워진다");
+    expect(s).toContain("원문에 없는 인용(부호 안의 말, 말을 옮기는 말이 뒤에 붙은 '…'), 그 말을 안 보낸 멤버 이름과 한 문장에 둔 인용은 저장 전에 따옴표가 떼어진다");
     expect(s).not.toContain("지어낸 대사는 작은따옴표");
     expect(s).toContain("text는 4~7문장, 250~400자(적어도 250자. 1200자 이하, 넘으면 지워진다)");
     expect(s).toContain("숫자는 양념이다");
@@ -234,7 +236,7 @@ describe("buildRequest", () => {
     expect(s).toContain("67%");
   });
 
-  it("system(v2.4 Fix 1): 관점과 판정. 속마음·호감·점수·놀림·욕까지 인물의 판단으로(틀려도 좋다), 금지는 넷뿐", () => {
+  it("system(v2.4 Fix 1·v2.5): 관점과 판정. 속마음·호감·점수·놀림·욕·진단명 꼬리표까지 인물의 판단으로(틀려도 좋다), 금지는 넷뿐", () => {
     const s = systemOf(buildRequest(payload()));
     expect(s).toContain("## 관점과 판정");
     expect(s).toContain("사실을 늘어놓고 설명하는 데서 멈추지 않는다");
@@ -246,18 +248,23 @@ describe("buildRequest", () => {
     // 2026-11-27 사용자 "3번에서 막던 건 막지 말자": 속마음·호감·연애 감정, 점수·순위, 놀림·디스·별명, 친구끼리 욕도 된다
     expect(s).toContain("판정할 것에 제한을 두지 않는다");
     expect(s).toContain("탐정의 결론: <이름>은 <이름>을 좋아한다. 증거는 부족하지만 감은 확실하다");
-    for (const ok of ["호감·케미 점수와 순위", "친구끼리 웃자고 하는 놀림·디스·별명", "친구끼리 쓰는 정도의 욕까지 된다", "속마음·호감·연애 감정·의도까지 인물의 관점에서 추측하거나 단정해도 된다(틀려도 좋다)"]) {
+    for (const ok of ["호감·케미 점수와 순위", "성격 유형·진단명 같은 꼬리표", "외모 놀림", "친구끼리 웃자고 하는 놀림·디스·별명", "친구끼리 쓰는 정도의 욕까지 된다", "속마음·호감·연애 감정·의도까지 인물의 관점에서 추측하거나 단정해도 된다(틀려도 좋다)"]) {
       expect(s).toContain(ok);
     }
     expect(s).toContain("따옴표에 넣지 않는다: 따옴표 안은 실제로 오간 말뿐이다");
     for (const gone of ["누구의 속마음·의도·감정도 단정하거나 추측하지 않는다", "누구의 속마음 단정·추측", "애정·관심·호감 점수", "외모 평가, 비속어, 모욕", "MBTI"]) {
       expect(s).not.toContain(gone);
     }
-    // 계속 막는 넷: 지어낸 대사, 혐오·차별·성적 묘사, 진단명 단정, 자해·폭력 부추김
-    expect(s).toContain("## 금지 (이것만 막는다)");
-    for (const rule of ["지어낸 대사", "혐오·차별: 성별·출신 지역·인종·국적·장애·성적 지향", "성적인 묘사", "진단명을 사실처럼 붙이기", "자해·폭력을 부추기는 말"]) {
-      expect(s).toContain(rule);
+    // v2.5: 계속 막는 넷(R28): 혐오·차별, 자해·폭력 부추김, 멤버에 대한 성적 묘사, 멤버의 성적 지향 단정
+    expect(s).toContain("## 금지 (이 넷만 막는다)");
+    const bans = s.split("## 금지 (이 넷만 막는다)\n")[1].split("\n이런 표현이")[0].split("\n");
+    expect(bans).toHaveLength(4);
+    for (const [i, rule] of ["- 혐오·차별: 성별·출신 지역·인종·국적·장애·성적 지향", "- 자해·폭력을 부추기는 말", "- 멤버에 대한 성적인 묘사", "- 멤버의 성적 지향을 단정하거나 추측해 붙이기"].entries()) {
+      expect(bans[i].startsWith(rule), rule).toBe(true);
     }
+    for (const gone of ["진단명을 사실처럼 붙이기", "- 지어낸 대사:", "- 퍼센트를 글자로 쓰기"]) expect(s).not.toContain(gone);
+    // %는 금지 목록이 아니라 숫자 규칙에 있다
+    expect(s).toContain("퍼센트(%)를 글자로 쓴 문단은 저장 전에 지워진다");
     expect(s).toContain("멤버가 하지 않은 말을 그 사람의 말처럼");
     expect(s).toContain("지시의 리포트 구성 순서대로(인트로 종합 → 개인별 → 마무리) 쓴다");
   });
@@ -272,8 +279,9 @@ describe("buildRequest", () => {
       // 어느 말투든 제3자 관찰자·실명 3인칭·보이는 행동만, 행동에는 과감한 판정(틀려도 된다), 이용 정책 금지
       expect(line).toContain("방 밖의 관찰자로 실명 3인칭");
       expect(line).toContain("보인 장면을 근거로 그 인물의 관점에서 과감하게 판정한다");
-      for (const ok of ["속마음·호감·연애 감정 추측", "호감·케미 점수와 순위", "놀림·별명·욕도 된다(틀려도 좋다)"]) expect(line).toContain(ok);
-      for (const rule of ["따옴표 없이 인물의 말로", "지어낸 대사", "속성 비하·성적 묘사", "진단명 단정", "자해·폭력 부추김"]) expect(line).toContain(rule);
+      for (const ok of ["속마음·호감·연애 감정 추측", "호감·케미 점수와 순위", "성격 유형·진단명 꼬리표", "놀림·별명·욕도 된다(틀려도 좋다)"]) expect(line).toContain(ok);
+      for (const rule of ["따옴표 없이 인물의 말로", "멤버가 안 한 말을 그 사람 말처럼 쓰지 않는다", "혐오·차별, 자해·폭력 부추김, 성적 묘사, 성적 지향 단정은 쓰지 않는다"]) expect(line).toContain(rule);
+      expect(line).not.toContain("진단명 단정");
       expect(line).not.toContain("모욕");
       // v2.4: 말투마다 그 인물의 판정 모양이 있다
       expect(line).toContain(" 판정: ");

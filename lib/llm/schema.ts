@@ -5,18 +5,8 @@
 import { z } from "zod";
 
 export const SAFETY_FLAGS = ["none", "self_harm", "violence", "minor", "abuse"] as const;
-/** 금지 주제라 다루지 않은 것(system 프롬프트의 금지 목록과 같은 갈래) */
-export const DECLINED_TOPICS = [
-  "inner_feelings",
-  "scores",
-  "diagnosis",
-  "personality_type",
-  "sexuality",
-  "health",
-  "religion",
-  "politics",
-  "appearance",
-] as const;
+/** 금지 주제라 다루지 않은 것(system 프롬프트의 금지 넷과 같은 갈래, v2.5). 예전 행에는 inner_feelings·diagnosis 같은 v2.4 값이 있다 */
+export const DECLINED_TOPICS = ["hate", "incitement", "sexual", "orientation"] as const;
 
 const readingNote = z.object({
   range: z.string().describe("읽은 날짜 범위 MM-DD~MM-DD"),
